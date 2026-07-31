@@ -29,7 +29,7 @@
 
 ### 2.1 Tab Management (= Management Folders)
 
-- Top tab bar, 1 tab = 1 management folder. Create new / rename / delete (to trash by default). **Tab names must be unique (no duplicates allowed)**.
+- Top tab bar, 1 tab = 1 management folder. Create new / rename / **remove (unregister-only: removes the folder from the app's tab list, never deletes or trashes the folder or its files — deliberately different from memo deletion in §2.2, which does go to trash. See [DECISIONS.md](DECISIONS.md) for rationale)**. **Tab names must be unique (no duplicates allowed)**.
 - Reorder by drag, drag-register existing folders, switch via click / shortcut / mouse wheel. Each tab holds an independent tree.
 - **New tab creation and folder registration use OS standard folder selection dialog** (do not use web standard `window.prompt()` etc.).
 - "Pin to foreground" button (📌, session-only) to the left of search button. Right-click tab to "Open tab location."
@@ -183,7 +183,7 @@ interface AppSettings {
   theme: 'light' | 'dark';
   uiFontScale: number;
   lastOpened: { tabId: string; memoName: string } | null;
-  editorDefaults: { wrap: 'none' | 'chars' | 'window'; tabWidth: number; softTab: boolean; showLineNumbers: boolean; fontSize: number };
+  editorDefaults: { wrap: 'none' | 'chars' | 'window'; tabWidth: number; softTab: boolean; showLineNumbers: boolean; fontSize: number; viewMode: 'live' | 'source' };  // viewMode: default Markdown view mode a memo opens in (§4.2); per-memo override in MemoEditorSettings falls back here when absent
   autosave: { plainDebounceMs: number };
   links: { openTrigger: 'ctrlClick' | 'singleClick' | 'doubleClick'; confirmBeforeOpen: boolean };
   encoding: { defaultSave: 'utf-8' };
@@ -221,7 +221,7 @@ interface AppSettings {
 4. **Unlock (session start)**: Password input → blob decryption → retain real tab name, structure, name correspondence table in memory as "lock session". Edit content continuously re-encrypts correspondence table and structure blob (new IV) and atomically saves, re-encrypts each memo body individually and writes back.
 5. **Session lifespan**: Immediately discarded when leaving tab (select another tab). Re-open requires password re-entry each time (reconsider if inconvenient).
 6. **Full-text search**: Whether locked or in session, always exclude that tab's name and body from index (§2.4).
-7. **Delete restriction**: `tab:remove` rejected while locked (no session) with `TAB_LOCKED`. In session, treated as normal tab deletion. To stop locking completely, simply don't re-set "tab lock" thereafter.
+7. **Delete restriction**: `tab:remove` (unregister-only — never deletes/trashes the folder or its files, §2.1) rejected while locked (no session) with `TAB_LOCKED`. In session, treated as normal tab removal. To stop locking completely, simply don't re-set "tab lock" thereafter.
 8. **Tab-to-tab memo movement (DND)**: This app's tab-to-tab DND works as "drag from active tab's tree, drop on another tab in tab bar," completing without leaving drag-source tab (no collision with rule 5's "discard session when leaving tab").
    - **Drop from other tab → locked (no-session) tab**: **Display password input dialog right at drop moment**; on success, immediately start session and take in memo (no need to leave drag-source tab). The "unlock tab first then drag" workflow cannot work because leaving drag-source tab at unlock completion would re-lock per rule 5.
    - **Drop from unlock-session tab → other (normal) tab**: **Allowed**. At drop moment, that memo decrypts, becomes normal plaintext `.md` in target tab (don't adopt legacy node lock's "one-way vault" style. Tab-level lock means no risk of protected/unprotected parts adjacent in same tree).
@@ -231,7 +231,7 @@ interface AppSettings {
 ### 4.2 Markdown Editing (CommonMark Full Support)
 
 - **All memos standardized to Markdown (`.md`)** (§1 Q2). Plain text option discontinued.
-- **Edit experience = live view by default**. Toggle to source (raw Markdown) also available.
+- **Edit experience = live view by default** (factory default; user-configurable global default and optional per-memo override, §3.4 `viewMode`). Toggle to source (raw Markdown) also available at any time (runtime toggle, independent of the default setting).
 - **Markdown support range = CommonMark equivalent full support**: headings, lists, quotes, code blocks, tables, emphasis (bold/italic), horizontal lines, links, etc.
 - **Toolbar = full-featured and floatable**: heading / list / quote / code block / table / emphasis / link / image insert etc. operated from toolbar. Free-position float panel within window.
 - **Image paste and resize**:
@@ -243,7 +243,7 @@ interface AppSettings {
 - **Safety**: Allowed tags/attributes by allowlist (`<img>` `src`/`width`/`height`, relative paths only. `<span>` `style` with `color`/`font-size` only). **Tags/attributes/CSS properties outside allowlist (including `<script>`, `on*` event attributes, `javascript:` scheme) must be removed during preview rendering**. Arbitrary CSS properties like `position` not allowed.
 - **Markdown link notation coexistence (confirmed)**: Enable standard Markdown link syntax `[text](url)`. Treat `memo:` as URL scheme type, allowing labeled memo-to-memo links like `[heading](memo:TabName/MemoName)` (coexist with `memo:` direct-write notation in §2.8).
 - **Full-text search**: Remove Markdown syntax/HTML tags for decoration/structure (plaintext conversion) before indexing.
-- **Editor engine**: Unconfirmed. CodeMirror 6 decoration extension or Markdown-native WYSIWYG library like Milkdown / TipTap candidate for detailed design phase confirmation.
+- **Editor engine: Confirmed — CodeMirror 6 with a custom-built decoration extension** (see [DECISIONS.md](DECISIONS.md) for rationale and rejected alternatives). The plain-text buffer CodeMirror operates on is the source of truth; live view is a decoration layer over that same buffer, so switching between live view and raw source never converts or regenerates the text.
 
 `[Legacy: docs/v3/DESIGNv3.md §2 not adopted (complete replacement)]`
 
