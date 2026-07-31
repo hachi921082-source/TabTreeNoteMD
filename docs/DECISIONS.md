@@ -15,6 +15,79 @@
 - **Rejected Alternatives**: C# fully native (reasons above) / C#+WebView2 hybrid (dual IPC configuration between native and WebView parts becomes complex) / Electron continuation (contradicts the goal of reducing size).
 - **Known Remaining Costs**: Rust has heavy compilation and cannot iterate as fast as TypeScript. A new automatic test environment for Tauri needs to be built.
 
+## Editor Engine for Markdown Editing: CodeMirror 6 (2026-07-31)
+
+**Decision**: **CodeMirror 6 + a custom-built decoration extension**, operating directly on the plain-text
+buffer as source of truth, for the Markdown live-view editor (`spec.md` §4.2). Rejected: Milkdown/TipTap
+(ProseMirror-based rich-document-model WYSIWYG libraries), Slate, and Draft.js. This resolves the open
+question originally recorded as `QA.md` item #1.
+
+- **Source-of-truth safety**: CodeMirror 6's buffer is the plain text itself — there is no parse/serialize
+  round-trip on save. A ProseMirror-based library (Milkdown/TipTap) holds an internal document tree;
+  saving means *regenerating* Markdown text from that tree via a serializer, not writing back the user's
+  original characters with edits applied in place.
+- **Custom syntax risk**: This app has several non-standard Markdown extensions with no native schema
+  support in Milkdown/TipTap: the `memo:` link scheme (`[text](memo:TabName/MemoName)`), `<img src width
+  height>` resize notation, and `<span style="color;font-size">` decoration notation (all from `spec.md`
+  §4.2). Using a ProseMirror-based library would require hand-building both a custom parser (text→tree)
+  AND a custom serializer (tree→text) for every one of these. Any gap in that custom work causes *silent*
+  content mutation on save (reformatting, or literal loss of unsupported syntax) — a data-integrity risk,
+  which is a more severe failure class for a note-taking app than a UI bug.
+- **CodeMirror's known risk is a different, lower-severity class**: the legacy project's flagged defect
+  area ("overlapping range edits, decoration widget click select" — cursor/selection mapping issues when
+  decorations and hidden syntax markers occupy different visual space than their underlying text length,
+  `spec.md` §8) is a rendering/interaction bug. It does not corrupt the saved file (the buffer is still
+  correct plain text underneath); it is testable and fixable through careful decoration/click-handling
+  implementation, unlike the silent-mutation risk above.
+- **Frequent live/source switching**: The user wants to switch between live-view and raw-Markdown-source
+  display frequently, not just occasionally, and additionally wanted a settings-level default for which
+  mode a memo opens in (`spec.md` §3.4 `viewMode`). With CodeMirror 6, both modes operate on the exact
+  same text buffer — switching is just toggling the decoration layer on/off, with zero conversion and
+  zero risk. With a ProseMirror-based library, a "raw source" view would need either a second synced
+  CodeMirror instance (re-running the tree↔text conversion, and its risks, on every single toggle rather
+  than just at save time) or a library-specific source-mode plugin. Since the user wants to toggle often,
+  this would mean hitting the round-trip risk far more frequently than just at save time.
+- **Rejected Alternatives**:
+  - **Milkdown / TipTap**: the only realistic representatives of "ready-made Markdown WYSIWYG library"
+    considered, because they are the only ones that ship Markdown-aware parsing/serialization and
+    toolbar infrastructure out of the box. Rejected for the reasons above (points 1–4).
+  - **Slate**: a lower-level framework like ProseMirror, with no built-in Markdown import/export or
+    toolbar. Choosing it would mean paying the same "build it yourself" cost as CodeMirror while *still*
+    carrying the document-tree serialization risk described above — the worst of both approaches
+    combined.
+  - **Draft.js**: effectively unmaintained (Meta stopped active development years ago); not viable for a
+    new project.
+
+## Tab Deletion Semantics: Unregister-Only, No Folder-Trash Option (2026-08-01)
+
+**Decision**: Removing a tab from `AppSettings.tabs` never touches, deletes, or trashes the underlying
+folder or any files in it. It only unregisters the folder from the app's tab list (`spec.md` §2.1,
+§4.1 pt.7). There is no "delete tab and folder" action anywhere in the app.
+
+- **What was considered**: The legacy app (`TabTreeNote`, reference-only) offered two separate
+  right-click actions on a tab: "remove tab, keep folder" (unregister-only) and "delete tab and
+  folder" (unregister + send the folder to the OS trash).
+- **What was rejected, and why**: Offering a folder-trash option at the tab level was rejected
+  entirely, not just deprioritized.
+  - **Data-loss risk disproportionate to convenience**: a tab is a pointer to an arbitrary,
+    possibly pre-existing folder (`[spec §2.1]`, "drag-register existing folders") that may contain
+    files the app doesn't manage or even know about (non-`.md` files, subfolders — `[spec §2.2]`
+    excludes subdirectories from scanning but they can still exist on disk). Bulk-trashing an entire
+    folder tree on a single tab-removal action risks destroying content the user did not intend to
+    delete, for a convenience (skipping a manual Explorer delete) that doesn't justify the risk.
+  - **Simplicity**: a folder-trash option would require designing the `TRASH_FAILED`-retry/fallback
+    edge case (`[spec §5.8]`) at the tab level, in addition to the one that already exists for
+    memo-level delete (`[spec §2.2]`). Dropping the option avoids that second edge-case surface
+    entirely, leaving exactly one unambiguous action ("remove tab" = unregister) instead of two
+    similarly-named, easily-confused actions.
+- **What this does not affect**: memo-level deletion (`[spec §2.2]`) is unchanged and still goes to
+  the OS trash by default, with the existing `TRASH_FAILED` → user-consent → direct-delete fallback
+  (`[spec §5.8]`). Only the *tab* level dropped the trash option; individual memo files within a tab
+  are still deletable (to trash) as before.
+- **User-facing consequence**: to actually delete a registered folder's contents, the user must do so
+  outside the app (e.g. via Windows Explorer) after removing the tab, or before/without ever
+  registering it.
+
 ## Memo Identification Method: Filename = Memo Name (UUID Not Adopted)
 
 The philosophy of following plain text (transparency, external tool compatibility, retains content even if metadata is lost) is prioritized. The adoption of internal IDs like UUID was rejected because the loss of correspondence tables would risk breaking `memo:` links and tree structures. As a trade-off, renaming = file renaming will break `memo:` links (accepted).
