@@ -1,14 +1,86 @@
 # PLAN: Markdown Editing (Live View, Toolbar, Sanitization)
 
-> Status: planning complete, not yet implemented. Layered on top of `editor-save/PLAN.md`'s plain-text
-> editing surface — read that plan first. This plan covers everything specific to Markdown rendering:
-> the CodeMirror 6 decoration extension, live/source toggle, floating toolbar, and the sanitization
-> allowlist. `image-handling/PLAN.md` covers image paste/resize specifically (closely related, kept
-> separate because it also has its own backend command and storage-path concerns).
+> Status: implemented (`src/editor/codeMirrorSetup.ts`, `markdownDecorations.ts`,
+> `markdownSpanParser.ts`, `markdownSanitize.ts`, `checkboxClick.ts`, `decorationCommands.ts`,
+> `toolbarSlots.ts`, `imagePaste.ts`, `links.ts`; `components/Editor/Toolbar/MarkdownToolbar.tsx`;
+> wired into `components/Editor/EditorPane.tsx`), except the parts this plan itself defers to
+> sibling plans that are not yet implemented: `image-handling/PLAN.md` (real image paste-save +
+> rendering — `imagePaste.ts` intercepts pasted images and `markdownDecorations.ts` renders a
+> placeholder widget instead of a broken `<img src>`, both clearly-labeled stubs), `link/PLAN.md`
+> (`memo:` resolution, email/file-path open special-casing), and `table-of-contents/PLAN.md`
+> (heading scan/TOC insert-replace — the toolbar's "Update" slot is a labeled no-op). Layered on
+> top of `editor-save/PLAN.md`'s plain-text editing surface. `eolKeeper.ts` (listed in §2 below) was
+> not created — see Implementation Notes.
 
 Sources: `docs/spec.md` §2.8, §4.2, §8; `docs/detailed-spec.md` §4.3, §5.10; `docs/DECISIONS.md`
 "Editor Engine for Markdown Editing," "Markdown Toolbar: Finalized 16-Slot Fixed Grid Layout," "New
 Feature: Table of Contents (TOC)."
+
+## Implementation Notes (resolutions of this plan's discretion points)
+
+- **Risk-reduction strategy for §9's high-risk defect zone**: every marker/styling decoration
+  (headings, emphasis/strikethrough/inline-code, list/quote markers, blockquote/code-block/table
+  line styling, link label + syntax styling) is a pure `Decoration.mark`/`Decoration.line` — CSS
+  overlay only, marker text is never hidden. This sidesteps the "hidden marker vs. visible text
+  length mismatch" cursor-mapping bug for that whole category rather than mitigating it after the
+  fact. `Decoration.replace`/widgets are used only for task checkboxes and the two allowlisted
+  `<span>`/`<img>` HTML fragments, both of which reveal raw source text whenever the current
+  selection touches their range. All 5 of §9's required scenarios were exercised via `tauri dev` +
+  WebView2 CDP (real `EditorView`, real `Input.insertText`/`Input.dispatchMouseEvent`, not just unit
+  logic) and passed; one real bug was found and fixed in the process (see below).
+- **Bug found and fixed during self-verification**: a `<span style="color:...">` wrapping a
+  `[label](memo:...)` link was initially not being decorated at all — a single `skipRanges` list
+  was reused both for "don't treat a `<span>`/`<img>` example inside a code fence as live" and for
+  "don't double-detect a bare `memo:`/file-path token that's actually inside a link's URL," and a
+  color span's range always overlaps its enclosed Link node's range, so the second use wrongly
+  suppressed the first. Split into `codeSkipRanges` (code-only) and a separate
+  `bareTokenSkipRanges` superset (code + Link/Image ranges), used only by the bare-token scan.
+  Re-verified via CDP after the fix: the color mark and link mark now both render and the link
+  stays independently clickable — confirmed §9 item 5 end to end.
+- **Live-view engine built on `@lezer/markdown`'s real syntax tree** (via `@codemirror/lang-markdown`
+  + the `GFM` extension for tables/task-lists/strikethrough/autolinks), not a hand-rolled
+  line-by-line scan — this is what makes the mark-only approach above practical (correct heading/
+  emphasis/list/blockquote/code-fence/table/link boundaries come straight from the parser) and
+  incidentally gives bare `http(s)://`/`www.`/email autolink detection for free (GFM tokenizes these
+  as `URL` syntax nodes), so `links.ts` only needs its own regex for the two token shapes the parser
+  doesn't know about: bare `memo:...` and bare file paths.
+- **Tables, code blocks, and blockquotes render as `Decoration.line` styling** (monospace/background/
+  border-left per line), not a full interactive grid/widget — a pragmatic simplification; visually
+  distinguishes these blocks per `[spec §4.2]` without the widget-replacement risk class.
+- **List/heading markers are styled, not hidden** — `- `/`1. `/`#` markers stay visible with a dimmed/
+  bold mark class rather than disappearing into a bullet glyph. Same risk-reduction rationale as
+  above; a live-preview editor that hides markers entirely was considered but rejected for this
+  first pass specifically because it would reintroduce the widget-replacement risk class for
+  every heading/list line, not just the two spots (checkboxes, allowlisted HTML) where it's
+  actually required by spec.
+- **Bold/italic/strikethrough toolbar buttons toggle-wrap** the selection; a known low-severity edge
+  case (not spec-mandated to resolve) is a naive single-`*` italic toggle can misfire at the boundary
+  of an already-bold `**text**` selection. Documented in `decorationCommands.ts`.
+- **Link/email/file-path classification**: `url` (bare `http(s)://`/`www.`/`ftp://`, or a
+  `[label](url)` whose URL isn't `memo:`/`#slug`) opens for real via the already-implemented
+  `linkOpenExternal`. `email` and `filePath` render as clickable (this plan's scope) but their
+  actual opening is a stub — `commands/link.rs`'s own doc comment explicitly excludes "email/
+  file-path special-casing" (mailto: prefixing, relative-to-absolute resolution against the tab
+  folder) from what's implemented so far, so calling `linkOpenExternal` with a bare email/relative
+  path would silently fail rather than open anything; a labeled stub was chosen over a broken call.
+- **`eolKeeper.ts` was not created** — the plan's own §2 already describes it as "cross-reference
+  only, actual EOL logic is owned by `editor-save/PLAN.md`," and that plan's Rust/frontend EOL
+  handling is complete with no gap for this module to fill; an empty placeholder file seemed like
+  clutter rather than a meaningful module.
+- **Toolbar mount scope**: the floating toolbar is absolutely positioned within `.ttn-editor-pane`
+  (the editor pane), not the whole app window, since that pane is where a Markdown toolbar
+  naturally belongs and is the only sensible drag boundary once the tree pane/tab bar are excluded.
+  Default position `{x:24, y:24}` can overlap the first couple of lines of a very short/empty memo
+  (observed during checkbox-click self-verification, where the default position happened to sit
+  over the test line) — not a decoration-engine defect, just a floating-panel default; the toolbar
+  is user-draggable to work around it. Not escalated (no spec statement constrains the default
+  position), but worth a reviewer look if it reads as poor UX on first launch.
+- **Keyboard shortcuts**: all 16 toolbar actions plus the live/source toggle got default bindings in
+  `shared/shortcuts.ts` (`docs/detailed-spec.md §5.10`'s confirmed policy). Dispatch reuses
+  `MarkdownToolbar`'s own action-invocation logic via a `forwardRef`/`useImperativeHandle` handle
+  (`components/Editor/EditorPane.tsx`) rather than duplicating the action switch statement, so
+  Color/Font-size (which open a popover) and the rearrange toggle work from the keyboard too, not
+  just Undo/Redo/Bold/etc.
 
 ---
 
@@ -50,7 +122,10 @@ must hold for arbitrarily frequent toggling within one editing session (`[detail
 - `toolbarSlots.ts` — the 16-slot action registry (id, Lucide icon, handler) and rearrange-mode state
   machine (see §4).
 - `tocGenerator.ts` — heading scan, slugification, marker detection, insert-or-replace transaction
-  (see §9).
+  (see §9). **Not created by this pass** — §8 below assigns full ownership of TOC generation to
+  `table-of-contents/PLAN.md`, so building a same-named file here first would just be overwritten;
+  the toolbar's "Update" slot calls a small labeled no-op in `decorationCommands.ts`
+  (`tocUpdateStub`) instead, pending that plan.
 - `imagePaste.ts` — clipboard paste handler; delegates the actual file write to
   `image-handling/PLAN.md`'s `image_save_pasted` command, then inserts the resulting Markdown/HTML at
   the cursor.
