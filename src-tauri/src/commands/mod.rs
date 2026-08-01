@@ -1,10 +1,11 @@
 //! One module per domain, Tauri `#[command]` fns
 //! (`docs/plans/project-architecture/PLAN.md` §2). Domains other than
-//! `settings`/`tab` (tree, editor, search, link, image, lock) are added by
-//! their own feature `PLAN.md` when implemented.
+//! `settings`/`tab`/`window` (tree, editor, search, link, image, lock) are
+//! added by their own feature `PLAN.md` when implemented.
 
 pub mod settings;
 pub mod tab;
+pub mod window;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};

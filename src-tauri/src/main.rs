@@ -1,8 +1,9 @@
 // Prevents an additional console window on Windows in release builds, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-// This crate wires up `settings_get`/`settings_set` (persistence-fs/PLAN.md)
-// and the tab domain (tab-management/PLAN.md, everything except lock
-// operations). Several foundational primitives built here for OTHER
+// This crate wires up `settings_get`/`settings_set` (persistence-fs/PLAN.md),
+// the tab domain (tab-management/PLAN.md, everything except lock
+// operations), and the session-only window always-on-top toggle
+// (tab-management/PLAN.md §4.1). Several foundational primitives built here for OTHER
 // features to call — the folder watcher
 // (`watch::watcher`/`watch::conflict`/`watch::active_memo`), `fs::trash`,
 // and the `IoLocked`/`TrashFailed`/`DecryptFailed`/`Conflict`/`MetaCorrupt`/
@@ -54,6 +55,7 @@ fn main() {
             commands::tab::tab_reorder,
             commands::tab::tab_remove,
             commands::tab::tab_open_location,
+            commands::window::window_set_always_on_top,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
