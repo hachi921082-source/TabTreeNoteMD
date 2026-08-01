@@ -1,7 +1,7 @@
 # PLAN: Tab Management
 
-> Status: implemented (backend commands + `TabBar` frontend), except the 📌 pin-to-foreground button
-> (blocked on `docs/QA.md`, see "Open Items") and the "Lock tab" context-menu action (deferred to
+> Status: implemented (backend commands + `TabBar` frontend), except the 📌 always-on-top toggle button
+> (spec resolved, see §4 below and "Open Items"; not yet implemented) and the "Lock tab" context-menu action (deferred to
 > `tab-lock/PLAN.md`'s own implementation pass). Depends on `project-architecture/PLAN.md` (naming
 > conventions) and `persistence-fs/PLAN.md` (atomic write, settings store, name validation). Tab Lock
 > operations (`tab_lock`/`tab_unlock`/`tab_end_session`) are specified separately in
@@ -145,10 +145,18 @@ file's commands, which trust the cache for listing purposes only.
     implementation pass rather than added here as a stub. Locked tabs currently only expose "Open tab
     location" in the context menu; "Rename"/"Remove tab" are shown but disabled per §2's rejection
     rules.
-  - **📌 "pin to foreground" button is NOT implemented in this pass** — its observable effect and
-    whether it's per-tab or a single global button are unresolved specification gaps, logged to
-    `docs/QA.md` ("Pin to Foreground Tab Button: Observable Effect and Placement"). Do not guess at
-    this; implement once that item is answered.
+  - **📌 "Always-on-top" toggle button** — a single global button (not one per tab), placed in the tab
+    bar's toolbar area immediately to the left of the search button (button order left-to-right: pin,
+    search, theme toggle — matching the legacy repo's `TabBar.tsx`). Clicking it toggles OS-level
+    "always on top" for the entire app window, not any per-tab or tab-bar-position effect;
+    session-only React state, never persisted to `AppSettings` (`[spec §2.1]`, `[detailed-spec §4.1]`).
+    **Implemented**: backend command `window_set_always_on_top(window: WebviewWindow, enabled: bool)`
+    (`src-tauri/src/commands/window.rs`) calls Tauri v2's `WebviewWindow::set_always_on_top(bool)`
+    (confirmed against the installed `tauri = "2.11.5"`); frontend toggle lives in
+    `components/TabBar/TabBar.tsx` (`ttn-tab-bar-toolbar` group, optimistic local state reverted on IPC
+    failure). Search/theme buttons don't exist yet (`search-index`/`appearance-theme` not yet
+    implemented) — the toolbar group currently holds only the pin button, ready for those to be added
+    to its right.
   - Right-click → shared context menu (`components/ContextMenu/`) with "Rename," "Open tab location,"
     "Remove tab" (Rename/Remove disabled for locked tabs, per §2's rejection rules — the backend check
     remains as defense-in-depth).
@@ -165,10 +173,8 @@ file's commands, which trust the cache for listing purposes only.
 
 ## Open Items
 
-- **📌 "Pin to foreground" button** — not implemented; blocked on `docs/QA.md` "Pin to Foreground Tab
-  Button: Observable Effect and Placement" (added during this feature's implementation). Implement once
-  the user answers both sub-questions there (observable effect, and per-tab vs. single global button
-  placement).
+- **📌 "Always-on-top" toggle button** — implemented (see §4): `window_set_always_on_top` Tauri command
+  + `TabBar.tsx` toolbar button, using `WebviewWindow::set_always_on_top(bool)` (Tauri v2.11.5).
 - **"Lock tab" context-menu action** — intentionally not added here; `tab-lock/PLAN.md`'s own
   implementation pass should add it to `components/TabBar/TabBar.tsx`'s context-menu `items` array once
   `tab_lock`/`tab_unlock` exist.
