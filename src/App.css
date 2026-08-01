@@ -24,3 +24,23 @@ body {
   display: flex;
   min-height: 0;
 }
+
+/* 3-pane shell (tab bar / tree / editor), `docs/spec.md` §2.7 — the tree
+   pane's width comes from `AppSettings.window.treeWidth` once
+   `window-operation/PLAN.md`'s splitter lands; a fixed width is used until
+   then. */
+.app-tree-pane {
+  width: 260px;
+  flex: none;
+  border-right: 1px solid #d8d8d8;
+  min-height: 0;
+}
+
+.app-editor-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+}
