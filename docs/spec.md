@@ -11,7 +11,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - **§0 Product Overview** — what the app is, CatMemoNote lineage, intended user/use case.
 - **§1 Confirmed Core Principles** — tech stack, storage format, platform target, v1 feature-scope table.
 - **§2 Core Feature Specification from v1**
-  - §2.1 Tab Management — create/rename/remove/reorder, folder-picker dialog, pin, open-location.
+  - §2.1 Tab Management — create/rename/remove/reorder, folder-picker dialog, global always-on-top toggle, open-location.
   - §2.2 Memo Tree Management (Left Pane) — tree scan/hierarchy/DND, edit lock, F2/arrow-key nav, right-click menu, Delete key.
   - §2.3 Text Editing (Right Pane) — undo/redo, wrap/tab/encoding/EOL, Convert/Check menu, checkbox toggle.
   - §2.4 Search and Replace — in-memo search/replace, cross-tab full-text index, locked-tab exclusion.
@@ -65,7 +65,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - Top tab bar, 1 tab = 1 management folder. Create new / rename / **remove (unregister-only: removes the folder from the app's tab list, never deletes or trashes the folder or its files — deliberately different from memo deletion in §2.2, which does go to trash. See [DECISIONS.md](DECISIONS.md) for rationale)**. **Tab names must be unique (no duplicates allowed)**.
 - Reorder by drag, drag-register existing folders, switch via click / shortcut. Each tab holds an independent tree.
 - **New tab creation and folder registration use OS standard folder selection dialog** (do not use web standard `window.prompt()` etc.).
-- "Pin to foreground" button (📌, session-only) to the left of search button. Right-click tab to "Open tab location."
+- Global "always-on-top" toggle button (📌, session-only, single button shared across all tabs — not per-tab) pins the **application window itself** above other windows at the OS level; sits in the top toolbar immediately to the left of the search button. Right-click tab to "Open tab location."
 
 `[DESIGN §2.1]`
 
@@ -127,6 +127,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - 3 panes (tab bar / tree / editor) + status bar. Splitter adjusts tree width, toggle left/right layout, hide. Keyboard shortcuts (user-configurable).
 - Auto-launch to tray on Windows login (setting available).
 - **Multi-launch prevention**: Second launch just focuses existing window (prevent simultaneous writes to same config file).
+- **Always-on-top toggle**: the global 📌 button in the top toolbar (see §2.1) pins the app window above other windows via the OS window manager; session-only, not persisted.
 - Suppress right-click outside registered tabs. Unwanted native items in title bar right-click resolved by `Menu.setApplicationMenu(null)` equivalent.
 - **Tab bar empty area drag for window move**: **addressed in §9.1**.
 
