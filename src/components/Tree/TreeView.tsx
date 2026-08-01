@@ -59,6 +59,13 @@ export function TreeView({ tree }: TreeViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const hoveredTabElRef = useRef<HTMLElement | null>(null);
+  // Mirrors `dropTarget` state so `handleMouseUp` can read the latest value
+  // synchronously without performing its backend-call side effect inside a
+  // `setState` functional updater (React 18 StrictMode invokes updaters
+  // twice in dev, which would fire the move/copy IPC call twice — see
+  // memo-tree/PLAN.md's DND section and the reviewer-lite finding that
+  // motivated this).
+  const dropTargetRef = useRef<DropTarget>(null);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -66,7 +73,12 @@ export function TreeView({ tree }: TreeViewProps) {
   const [properties, setProperties] = useState<MemoProperties | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget>(null);
 
-  const { nodes, loading, locked, recoveryPending, selection, openMemoName, lastErrorCode, clearLastError } = tree;
+  const updateDropTarget = useCallback((next: DropTarget) => {
+    dropTargetRef.current = next;
+    setDropTarget(next);
+  }, []);
+
+  const { nodes, loading, locked, recoveryPending, selection, openMemoName, lastErrorCode, clearLastError, activeTabId } = tree;
 
   // ---- selection auto-follow: scroll the open/selected row into view -----
   useEffect(() => {
@@ -180,6 +192,14 @@ export function TreeView({ tree }: TreeViewProps) {
       hoveredTabElRef.current = null;
     };
 
+    // Live cursor/tooltip feedback for the Ctrl-to-copy modifier during a
+    // cross-tab drag (`docs/plans/memo-tree/PLAN.md` §4: "cursor/tooltip
+    // should reflect this during drag per standard OS DND conventions").
+    // Toggled imperatively (not React state) since it's purely visual.
+    const updateCopyCursor = (isCopy: boolean) => {
+      document.body.classList.toggle("ttn-dragging-memo-copy", isCopy);
+    };
+
     const handleMouseMove = (e: MouseEvent) => {
       const drag = dragStateRef.current;
       if (!drag) return;
@@ -191,6 +211,8 @@ export function TreeView({ tree }: TreeViewProps) {
         document.body.classList.add("ttn-dragging-memo");
       }
 
+      updateCopyCursor(e.ctrlKey);
+
       const hoveredEl = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const tabEl = hoveredEl?.closest<HTMLElement>("[data-ttn-tab-id]") ?? null;
       if (tabEl) {
@@ -199,7 +221,7 @@ export function TreeView({ tree }: TreeViewProps) {
           tabEl.classList.add("ttn-tab-drop-target");
           hoveredTabElRef.current = tabEl;
         }
-        setDropTarget({ kind: "tab", tabId: tabEl.dataset.ttnTabId! });
+        updateDropTarget({ kind: "tab", tabId: tabEl.dataset.ttnTabId! });
         return;
       }
       clearTabHover();
@@ -208,52 +230,72 @@ export function TreeView({ tree }: TreeViewProps) {
       if (rowEl) {
         const path = rowEl.dataset.ttnRowPath!;
         if (drag.paths.includes(path)) {
-          setDropTarget(null);
+          updateDropTarget(null);
           return;
         }
         const rect = rowEl.getBoundingClientRect();
         const rel = (e.clientY - rect.top) / rect.height;
         const position: DropPosition = rel < 0.25 ? "before" : rel > 0.75 ? "after" : "into";
-        setDropTarget({ kind: "row", path, position });
+        updateDropTarget({ kind: "row", path, position });
       } else {
-        setDropTarget(null);
+        updateDropTarget(null);
       }
+    };
+
+    // Keeps the copy-cursor feedback correct even if Ctrl is pressed/released
+    // while the mouse itself is stationary mid-drag.
+    const handleKeyChange = (e: KeyboardEvent) => {
+      if (!dragStateRef.current?.dragging) return;
+      if (e.key === "Control") updateCopyCursor(e.ctrlKey);
     };
 
     const handleMouseUp = (e: MouseEvent) => {
       const drag = dragStateRef.current;
       dragStateRef.current = null;
-      document.body.classList.remove("ttn-dragging-memo");
+      document.body.classList.remove("ttn-dragging-memo", "ttn-dragging-memo-copy");
       clearTabHover();
 
-      setDropTarget((current) => {
-        if (drag?.dragging && current) {
-          if (current.kind === "tab") {
-            void tree.moveCrossTab(drag.paths, current.tabId, null, Number.MAX_SAFE_INTEGER, e.ctrlKey);
-          } else {
-            const loc = locateNode(nodes, current.path);
-            if (loc) {
-              if (current.position === "into") {
-                void tree.moveWithinTab(drag.paths, current.path, Number.MAX_SAFE_INTEGER);
-              } else {
-                const index = current.position === "before" ? loc.index : loc.index + 1;
-                void tree.moveWithinTab(drag.paths, loc.parentPath, index);
-              }
+      // Read the latest drop target from the ref (not from a setState
+      // updater) so the IPC call below runs exactly once per drop, even
+      // under React 18 StrictMode's double-invocation of updaters.
+      const target = dropTargetRef.current;
+      updateDropTarget(null);
+
+      if (drag?.dragging && target) {
+        if (target.kind === "tab") {
+          // No-op a drop back onto the tree's own already-active tab: it's
+          // not a real cross-tab move and would otherwise hit `memo_move`
+          // with source === target, surfacing a meaningless NameDuplicate
+          // error.
+          if (target.tabId !== activeTabId) {
+            void tree.moveCrossTab(drag.paths, target.tabId, null, Number.MAX_SAFE_INTEGER, e.ctrlKey);
+          }
+        } else {
+          const loc = locateNode(nodes, target.path);
+          if (loc) {
+            if (target.position === "into") {
+              void tree.moveWithinTab(drag.paths, target.path, Number.MAX_SAFE_INTEGER);
+            } else {
+              const index = target.position === "before" ? loc.index : loc.index + 1;
+              void tree.moveWithinTab(drag.paths, loc.parentPath, index);
             }
           }
         }
-        return null;
-      });
+      }
     };
 
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("keydown", handleKeyChange);
+    window.addEventListener("keyup", handleKeyChange);
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("keydown", handleKeyChange);
+      window.removeEventListener("keyup", handleKeyChange);
       clearTabHover();
     };
-  }, [nodes, tree]);
+  }, [nodes, tree, activeTabId, updateDropTarget]);
 
   // ---- context menu item construction ------------------------------------
   const buildContextMenuItems = (path: string): ContextMenuItem[] => {
