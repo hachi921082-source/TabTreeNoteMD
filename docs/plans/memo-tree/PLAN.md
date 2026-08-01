@@ -161,9 +161,12 @@ deferred") — not part of this command's scope.
   badges.
 - Selection: click = single-select + open memo (fires `editor_load` via `editor-save/PLAN.md`'s hook);
   Ctrl-click = toggle in multi-select set; Shift-click = range-select over the current visible
-  (expanded-aware) flat order — reuse the legacy `selectSingle`/`toggleSelection`/`rangeSelect` pure
-  functions' logic (`src/renderer/store/selection.ts` in the legacy repo is directly portable,
-  `DECISIONS.md`'s "Reference to Old Repository" sanctions this).
+  (expanded-aware) flat order. Standard OS-file-explorer-style semantics: flatten the currently-visible
+  tree (respecting collapsed nodes) into an ordered list; click sets a single "anchor" and clears any
+  other selection; Ctrl-click adds/removes just the clicked node from the selection set without moving
+  the anchor; Shift-click selects every node between the anchor and the clicked node in that flattened
+  order (inclusive), replacing the previous selection. Implement as pure functions operating on the
+  flattened id list + current selection set, independent of rendering, so they're easy to unit-test.
 - Click on empty area (below the last row) selects nothing / clears selection (`[spec §2.2]`, issue.md
   carryover). When the tree is empty, show a centered "Create Memo" button only (no rows, no empty-area
   click target needed).
