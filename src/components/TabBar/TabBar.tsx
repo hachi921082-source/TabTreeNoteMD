@@ -205,6 +205,12 @@ export function TabBar({ tabsState }: TabBarProps) {
           <div
             key={tab.id}
             className={`ttn-tab${tab.id === activeTabId ? " ttn-tab-active" : ""}${tab.locked ? " ttn-tab-locked" : ""}`}
+            // Cross-tab memo DND drop-target identification
+            // (`docs/plans/memo-tree/PLAN.md` §4) — `components/Tree/TreeView.tsx`
+            // hit-tests for this attribute via `elementFromPoint`/`closest`
+            // rather than this component needing to know anything about the
+            // tree/DND itself.
+            data-ttn-tab-id={tab.id}
             onMouseDown={handleMouseDownOnTab(tab.id)}
             onMouseEnter={handleMouseEnterTab(tab.id)}
             onClick={() => selectTab(tab.id)}
