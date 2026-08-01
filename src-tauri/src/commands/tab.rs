@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -59,28 +59,50 @@ pub fn tab_list(app: AppHandle, store: State<AppSettingsStore>, registry: State<
 /// this is a plan refinement made during implementation).
 ///
 /// Returns `Ok(None)` (not an error) if the user cancels the dialog.
+///
+/// This command is `async` and uses the non-blocking `pick_folder` (callback
+/// + `await`ed `oneshot`) rather than `blocking_pick_folder`. The blocking
+/// variant synchronously occupies the thread Tauri uses to service this IPC
+/// call for as long as the native dialog stays open, which was observed to
+/// stall *every other* `invoke()` (e.g. `tab_list`) until the dialog closed —
+/// see the "Implementation note (post-review fix)" under
+/// `docs/plans/tab-management/PLAN.md` §2 `tab_create` step 1. Awaiting a
+/// channel instead yields the thread back to the async runtime while the
+/// dialog is open.
+///
+/// `store`/`registry` are fetched from `app.state()` inside the body rather
+/// than taken as `State<'_, _>` parameters: Tauri's async-command macro
+/// requires any async command with a reference/lifetime-bearing parameter to
+/// return a literal `std::result::Result`, which this codebase's `AppResult`
+/// wrapper (needed for its custom JSON shape) is not.
 #[tauri::command]
-pub fn tab_create(
-    app: AppHandle,
-    initial_path: Option<String>,
-    name: Option<String>,
-    store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
-) -> AppResult<Option<TabInfo>> {
+pub async fn tab_create(app: AppHandle, initial_path: Option<String>, name: Option<String>) -> AppResult<Option<TabInfo>> {
     let path = match initial_path {
         Some(p) => PathBuf::from(p),
-        None => match app.dialog().file().blocking_pick_folder() {
-            Some(file_path) => match file_path.into_path() {
-                Ok(p) => p,
-                Err(err) => {
-                    tracing::error!(error = %err, "tab_create: picked folder was not a plain filesystem path");
-                    return AppResult::err_code(ErrorCode::Unknown, "invalid folder selection");
+        None => {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            app.dialog().file().pick_folder(move |file_path| {
+                let _ = tx.send(file_path);
+            });
+            match rx.await {
+                Ok(Some(file_path)) => match file_path.into_path() {
+                    Ok(p) => p,
+                    Err(err) => {
+                        tracing::error!(error = %err, "tab_create: picked folder was not a plain filesystem path");
+                        return AppResult::err_code(ErrorCode::Unknown, "invalid folder selection");
+                    }
+                },
+                Ok(None) => return AppResult::ok(None), // user cancelled: no-op, not an error
+                Err(_) => {
+                    tracing::error!("tab_create: folder-picker callback channel dropped without a response");
+                    return AppResult::err_code(ErrorCode::Unknown, "folder selection failed");
                 }
-            },
-            None => return AppResult::ok(None), // user cancelled: no-op, not an error
-        },
+            }
+        }
     };
 
+    let store = app.state::<AppSettingsStore>();
+    let registry = app.state::<SelfWriteRegistry>();
     match register_tab_at_path(&app, path, name, &store, &registry) {
         Ok(info) => AppResult::ok(Some(info)),
         Err(payload) => AppResult::err(payload),
