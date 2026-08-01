@@ -300,6 +300,15 @@ switching are unaffected.
   cycles the active tab" elaboration bullet was removed entirely (nothing to elaborate for a feature
   that no longer exists).
 
+## "Pin" Button: Global Window Always-On-Top Toggle, Not Per-Tab (2026-08-01)
+
+**Decision**: the 📌 button (`spec.md` §2.1) toggles OS-level "always on top" for the entire app
+window — session-only, never persisted. It is a single global button (not one per tab), placed in the
+top toolbar immediately to the left of the search button (button order: pin, search, theme toggle).
+Confirmed by the legacy repo's `TabBar.tsx` button order and `windowHandlers.ts`'s
+`window:setAlwaysOnTop` → Electron `BrowserWindow.setAlwaysOnTop` (also session-only there). Elaborated
+in `detailed-spec.md` §4.1, `plans/tab-management/PLAN.md` §4.
+
 ## Memo Identification Method: Filename = Memo Name (UUID Not Adopted)
 
 The philosophy of following plain text (transparency, external tool compatibility, retains content even if metadata is lost) is prioritized. The adoption of internal IDs like UUID was rejected because the loss of correspondence tables would risk breaking `memo:` links and tree structures. As a trade-off, renaming = file renaming will break `memo:` links (accepted).
