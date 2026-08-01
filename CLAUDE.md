@@ -23,10 +23,3 @@ Commit one file per commit, with a message stating that file's role/purpose (not
 ## Language
 
 Do not create or maintain `.ja.md` Japanese mirror files going forward. Write documentation in English only.
-
-## Session Handoff
-
-At the start of a new conversation, check whether `docs/HANDOFF.md` exists. If it does, read it first —
-it carries context from the previous session (recent decisions, uncommitted changes, next step) that
-isn't otherwise derivable from the committed docs alone. Treat it as disposable once its content has
-been acted on or absorbed elsewhere.
