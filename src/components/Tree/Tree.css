@@ -156,3 +156,11 @@
 body.ttn-dragging-memo {
   cursor: grabbing;
 }
+
+/* Live Ctrl-to-copy feedback (`docs/plans/memo-tree/PLAN.md` §4): applied
+   alongside `.ttn-dragging-memo` while Ctrl is held during a drag, per
+   standard OS DND conventions (copy cursor). Two-class selector wins
+   specificity over the plain `.ttn-dragging-memo` rule above. */
+body.ttn-dragging-memo.ttn-dragging-memo-copy {
+  cursor: copy;
+}
