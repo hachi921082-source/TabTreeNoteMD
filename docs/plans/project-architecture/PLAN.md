@@ -9,9 +9,9 @@
 > mention at all but which `DECISIONS.md`'s Tauri-adoption rationale ("renderer assets... can be
 > carried over largely as is") already implies continuity with the legacy Electron renderer.
 
-Sources: `docs/spec.md` §1 Q1, §2.7; `docs/DECISIONS.md` "Technology Stack" and "Editor Engine"
-entries; legacy repo `c:\Users\m9112\vscode2\TabTreeNote\src` (reference only, per `DECISIONS.md`
-"Reference to Old Repository").
+Sources: `docs/spec.md` §1 Q1, §2.7; `docs/DECISIONS.md` "Technology Stack" and "Editor Engine" entries.
+Per `DECISIONS.md` "Implementation Policy: No Legacy Code Reference — Build from Scratch," this plan is
+implemented without reading or copying the old repository's source code.
 
 ---
 
@@ -133,7 +133,11 @@ TabTreeNoteMD/
 └── vite.config.ts
 ```
 
-This mirrors the legacy `src/main/{fs,crypto,watch,search,settings,ipc}` and `src/renderer/{components,editor,store,shared}` breakdown closely enough that `developer-lite` can consult the legacy files module-by-module during implementation (per `DECISIONS.md`'s explicit sanction to do so), translating TS → Rust for the backend half.
+This directory breakdown is structurally similar to a typical Electron main/renderer split (`fs`,
+`crypto`, `watch`, `search`, `settings` on the backend; `components`, `editor`, `store`, `shared` on the
+frontend) for anyone comparing module responsibilities conceptually, but is implemented fresh from this
+plan and `detailed-spec.md` — per `DECISIONS.md`'s no-legacy-reference policy, `developer-lite` does not
+consult the old repository's source files for this.
 
 ## 3. `Result<T>` / `ErrorCode` Mapping (Rust ⇄ TS)
 
