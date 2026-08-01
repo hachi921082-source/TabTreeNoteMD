@@ -153,3 +153,37 @@ export interface MemoMoveResult {
   source: TreeSnapshot;
   target?: TreeSnapshot;
 }
+
+// ---------------------------------------------------------------------------
+// Editor / save domain (`docs/plans/editor-save/PLAN.md` §2; mirrors Rust
+// `store/memo_file_service.rs` and `commands/editor.rs`'s command I/O types).
+// ---------------------------------------------------------------------------
+
+/** Informational only (status bar + re-save policy) — save always re-encodes as UTF-8 today
+ * regardless of this value (`AppSettings.encoding.defaultSave` is currently single-valued). */
+export type Encoding = "utf-8" | "shift-jis";
+
+/** Detected (on load) / target (on save) line-ending style. */
+export type Eol = "crlf" | "lf" | "cr";
+
+/** Return type of `editor_load`. */
+export interface MemoContent {
+  /** LF-normalized for the editor buffer. */
+  text: string;
+  encoding: Encoding;
+  eol: Eol;
+  /** Hash of the on-disk byte sequence at load time — becomes the next `editor_save`'s
+   * `expectedHash` (`[spec §5.5]`). */
+  hash: string;
+  /** This memo's per-memo Edit Lock flag, read from tree metadata. */
+  editLocked: boolean;
+  /** `MemoEditorSettings.scrollPosition` — 1-indexed top-visible document line number, `null` if
+   * never recorded (open at the top). */
+  scrollPosition: number | null;
+}
+
+/** Return type of `editor_save`. */
+export interface SaveResult {
+  /** Hash of the just-written bytes — update `expectedHash` with this for the next save. */
+  hash: string;
+}
