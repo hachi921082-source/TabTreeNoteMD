@@ -7,7 +7,10 @@
 ## Documentation for This Repository
 
 - [docs/spec.md](docs/spec.md) — A requirements baseline that consolidates the design decisions and post-implementation change logs from the old repository. Use this as a starting point when considering the redesign.
+- [docs/detailed-spec.md](docs/detailed-spec.md) — Elaboration of spec.md to a level usable for per-feature implementation planning (`docs/plans/<feature-name>/PLAN.md`).
 - [docs/DECISIONS.md](docs/DECISIONS.md) — The context of decisions, comparative analysis, rejected alternatives, and detailed reference information from the old repository (normally not read; consult only when needed).
+
+`spec.md` and `detailed-spec.md` are both long. Each has an **Index** near the top — read it first to find the relevant section number instead of reading the whole file.
 
 ## Workflow
 
