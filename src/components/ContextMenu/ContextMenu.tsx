@@ -1,16 +1,24 @@
 // Shared custom right-click context menu (`docs/spec.md` §9.1 item 2 —
 // "Unified right-click menu: Adopt. Unify tree, editor, tab bar to single
-// custom context menu"). This is the first consumer (tab bar); the tree and
-// editor context menus (`memo-tree/PLAN.md`, `editor-save/PLAN.md`) should
-// reuse this same component rather than building their own.
-import { useEffect, useRef } from "react";
+// custom context menu"). First consumer was the tab bar; `memo-tree/PLAN.md`'s
+// tree context menu is the first consumer of `submenu` (its "Icon" entry —
+// the `label.color` picker, `memo-tree/PLAN.md` §3/§4) — `editor-save/PLAN.md`'s
+// editor context menu should reuse this same component too rather than
+// building its own.
+import { useEffect, useRef, useState } from "react";
 import "./ContextMenu.css";
 
 export interface ContextMenuItem {
   label: string;
-  onSelect: () => void;
+  /** Omitted for an item that only exists to hold a `submenu` (no direct action of its own). */
+  onSelect?: () => void;
   disabled?: boolean;
   danger?: boolean;
+  /**
+   * Sub-items shown as an indented accordion section beneath this item when clicked (not a
+   * hover flyout — simpler, and still keeps the whole menu open until a leaf item is chosen).
+   */
+  submenu?: ContextMenuItem[];
 }
 
 export interface ContextMenuProps {
@@ -29,6 +37,7 @@ const MENU_MARGIN_PX = 16;
  * menu displays upward when at screen bottom edge"). */
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const handlePointerDown = (e: MouseEvent) => {
@@ -47,7 +56,8 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
-  const estimatedHeight = items.length * ITEM_HEIGHT_PX + MENU_MARGIN_PX;
+  const expandedSubmenuLength = expandedIndex !== null ? (items[expandedIndex]?.submenu?.length ?? 0) : 0;
+  const estimatedHeight = (items.length + expandedSubmenuLength) * ITEM_HEIGHT_PX + MENU_MARGIN_PX;
   const flipUp = y + estimatedHeight > window.innerHeight;
 
   return (
@@ -62,19 +72,46 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       }}
     >
       {items.map((item, i) => (
-        <button
-          key={i}
-          type="button"
-          role="menuitem"
-          className={`ttn-context-menu-item${item.danger ? " ttn-context-menu-item-danger" : ""}`}
-          disabled={item.disabled}
-          onClick={() => {
-            onClose();
-            item.onSelect();
-          }}
-        >
-          {item.label}
-        </button>
+        <div key={i}>
+          <button
+            type="button"
+            role="menuitem"
+            aria-haspopup={item.submenu ? "true" : undefined}
+            aria-expanded={item.submenu ? expandedIndex === i : undefined}
+            className={`ttn-context-menu-item${item.danger ? " ttn-context-menu-item-danger" : ""}${item.submenu ? " ttn-context-menu-item-parent" : ""}`}
+            disabled={item.disabled}
+            onClick={() => {
+              if (item.submenu) {
+                setExpandedIndex((current) => (current === i ? null : i));
+                return;
+              }
+              onClose();
+              item.onSelect?.();
+            }}
+          >
+            {item.label}
+            {item.submenu && <span className="ttn-context-menu-caret">{expandedIndex === i ? "▾" : "▸"}</span>}
+          </button>
+          {item.submenu && expandedIndex === i && (
+            <div className="ttn-context-menu-submenu" role="menu">
+              {item.submenu.map((sub, j) => (
+                <button
+                  key={j}
+                  type="button"
+                  role="menuitem"
+                  className={`ttn-context-menu-item${sub.danger ? " ttn-context-menu-item-danger" : ""}`}
+                  disabled={sub.disabled}
+                  onClick={() => {
+                    onClose();
+                    sub.onSelect?.();
+                  }}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       ))}
     </div>
   );
