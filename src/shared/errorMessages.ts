@@ -9,7 +9,10 @@
 import type { ErrorCode } from "./result";
 
 const MESSAGES: Record<ErrorCode, string> = {
-  NAME_DUPLICATE: "同じ名前のタブが既に存在します",
+  // Neutral wording: this code is shared by both tab operations
+  // (`tab_create`/`tab_rename`) and memo operations (`memo_create`/
+  // `memo_rename`/`memo_move`), so it must not name "tab" specifically.
+  NAME_DUPLICATE: "同じ名前のものが既に存在します",
   NAME_INVALID: "使用できない名前です",
   NOT_FOUND: "対象が見つかりませんでした",
   IO_LOCKED: "ファイルが他のプログラムで使用されています",
