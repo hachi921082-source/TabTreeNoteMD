@@ -17,14 +17,15 @@
 //   `linkOpenExternal` with a bare email/relative path would silently fail rather than open
 //   anything, so these are explicit stubs instead of a broken real call.
 // - `memo`: STUB — `link/PLAN.md`'s `memo:` resolution command does not exist yet.
-// - `headingAnchor`: STUB — `table-of-contents/PLAN.md`'s heading scan/resolution does not exist
-//   yet.
-// Every stub's behavior (silently do nothing) is externally indistinguishable from this app's own
-// confirmed "unresolved link" behavior (`[spec §2.8]`), so none of them are user-visible breakage —
-// they become real once their owning plan lands, by replacing the function body only.
-import type { EditorView } from "@codemirror/view";
+// - `headingAnchor`: REAL — `table-of-contents/PLAN.md`'s `scanHeadings` re-scan + scroll-to-match,
+//   see `resolveAndScrollToHeadingAnchor` below.
+// Every remaining stub's behavior (silently do nothing) is externally indistinguishable from this
+// app's own confirmed "unresolved link" behavior (`[spec §2.8]`), so none of them are user-visible
+// breakage — they become real once their owning plan lands, by replacing the function body only.
+import { EditorView } from "@codemirror/view";
 import { linkOpenExternal } from "../ipc/link";
 import type { AppSettings } from "../shared/models";
+import { scanHeadings } from "./tocGenerator";
 
 export type LinkKind = "url" | "email" | "filePath" | "memo" | "headingAnchor";
 
@@ -91,12 +92,20 @@ export async function resolveAndOpenMemoLink(target: string): Promise<void> {
   console.info(`[markdown-editing] memo: link resolution not implemented yet (see link/PLAN.md); target=${target}`);
 }
 
-/** Stub — `table-of-contents/PLAN.md`'s heading-anchor scan/resolution does not exist yet. Real
- * behavior (`[spec §2.8, §4.2]`): re-scan the current memo's headings at click time and scroll to
- * a match; no match is a silent no-op. */
+/** `#slug` heading-anchor click resolution (`docs/plans/table-of-contents/PLAN.md` §4,
+ * `[detailed-spec §4.6, §5.8]`): re-scans the *current* memo's headings fresh at click time via
+ * `tocGenerator.ts`'s `scanHeadings` — never cached from the last "Update" click — so a link still
+ * resolves correctly even if headings were added/removed/reworded since. No match is a silent
+ * no-op, same as this app's other unresolved-link cases; scoped to the current memo only, no
+ * cross-tab/cross-memo resolution. */
 export function resolveAndScrollToHeadingAnchor(view: EditorView, slug: string): void {
-  console.info(`[markdown-editing] #slug heading-anchor resolution not implemented yet (see table-of-contents/PLAN.md); slug=${slug}`);
-  void view;
+  const match = scanHeadings(view.state).find((h) => h.slug === slug);
+  if (!match) return;
+  view.dispatch({
+    selection: { anchor: match.from },
+    effects: EditorView.scrollIntoView(match.from, { y: "start" }),
+  });
+  view.focus();
 }
 
 /** Stub — `link/PLAN.md`'s email special-casing (`mailto:` prefixing) is not implemented yet. */
