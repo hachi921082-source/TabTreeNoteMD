@@ -1,14 +1,62 @@
 # PLAN: Table of Contents (TOC)
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md`. Triggered
-> from `markdown-editing/PLAN.md` §4's toolbar (row 1, slot 8, "Update"/`RefreshCw`), but specified here
-> as its own plan because it is referenced from multiple other plans: `markdown-editing/PLAN.md`
-> (decoration rendering of `#slug` links, `tocGenerator.ts` module placement), `link/PLAN.md` §1/§5
-> (`#slug` click-resolution shares this file's slugification rule), and `tab-lock/PLAN.md` (operates
-> identically on a decrypted in-session memo buffer, no special-casing needed).
+> Status: implemented (`src/editor/tocGenerator.ts`; `src/editor/links.ts`'s
+> `resolveAndScrollToHeadingAnchor`; wired into `src/components/Editor/Toolbar/MarkdownToolbar.tsx`'s
+> "Update" slot, replacing `decorationCommands.ts`'s former `tocUpdateStub`, which was removed). Depends
+> on `project-architecture/PLAN.md`. Triggered from `markdown-editing/PLAN.md` §4's toolbar (row 1, slot
+> 8, "Update"/`RefreshCw`), but specified here as its own plan because it is referenced from multiple
+> other plans: `markdown-editing/PLAN.md` (decoration rendering of `#slug` links, `tocGenerator.ts`
+> module placement), `link/PLAN.md` §1/§5 (`#slug` click-resolution shares this file's slugification
+> rule), and `tab-lock/PLAN.md` (operates identically on a decrypted in-session memo buffer, no
+> special-casing needed).
 
 Sources: `docs/spec.md` §2.8, §4.2; `docs/detailed-spec.md` §4.6, §5.8, §5.10; `docs/DECISIONS.md` "New
 Feature: Table of Contents (TOC)", "Code-Fence Awareness in Markdown Scanning".
+
+## Implementation Notes (resolutions of this plan's discretion points)
+
+- **Heading scan reuses the shared syntax tree**: `scanHeadings(state)` calls `syntaxTree(state)`
+  (`@codemirror/language`) directly — the same CommonMark+GFM tree `markdownDecorations.ts` builds from
+  `codeMirrorSetup.ts`'s always-on language extension — and matches `ATXHeading[1-6]` node names. A `#`
+  inside a fenced code block is tokenized as plain code text, never one of these node types, so it's
+  excluded with no special-casing, satisfying `DECISIONS.md` "Code-Fence Awareness in Markdown Scanning"
+  by construction rather than by a parallel fence-detection pass.
+- **Slugification** (`slugifyHeading`): lowercase, Unicode-aware punctuation stripping (`\p{L}`/`\p{N}`,
+  so Japanese/other non-Latin heading text slugifies sensibly instead of collapsing to nothing), spaces
+  to hyphens. One addition beyond the plan's literal wording: a heading with no word/number characters
+  at all (e.g. a heading that's only punctuation) would otherwise slugify to an empty string, which
+  isn't a usable `#` anchor — falls back to the fixed placeholder `"section"` in that case. Duplicate
+  slugs get `-1`, `-2`, ... suffixes as specified; both `tocUpdateCommand` (generation) and
+  `resolveAndScrollToHeadingAnchor` (resolution) call this same `scanHeadings`/`slugifyHeading` pair, so
+  the two can never disagree.
+- **Nesting depth is absolute heading level** (`generateTocList`), i.e. an H2 always indents one level
+  relative to H1 regardless of which levels are actually present in a given document — not indentation
+  relative to the document's own shallowest heading. The plan's own example ("an `##` heading nests one
+  level under the preceding `#` heading") reads as absolute-level nesting; this is implementation
+  discretion since the plan doesn't explicitly address a document whose first heading isn't H1.
+- **Marker text**: `<!-- TOC start -->` / `<!-- TOC end -->`, exactly as the plan's own example — no
+  reason to deviate.
+- **Bug found and fixed during self-verification**: the first implementation inserted the new
+  marker-delimited block directly at the cursor position with no surrounding-newline guard. When the
+  cursor sat at a position not already bounded by a line break (e.g. position 0 in a document that
+  starts with a heading), the closing `<!-- TOC end -->` marker glued onto the same line as the
+  following text (`<!-- TOC end --># Title`), which silently broke that line's own Markdown syntax (the
+  heading was no longer parsed as a heading at all — confirmed by a throwaway `tsx` smoke script
+  exercising `scanHeadings`/`tocUpdateCommand` directly against `EditorState`, not committed). Fixed by
+  `needsNewlineBefore`/`needsNewlineAfter` in `tocGenerator.ts`, which prepend/append a `\n` only when
+  the insertion point isn't already adjacent to a line break or a document edge. Re-verified via the
+  same smoke script: insert-then-edit-heading-then-replace round-trips correctly, and the code-fenced
+  `#` is excluded from every scan.
+- **`#slug` click resolution** (`links.ts`'s `resolveAndScrollToHeadingAnchor`): re-scans headings fresh
+  via `scanHeadings(view.state)` at click time (never cached from the last "Update" run, per
+  `[detailed-spec §4.6, §5.8]`), moves the cursor to the matching heading's line start, and scrolls it
+  to the top of the viewport via `EditorView.scrollIntoView`. No match is a silent no-op — indistinguishable from this app's other unresolved-link cases, no error UI.
+- **Not yet exercised via a real `EditorView`/WebView2**: verification above used `EditorState`
+  transactions directly (a throwaway Node/`tsx` script), not `tauri dev` + CDP, since this pass was
+  scoped to the generator/resolver logic itself; the toolbar wiring (`MarkdownToolbar.tsx`) was only
+  typechecked/built, not click-tested interactively. Worth a `reviewer-lite` pass clicking "Update" in a
+  real running memo, including the cross-feature paths `docs/plans/README.md` calls out (Tab Lock,
+  `#slug` resolution after a lock/unlock cycle).
 
 ---
 
