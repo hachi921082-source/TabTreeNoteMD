@@ -31,6 +31,9 @@ import { applyClick, clearSelection, flattenVisible, moveSelection } from "../sh
 export type TreeMutationOutcome = { ok: true } | { ok: false; code: ErrorCode; message: string };
 
 export interface UseTreeResult {
+  /** The tab this tree instance is bound to (`null` when no tab is active). Used by
+   * `TreeView`'s cross-tab DND to no-op a drop back onto the tree's own already-active tab. */
+  activeTabId: string | null;
   nodes: TreeNode[];
   tabName: string;
   locked: boolean;
@@ -308,6 +311,7 @@ export function useTree(tabId: string | null): UseTreeResult {
   );
 
   return {
+    activeTabId: tabId,
     nodes,
     tabName,
     locked,
