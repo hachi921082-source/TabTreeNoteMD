@@ -19,6 +19,11 @@
   padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .ttn-context-menu-item:hover:not(:disabled) {
@@ -32,4 +37,16 @@
 
 .ttn-context-menu-item-danger {
   color: #c0392b;
+}
+
+.ttn-context-menu-caret {
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.ttn-context-menu-submenu {
+  display: flex;
+  flex-direction: column;
+  padding-left: 12px;
+  background: #f7f7f7;
 }
