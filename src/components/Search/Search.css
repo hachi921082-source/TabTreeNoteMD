@@ -1,0 +1,50 @@
+.ttn-search-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 320px;
+}
+
+.ttn-search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ttn-search-row input[type="text"] {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.ttn-search-row button {
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.ttn-search-close {
+  margin-left: auto;
+}
+
+.ttn-search-options {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #444;
+}
+
+.ttn-search-options label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
