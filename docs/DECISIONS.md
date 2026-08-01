@@ -312,11 +312,15 @@ In the old v1, it was a specification that "always ON with no way to disable it"
 
 In the old v3's node lock, initially "not discarded when switching tabs", but there is a history of change to a more conservative standard of "discard immediately when leaving tabs" through the user's own reconsideration (there is little practical benefit in maintaining the decrypted state while not viewing, so priority is given to closing the risk of being away early). Tab lock simply follows this standard as well.
 
-## Reference to Old Repository (Use During Implementation)
+## Implementation Policy: No Legacy Code Reference — Build from Scratch (2026-08-01)
 
-When you want to confirm implementation logic, refer to the corresponding file in the old repository (`c:\Users\m9112\vscode2\TabTreeNote`, read-only, do not edit) using Read, copy the necessary code to this repository, and then modify it.
+**Decision**: `developer-lite` does not read, copy, or adapt source code from the old repository
+(`c:\Users\m9112\vscode2\TabTreeNote`) during implementation. Every feature is implemented from
+`spec.md`/`detailed-spec.md`/the feature's own `PLAN.md` only — those are treated as sufficient and
+self-contained. This supersedes the project's earlier "reference the old repo's code during
+implementation" policy.
 
-- `spec.md` (the same content has been copied to this repository. A requirements baseline integrating DESIGN.md/DESIGNv3.md/00-core-principles.md/data-model.md/post-M7-changes.md/post-M10-changes.md/issue.md from the old repository)
-- `src/main/crypto/*` (encryption and node lock implementation. Reference for implementing tab lock)
-- `src/main/fs/atomicWrite.ts` and other persistence layers
-- `AGENT_LOG.md` (history of past implementation and review exchanges. Keep for reference only)
+This is scoped to *source code* only. The old repository's specification documents remain the
+historical origin of the product requirements already consolidated into `spec.md` (visible throughout
+as `[DESIGN §x]`-style citations) — that provenance is unaffected. `CLAUDE.md`'s "reference only, do
+not Edit/Write/commit" rule for that path also still applies regardless of this policy.
