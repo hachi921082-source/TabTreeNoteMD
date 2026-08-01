@@ -12,10 +12,11 @@
 > Crash-mid-lock recovery (marker-based, resumable/rollback): see the companion
 > [`CRASH-RECOVERY.md`](CRASH-RECOVERY.md).
 
-Sources: `docs/spec.md` §2.9, §4.1, §6; `docs/detailed-spec.md` §3.4, §5.9; `docs/DECISIONS.md`
-(scheme reused from legacy `.txtenc`, see "Reference to Old Repository" for `src/main/crypto/*`
-pointers; "Tab Lock: Crash-Mid-Lock Recovery via Explicit Marker + Resume/Rollback" for the recovery
-flow now detailed in `CRASH-RECOVERY.md`).
+Sources: `docs/spec.md` §2.9, §4.1, §6; `docs/detailed-spec.md` §3.4, §5.9; `docs/DECISIONS.md` ("Tab
+Lock: Crash-Mid-Lock Recovery via Explicit Marker + Resume/Rollback" for the recovery flow now detailed
+in `CRASH-RECOVERY.md`; "Implementation Policy: No Legacy Code Reference — Build from Scratch" — the
+AES-256-GCM/scrypt scheme is fully specified in §2 below and does not require reading the old
+repository's `src/main/crypto/*`).
 
 ---
 
