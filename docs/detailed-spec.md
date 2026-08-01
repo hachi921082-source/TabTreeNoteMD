@@ -12,6 +12,31 @@
 
 ---
 
+## Index
+
+Keep this in sync whenever a section is added, renamed, or moved below.
+
+- **§0 How to Use This Document** — relationship to `spec.md`; what's a "starting default" vs. binding.
+- **§1 Terminology / Glossary** — Tab/Memo/Tree/Edit Lock/Tab Lock/Lock Session/Self-Write Registry/Metadata JSON/App Settings JSON definitions.
+- **§2 Application Structure Overview** — Tauri backend/frontend split, `Result<T>` boundary, backend→frontend events overview.
+- **§3 Data Model — Detailed**
+  - §3.1 On-Disk Layout — folder-tree diagram (tab folder contents, app-adjacent config folder).
+  - §3.2 App Settings JSON — Full Schema — concrete JSON example; `toolbarPosition`/`toolbarOrder`; `tabs[i].locked` cache semantics.
+  - §3.3 Tab Metadata JSON — Unlocked Tab — concrete JSON example; `label.color` 5-choice palette; `scrollPosition`; `viewMode` fallback.
+  - §3.4 Tab Lock Blob — Locked Tab — lock-blob JSON shape, decrypted payload shape, token/IV/salt rules, async-scrypt requirement.
+  - §3.5 Runtime Tree vs Persisted Tree — reconciliation rules on tab open (dropped/appended entries, flat-rebuild reuse).
+  - §3.6 Image Paste Storage — filename rule, no-orphan-cleanup policy.
+  - §3.7 Constants Inventory — table of concrete numeric defaults (retry counts, TTL, scrypt params, etc.).
+- **§4 Backend Operation Inventory** — logical command list by domain: §4.1 Tab, §4.2 Tree/memo, §4.3 Editor/save, §4.4 Search, §4.5 Settings, §4.6 Link, §4.7 Image.
+- **§5 Feature Behavior Details** — elaboration per feature: §5.1 Tab Management, §5.2 Memo Tree, §5.3 Text Editing, §5.4 Search/Index, §5.5 Appearance/Theme, §5.6 Persistence/Save Triggers, §5.7 Window/Operation, §5.8 Link Functionality, §5.9 Tab Lock End-to-End Flows (locking/crash-recovery/unlocking/cross-tab DND), §5.10 Markdown Editing (16-slot toolbar, icon set, sanitization allowlist, TOC).
+- **§6 Cross-Cutting Mechanism Details** — §6.1 Atomic Write concrete sequence, §6.2 Self-Write Registry, §6.3 Sync Order, §6.4 Conflict Detection & Corruption Recovery, §6.5 other Post-M7 rules (folder-not-found, validation strictness, no native dialogs, Esc rule).
+- **§7 Error Handling — Expanded** — table of every `ErrorCode`: trigger scenario + expected UI response.
+- **§8 Non-Functional Elaboration** — performance qualitative bar, backup/portability acceptance check.
+- **§9 Deferred-to-Implementation Details** — explicit list of `developer-lite`-discretion items (not ambiguities).
+- **§10 Open Questions Requiring User Decision** — currently empty; resolved-item history.
+
+---
+
 ## 0. How to Use This Document
 
 - `spec.md` = authoritative "what is decided." `detailed-spec.md` (this file) = "how the decided
@@ -90,10 +115,10 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
   "appVersion": "0.1.0",
   "tabs": [
     { "id": "t1", "name": "Work", "folderPath": "C:\\notes\\work" },
-    { "id": "t2", "name": "(locked)", "folderPath": "C:\\notes\\private", "locked": true }
+    { "id": "t2", "name": "🔒", "folderPath": "C:\\notes\\private", "locked": true }
   ],
   // Tab order = array order (single source of truth, no separate "order" field).
-  "window": { "x": 100, "y": 100, "width": 1200, "height": 800, "maximized": false, "treeWidth": 260, "treeSide": "left" },
+  "window": { "x": 100, "y": 100, "width": 1200, "height": 800, "maximized": false, "treeWidth": 260, "treeSide": "left", "toolbarPosition": { "x": 480, "y": 120 }, "toolbarOrder": ["undo","color","heading","list","bold","strikethrough","link","tocUpdate","redo","fontSize","codeBlock","quote","italic","table","image","rearrangeToggle"] },
   "theme": "dark",
   "uiFontScale": 1.0,
   "lastOpened": { "tabId": "t1", "memoName": "Shopping list" },
@@ -110,11 +135,23 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
   `.tabtreenote.json` have a `lock` field instead of a `tree` field" (§3.4). If the cache and the real
   file ever disagree (e.g. after an external folder copy), the real file wins; the cache is corrected
   on next read.
-- `tabs[i].name` for a locked tab holds a placeholder string (not the real name); exact placeholder
-  text is a UI-copy decision for implementation, not a spec concern.
+- `tabs[i].name` for a locked tab holds a placeholder string (not the real name). **Confirmed**: the
+  placeholder is the 🔒 glyph alone, with no accompanying text (e.g. not "🔒 (locked)") — decided by
+  the user; see `DECISIONS.md` ("Tab-Lock Placeholder Display Name: 🔒 Glyph Alone").
 - Partial updates (settings dialog saving one field) use a deep-partial patch shape
   (`AppSettingsPatch`, mirroring old repo's `data-model.md` §2 pattern) merged into the stored object,
   then atomically saved (§6.1).
+- `window.toolbarPosition` (`{ x: number; y: number }`, window-relative coordinates) persists the
+  Markdown-editing toolbar's free-floating drag position across app restarts (`[spec §4.2]`'s
+  "Free-position float panel"; persistence and `window`-vs-`MemoEditorSettings` placement confirmed
+  per `DECISIONS.md` "UI-State Persistence Decisions"). Absent/`null` on first launch means the toolbar
+  uses its implementation-chosen default position.
+- `window.toolbarOrder` (16-element array of action-ID strings) persists the result of rearrange-mode
+  reordering (§5.10) across app restarts (`DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed
+  Grid Layout"). The **set** of 16 IDs is fixed (one entry per action in the §5.10 grid, no add/remove);
+  array order is slot order, read left-to-right then top-to-bottom (row 1 slots 1–8, then row 2 slots
+  1–8). Default value on first launch is the finalized default layout shown above. Exact ID spellings:
+  §9.
 
 ### 3.3 Tab Metadata JSON — Unlocked Tab
 
@@ -126,8 +163,8 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
     {
       "memoName": "Shopping list",
       "expanded": true,
-      "label": { "color": "blue", "kind": null },
-      "editor": { "wrap": "window", "tabWidth": null, "softTab": null, "showLineNumbers": null, "fontSize": null, "viewMode": null },
+      "label": { "color": "#4a90d9", "kind": null },
+      "editor": { "wrap": "window", "tabWidth": null, "softTab": null, "showLineNumbers": null, "fontSize": null, "viewMode": null, "scrollPosition": 340 },
       "locked": false,
       "children": []
     }
@@ -141,8 +178,30 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
   a memo with `viewMode: null`/absent opens in whichever mode `AppSettings.editorDefaults.viewMode`
   currently specifies; a memo with an explicit `viewMode` always opens in that mode regardless of the
   global default. Confirmed engine choice: CodeMirror 6 (`[spec §4.2]`, `DECISIONS.md`) — see §5.10.
-- `label.kind` is reserved for a memo "type" tag; concrete allowed values are a UI-detail decision
-  (not blocking — an empty/`null` default is always valid).
+- `editor.scrollPosition` (integer, **1-indexed document line number** of the line visible at the top
+  of the viewport at the time of saving — **not** a raw pixel/scrollTop value, confirmed per
+  `DECISIONS.md` "Scroll Position: Document-Position-Based Anchor, Not Raw Pixel Offset") **persists
+  this memo's scroll position across app restarts**, decided by the user (see `DECISIONS.md`,
+  "UI-State Persistence Decisions"; supersedes the earlier session-only-by-default framing in §5.3
+  below). `null`/absent means "no remembered position yet" (e.g. a never-opened or freshly-created
+  memo), and the editor opens at the top as usual.
+- **`label.color` — confirmed concrete 5-choice palette, adopted verbatim from the legacy app**, set
+  via the right-click "Icon" submenu confirmed in `[spec §2.2]` (this submenu **is** the `label.color`
+  picker — see the Icon-submenu bullet in §5.2 below, and `DECISIONS.md` "Icon Submenu Clarified as the
+  `label.color` Picker..." for the investigation that established this). Values:
+
+  | Choice | `label.color` value |
+  |---|---|
+  | None | `null` |
+  | Red | `"#e05a5a"` |
+  | Blue | `"#4a90d9"` |
+  | Green | `"#4caf50"` |
+  | Yellow | `"#e0c040"` |
+
+  No other values are valid; this is a closed enum, not a free-form color field.
+- `label.kind` **remains reserved and unimplemented for v1** (`null` only, `DECISIONS.md` "Icon Submenu
+  Clarified as the `label.color` Picker..."). The Icon submenu above sets `label.color` only, never
+  `label.kind`.
 
 ### 3.4 Tab Lock Blob — Locked Tab (elaborates `[spec §3.4 line "type confirmed at detailed design phase"]` and `[spec §4.1]`)
 
@@ -162,10 +221,9 @@ When a tab is locked, its `.tabtreenote.json` has this shape instead of the unlo
 }
 ```
 
-- `hint` and the `kdf`/`cipher` parameters are **plaintext fields outside the ciphertext** (a hint
-  that lived inside the encrypted payload could never be shown before the password is entered, which
-  would defeat its purpose). This mirrors the legacy `.txtenc` container pattern reused per
-  `DECISIONS.md`.
+- `hint` and the `kdf`/`cipher` parameters are **plaintext fields outside the ciphertext** — a hint must
+  be readable before the password is entered. Mirrors the legacy `.txtenc` container pattern
+  (`DECISIONS.md`).
 - `ciphertextB64` decrypts (AES-256-GCM, key = scrypt(password, salt, N/r/p/keyLen)) to a JSON payload
   with this logical shape (the "lock payload"):
 
@@ -179,12 +237,9 @@ When a tab is locked, its `.tabtreenote.json` has this shape instead of the unlo
 }
 ```
 
-- `token` is the on-disk filename of the corresponding obfuscated file, with **no extension**: an
-  extension would leak information about the original file (that it was a `.md` text memo, as opposed
-  to some other format) to anyone browsing the locked tab's folder outside the app, which defeats part
-  of the purpose of obfuscating the filename in the first place. Tokens are 128-bit random hex
-  (`[spec §4.1 pt.1]`), regenerated on collision. (§5.9's lock-flow steps reference this rule back to
-  this section.)
+- `token` is the on-disk filename of the corresponding obfuscated file, with **no extension** — an
+  extension would leak that the original file was a `.md` text memo to anyone browsing the folder
+  outside the app. Tokens are 128-bit random hex (`[spec §4.1 pt.1]`), regenerated on collision.
 - Each obfuscated memo file's **content** is independently encrypted (AES-256-GCM, same
   password-derived key, a fresh random 12-byte IV per save). The exact on-disk byte layout of an
   encrypted memo body (e.g. `[IV][ciphertext][GCM tag]`, with or without a small format-version
@@ -279,13 +334,10 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
   `.tabtreenote.json` (if present) is reconciled per §3.5, otherwise created fresh from a folder scan.
 - **Rename tab** — updates `AppSettings.tabs[i].name`. Errors: `NAME_DUPLICATE`, `NAME_INVALID`.
 - **Reorder tabs** — replaces `AppSettings.tabs` array order.
-- **Remove tab** — moves folder registration out of `AppSettings.tabs` (does **not** delete the folder
-  or its files — "delete" at the tab level only means "unregister"; deleting the underlying files is
-  an OS-level user action outside the app, consistent with tabs being pointers to folders). This is a
-  deliberate, user-confirmed decision (not an unresolved gap) — the legacy app's separate "delete tab
-  and folder, to trash" action was considered and rejected; see `DECISIONS.md` ("Tab Deletion
-  Semantics: Unregister-Only, No Folder-Trash Option") for the full rationale. Rejected with
-  `TAB_LOCKED` if the tab is currently locked and has no active session (`[spec §4.1 pt.7]`).
+- **Remove tab** — moves folder registration out of `AppSettings.tabs`. Does **not** delete or trash the
+  folder or its files — unregister-only (`DECISIONS.md` "Tab Deletion Semantics: Unregister-Only, No
+  Folder-Trash Option"). Rejected with `TAB_LOCKED` if the tab is currently locked and has no active
+  session (`[spec §4.1 pt.7]`).
 - **Pin tab to foreground** — session-only UI state (📌), not persisted (`[spec §2.1]`).
 - **Open tab folder location** — OS "reveal in Explorer," standard API only.
 - **Lock tab** / **Unlock tab (start session)** / **End session (leave tab)** — see §5.9 for the full
@@ -317,6 +369,10 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
 - **Text conversion operations** (uppercase/lowercase/hiragana/katakana/half-width/full-width,
   tab↔space) and **checkbox cycle** — pure in-editor text transforms, no separate backend call
   strictly required (may be frontend-only), but must feed into the same undo history as manual edits.
+- **Generate/update Table of Contents** (§5.10) — pure in-editor text transform triggered by the
+  toolbar's "Update" button: scan headings, slugify, insert-or-replace the marker-delimited TOC block
+  as a single transaction. Same "no separate backend call strictly required, must feed into undo
+  history" treatment as the text-conversion operations above.
 
 ### 4.4 Search domain
 - **Full-text search query** — searches the in-memory index built at startup (§5.4), excluding any
@@ -338,6 +394,9 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
   no active session (`[spec §2.8, §4.1]`).
 - **Open external link** (URL / email / file path) — OS-standard API only, optional confirm dialog
   gated by `AppSettings.links.confirmBeforeOpen`.
+- **Resolve `#slug` heading-anchor link** (TOC feature, §5.10) — re-scans the *current* memo's headings
+  for a slug match at click time (not cached from the last "Update" run); no match is a silent no-op,
+  nothing surfaced to the user.
 
 ### 4.7 Image domain
 - **Save pasted image** — writes file per §3.6, returns relative path + dimensions for the editor to
@@ -350,20 +409,16 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
 ### 5.1 Tab Management — Elaboration
 
 - Tab name uniqueness check is applied after trimming, per `[spec §5.11]`'s general name-sanitization
-  rule ("Tab names must be unique"). Whether the comparison is case-insensitive is **not** specified by
-  `spec.md` — unlike memo names, which inherit case-insensitivity from the NTFS filesystem (two memo
-  names differing only by case cannot coexist as files in the same folder regardless of app logic), tab
-  names are a free-form app-level display string with no such filesystem constraint. **Starting
-  default, not a hard requirement** (per §0's convention): treat the uniqueness check as
-  case-insensitive, consistent with how memo-name uniqueness behaves in practice; `developer-lite` may
-  implement it as case-sensitive instead if that proves simpler, since `spec.md` does not mandate
-  either behavior.
+  rule ("Tab names must be unique"). Case-sensitivity of the comparison is **not** specified by
+  `spec.md`. **Starting default** (§0): case-insensitive; `developer-lite` may implement it as
+  case-sensitive instead if simpler.
 - "Create new" and "register existing folder" both go through the OS folder-picker; the two differ
   only in whether an existing `.tabtreenote.json` is expected. If a picked folder already has one, it
   is reconciled (§3.5) rather than overwritten.
 - Drag-reorder of tabs only changes `AppSettings.tabs` array order; no per-tab file is touched.
-- Mouse wheel over the tab bar cycles the active tab; exact wheel-direction-to-next/prev mapping is a
-  UI-detail decision, not blocking.
+- **Mouse-wheel tab switching removed from v1 scope** (user decision, `[spec §2.1]` updated
+  accordingly; see `DECISIONS.md` "Mouse-Wheel Tab Switching: Removed from v1 Scope"). Click and
+  keyboard-shortcut switching are unaffected.
 
 ### 5.2 Memo Tree (Left Pane) — Elaboration
 
@@ -377,9 +432,13 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
 - Right-click context menu positioning: flips upward when it would otherwise overflow the bottom of
   the screen (`[spec §2.2]`); this same custom menu component is shared with the editor and tab bar
   per `[spec §9.1 item 2]`.
+- **"Icon" submenu** (`[spec §2.2]`, right-click menu) **is the `label.color` picker**: presents the
+  5-choice palette confirmed in §3.3 above (None / Red / Blue / Green / Yellow), applying the selected
+  value to the memo's `label.color`. It does not set `label.kind` (which stays reserved/unimplemented
+  for v1, §3.3) — see `DECISIONS.md` for how this connection was established.
 - Dedicated force-delete shortcut (`[spec §9.1 item 3]`): must work regardless of current focus target
-  and must not depend on the tree row having focus. Exact key binding (e.g. `Ctrl+Delete`) is an
-  implementation-discretion item (§9).
+  and must not depend on the tree row having focus. **Confirmed key binding: `Ctrl+Delete`** (no longer
+  just an example — see `DECISIONS.md` "Force-Delete Shortcut Key: Confirmed as `Ctrl+Delete`").
 
 ### 5.3 Text Editing (Right Pane) — Elaboration
 
@@ -399,9 +458,16 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
 - **Checkbox click toggle**: clicking directly on a rendered `☐`/`☑` glyph in the live-view mode
   toggles it in place, independent of the right-click "Check" menu action that inserts a new one
   (`[spec §2.3]`).
-- Per-memo scroll position is remembered across memo switches within the same app session (not
-  necessarily persisted across app restarts unless bundled into `MemoEditorSettings` — `spec.md` does
-  not require cross-restart scroll persistence, so this is not required, but is not prohibited either).
+- Per-memo scroll position is remembered across memo switches within the same app session, **and is
+  persisted across app restarts** (confirmed by user decision, not merely permitted — see
+  `DECISIONS.md` "UI-State Persistence Decisions"), stored in `MemoEditorSettings.scrollPosition`
+  (§3.3) inside the tab's `.tabtreenote.json`.
+- **Document-position-based, not pixel-based** (`DECISIONS.md` "Scroll Position: Document-Position-Based
+  Anchor, Not Raw Pixel Offset"): a raw pixel/scrollTop value is meaningless across a live/source view
+  toggle or a font-size change, since decorations (headings, resized images, etc.) change visual line
+  heights independently of document position. Storing the top-visible line number instead means the
+  same document line is restored to the top of the viewport regardless of which view mode or font size
+  is active at restore time.
 
 ### 5.4 Search and Full-Text Index — Elaboration
 
@@ -416,6 +482,12 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
   retaining the human-readable text content (heading text, list item text, code block contents, link
   label text). Whether raw URLs inside link targets are retained is an implementation nicety, not a
   spec-mandated behavior — either choice is acceptable.
+- **Fenced code blocks must be recognized as such, not scanned by the same marker-stripping pass**
+  (`DECISIONS.md` "Code-Fence Awareness in Markdown Scanning"): the characters being stripped as
+  "structural markers" (`#`, `*`, `` ` ``, `>`) are also common, legitimate characters inside code
+  (comments, multiplication, shell redirects). Code block content must be identified via a real
+  fence-boundary scan and retained verbatim (not run through the marker-stripping regex), consistent
+  with this section's own "retaining... code block contents" requirement above.
 - **Index data structure/algorithm** (inverted index vs. linear scan over cached plaintext, etc.) is
   left to `developer-lite`; `spec.md` only mandates "lightweight in-memory index, no external DB or
   persistent index" (`[spec §2.4]`). At the "hundreds to thousands of memos" scale (`[spec §6]`), a
@@ -425,10 +497,9 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
   patch path once confirmed as a genuine external change (not a self-write).
 - **Search history** (`[spec §2.4]`, "Search history" — distinct from the full-text index above; this
   refers to the in-memo search/replace feature's history of recently-used search/replace strings, e.g.
-  surfaced as a dropdown/autocomplete in the in-memo search UI). `spec.md` does not specify whether this
-  history persists across app restarts or is session-only. **Starting default, not a hard requirement**
-  (per §0): treat it as session-only (in-memory, cleared on app restart); `developer-lite` may persist
-  it (e.g. folded into `AppSettings`) instead if convenient, since `spec.md` leaves this open.
+  surfaced as a dropdown/autocomplete in the in-memo search UI). **Confirmed session-only** (in-memory,
+  cleared on app restart) — decided by the user; see `DECISIONS.md` ("UI-State Persistence Decisions").
+  Not persisted anywhere, including `AppSettings`.
 
 ### 5.5 Appearance and Theme — Elaboration
 
@@ -489,6 +560,10 @@ previously-open memo), app minimize, app exit, explicit `Ctrl+S`, periodic autos
 - Markdown link coexistence (`[spec §4.2]`): `[text](memo:...)` and bare `memo:...` auto-link
   recognition use the same resolution logic; the only difference is how the clickable region is
   determined (whole bare token vs. the link's visible text span).
+- **Same-document heading-anchor links (`#slug`)** (new, TOC feature, §5.10): resolution is scoped to
+  the currently open memo only, re-computed at click time from a fresh heading scan (not from whatever
+  the TOC block last generated), so a link still resolves correctly even if headings were edited since
+  the last "Update" click. A non-matching slug does nothing — no error UI, per `[spec §4.2, §2.8]`.
 
 ### 5.9 Tab Lock — End-to-End Flows
 
@@ -498,15 +573,50 @@ Elaborates `[spec §4.1]` into concrete sequences.
 1. If any memo in this tab (or its descendants) is currently open and has unsaved changes, force a
    save-confirm (auto-save-and-close), per `[spec §8]`, before proceeding.
 2. Read the current unlocked tree (`MetaTreeNode[]`, real names) from `.tabtreenote.json`.
-3. For each `.md` file directly under the tab folder: generate a fresh 128-bit hex token (retry on
-   filesystem-collision), register both the source and destination paths in the self-write registry
-   (§6.2), encrypt the file's content (fresh IV), then rename+replace with the encrypted content under
-   the token filename (no extension, §3.4).
-4. Build the lock payload (`realTabName`, the tree with real names intact, `fileMap` of
-   real-name↔token pairs), encrypt it, and atomically write the resulting `lock` blob into
+3. **Write the in-progress marker** (crash-safety measure, `DECISIONS.md` "Tab Lock: Crash-Mid-Lock
+   Recovery via Explicit Marker + Resume/Rollback"): before any rename happens, compute the **full**
+   planned `fileMap` — a fresh 128-bit hex token for *every* `.md` file directly under the tab folder
+   (retry on filesystem-collision), none generated lazily during the loop below — and atomically write
+   it (§6.1) to a sibling marker (e.g. `.tabtreenote.lock-inprogress`; exact filename/format is
+   `developer-lite`'s call, see `plans/tab-lock/PLAN.md` for why the complete mapping must be written
+   up front rather than incrementally). The marker write itself is registered in the self-write
+   registry (§6.2) like any other self-caused FS event.
+4. For each entry in the marker's `fileMap`, in any order: register both the source and destination
+   paths in the self-write registry (§6.2), encrypt the file's content (fresh IV), then rename+replace
+   with the encrypted content under the token filename (no extension, §3.4).
+5. Build the lock payload (`realTabName`, the tree with real names intact, the same `fileMap` written
+   to the marker in step 3), encrypt it, and atomically write the resulting `lock` blob into
    `.tabtreenote.json`, replacing the `tree` field.
-5. Update `AppSettings.tabs[i]`: set `locked: true`, replace `name` with a placeholder.
-6. Any full-text index entries for this tab are purged.
+6. **Delete the in-progress marker** (self-write-registered, like any other self-caused delete) only
+   after step 5 has succeeded. This is the sole success signal recovery relies on: a marker still
+   present on next access means the lock operation did not finish.
+7. Update `AppSettings.tabs[i]`: set `locked: true`, replace `name` with a placeholder.
+8. Any full-text index entries for this tab are purged.
+
+**Recovery on tab-folder access (crash mid-lock)**: elaborates `DECISIONS.md`'s Option B resolution of
+former `QA.md` Q1. Whenever a tab's folder is accessed and its in-progress marker is found still
+present, the app must resolve it before treating the tab as normally lockable/unlockable again:
+
+- **Per-entry state check**: for each `{ memoName, token }` pair recorded in the marker, exactly one of
+  the following is expected to be true on disk: `<memoName>.md` still exists and the `<token>` file does
+  not (this entry's rename never happened, or was rolled back already), or the `<token>` file exists and
+  `<memoName>.md` does not (this entry's rename completed). Neither-exists or both-exist is an anomalous
+  state (e.g. external interference during the crash window) that `developer-lite` must decide how to
+  surface — not expected in the normal crash-only case, so no specific handling is mandated here.
+- **Finish vs. roll back**: once every entry's state is known, the app deterministically either (a)
+  completes the lock by renaming/encrypting the remaining not-yet-renamed entries and then proceeding
+  from steps 5–6 above (build and write the lock blob, then delete the marker), or (b) rolls back by
+  renaming/decrypting every already-renamed entry back to its original `.md` name and then deleting the
+  marker without ever writing a `lock` blob (the tab remains unlocked, as if the lock operation was
+  never started). Both paths are idempotent and safe to re-attempt if interrupted again. **Which of the
+  two the app picks, and any tie-breaking rule for a case where some entries already succeeded and
+  others didn't, is left to `developer-lite`'s `PLAN.md`-level judgment** — the only spec-level
+  requirement is that the outcome is always one of these two fully-consistent end states, never a
+  half-renamed tab left for the user to discover manually.
+- **Trigger point**: whether this check runs for every registered tab at app startup, or lazily the
+  first time that specific tab's folder is opened/selected, is also left to `PLAN.md`-level judgment.
+- Every rename/decrypt/encrypt performed during recovery is self-write-registered (§6.2) and uses the
+  same atomic-write mechanism (§6.1) as the rest of this flow — no special-cased I/O path for recovery.
 
 **Unlocking (starting a session)**:
 1. User selects the locked (🔒) tab and enters a password (hint, if set, shown alongside the prompt).
@@ -559,7 +669,16 @@ delete normally (delete is then equivalent to deleting any other tab's registrat
   manual testing and easy to hit in daily use. `developer-lite` should plan explicit test coverage for:
   editing text at a decoration boundary, editing inside a decorated range (e.g. inside `**bold**`),
   clicking to place the cursor on/near a decoration widget (e.g. a rendered checkbox or resized image),
-  and rapid live/source toggling while a selection spans a decorated range.
+  rapid live/source toggling while a selection spans a decorated range, and a `memo:`/`[text](memo:...)`
+  link rendered inside a `<span style="color:...">`-decorated range (nested/overlapping decorations,
+  `DECISIONS.md` "Overlapping Text-Styling Decorations: Implement as Composable Mark Decorations").
+- **Overlapping styling decorations should compose without special-casing if implemented as CodeMirror
+  "mark" decorations** (a CSS class/style applied to a text range) rather than "widget" decorations (a
+  text range replaced by a rendered element) — two mark decorations (e.g. color-span styling and link
+  click-affordance styling) can coexist over the same or overlapping ranges without the cursor-mapping
+  risk described above, which is specific to widget replacement and to hidden-syntax-marker/visible-text
+  length mismatches. This is a lower-risk sub-case of the same defect zone, not a separate open design
+  question — still included in the required test coverage above as a concrete regression check.
 - **Live view vs source toggle**: default view renders CommonMark-equivalent formatting inline
   (headings, lists, quotes, code blocks, tables, emphasis, horizontal rules, links) as you type, by
   applying/removing the decoration layer over the buffer; a toggle switches the same memo to raw-text
@@ -575,15 +694,98 @@ delete normally (delete is then equivalent to deleting any other tab's registrat
   runtime toggle described above — the runtime toggle changes the *current* session's display only and
   does not, by itself, change either setting value (persisting a toggle as the new per-memo/global
   default, if ever desired, would be a separate feature not currently in scope).
-- **Toolbar**: a floating, freely repositionable (drag anywhere within the window) panel exposing
-  heading level, list (bullet/numbered/checklist), quote, code block, table insert, bold/italic, link
-  insert, and image insert actions. Each action applies to the current selection or inserts at the
-  cursor, consistent with standard Markdown-editor toolbar conventions.
+- **Toolbar — finalized 16-slot layout** (`DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed
+  Grid Layout"): a floating, freely repositionable (drag anywhere within the window) panel, fixed
+  **8 columns × 2 rows = 16 slots, no blanks**:
+
+  | | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 |
+  |---|---|---|---|---|---|---|---|---|
+  | Row 1 | Undo | Color | Heading | List | Bold | Strikethrough | Link insert | Update (TOC) |
+  | Row 2 | Redo | Font size | Code block | Quote | Italic | Table insert | Image insert | Rearrange-mode toggle |
+
+  Bold and Italic are two separate actions/icons (the earlier "combined single button" idea is
+  dropped). Each action applies to the current selection or inserts at the cursor, consistent with
+  standard Markdown-editor toolbar conventions.
+- **Icon set**: Lucide (MIT-licensed open-source SVG icon set), bundled locally into the app — no
+  CDN/network dependency, consistent with the app's portable/offline design (`[spec §0, §6]`). Mapping:
+
+  | Action | Lucide icon name |
+  |---|---|
+  | Undo | `Undo2` |
+  | Redo | `Redo2` |
+  | Color | `Palette` |
+  | Font size | `ALargeSmall` |
+  | Heading | `Heading` |
+  | List | `List` |
+  | Quote | `Quote` |
+  | Code block | `Code` |
+  | Table insert | `Table` |
+  | Bold | `Bold` |
+  | Italic | `Italic` |
+  | Strikethrough | `Strikethrough` |
+  | Link insert | `Link` |
+  | Image insert | `Image` |
+  | Update (TOC) | `RefreshCw` |
+  | Rearrange-mode toggle | `GripVertical` |
+
+- **Rearrange mode**: the 16th slot (`GripVertical`) toggles rearrange mode on/off; it does not open a
+  settings screen.
+  - **OFF (default)**: clicking any of the other 15 icons invokes that icon's action immediately, as
+    normal.
+  - **ON**: clicking an icon does not invoke its action — only dragging works, to reorder icons among
+    the 16 slots. The *set* of 16 actions is fixed; only positions change (no add/remove/hide slot).
+  - Exit rearrange mode by clicking the toggle icon again, or by pressing Esc.
+  - Visual indicator while ON: the toolbar's border/background changes (whole-toolbar tint), so the
+    mode is unambiguous at a glance.
+- **Persistence**: the toolbar's dragged position persists across app restarts, stored in
+  `AppSettings.window.toolbarPosition` (§3.2, `DECISIONS.md` "UI-State Persistence Decisions"). The icon
+  order resulting from rearrange mode also persists, stored in `AppSettings.window.toolbarOrder` (§3.2,
+  `DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed Grid Layout").
+
+- **Table of Contents (TOC) — new v1 feature, triggered by the toolbar's "Update" button** (row 1,
+  slot 8; `[spec §4.2, §2.8]`):
+  - **Trigger**: manual only. Clicking "Update" runs the scan/generate/insert-or-replace steps below
+    once. Must never run automatically or in the background while the user types or edits headings
+    elsewhere — same category as any other discrete toolbar insert action (e.g. Table insert), not a
+    live/reactive feature.
+  - **Heading scan**: on click, scan the current memo's CodeMirror buffer for Markdown headings (`#`
+    through `######`), collecting level + heading text, in document order. **Must use the same
+    Markdown-aware parse (respecting fenced-code-block boundaries) as the decoration layer, not an
+    independent line-by-line `#`-regex** (`DECISIONS.md` "Code-Fence Awareness in Markdown Scanning") —
+    a `#` inside a fenced code block is not a heading under CommonMark, and a naive regex scan would
+    incorrectly generate a TOC entry from one (e.g. a shell/Python comment).
+  - **Slug generation**: GitHub-style slugification (lowercase; spaces → hyphens; strip punctuation not
+    part of a word). On duplicate slugs within the same document, append `-1`, `-2`, etc. to each
+    later occurrence (first occurrence keeps the bare slug) — the same convention as re-used by the
+    heading-anchor click resolution in §4.6/§5.8, so generation and resolution stay consistent.
+  - **TOC block generation**: a nested Markdown list of `[heading text](#slug)` links, nesting to match
+    heading-level hierarchy (e.g. an `##` heading nests one level under the preceding `#` heading).
+  - **Marker-delimited block**: the generated TOC is wrapped in a pair of HTML-comment markers, e.g.
+    `<!-- TOC start -->` / `<!-- TOC end -->` — exact marker text is `developer-lite`'s call (§9), as
+    long as it stays inert/invisible in live-view rendering (HTML comments already render as nothing
+    under the CommonMark-equivalent support in `[spec §4.2]`, so no new sanitization-allowlist entry is
+    needed for the markers themselves).
+  - **Insert vs. replace**: on click, scan the document for an existing marker-delimited block.
+    - If found: replace the block's contents (between the markers) with the freshly generated TOC, as a
+      single CodeMirror transaction (one undo step — consistent with every other toolbar action in this
+      section).
+    - If not found: insert a new marker-delimited block at the current cursor position.
+  - **No live/background auto-update**: regeneration only happens on an explicit "Update" click; the
+    feature must not attempt to detect heading edits and refresh the TOC on its own.
+  - **Persistence**: the TOC block is ordinary Markdown text — saved and reloaded as part of the memo
+    body like the rest of the memo, with no separate storage or metadata field.
+  - **New link type — same-document heading anchors (`#slug`)**: see §4.6/§5.8 for click-resolution
+    behavior (re-scan current memo, CodeMirror scroll-to-position, silent no-op on no match).
+  - **Scope**: self-contained — no cross-memo or cross-tab resolution, no persistence changes beyond
+    the memo body text itself.
 - **Sanitization allowlist** (elaborates `[spec §4.2]`), applied to preview/live-view rendering:
-  - Allowed tags: `<img>` with only `src` (relative path only — reject absolute paths, `file://`, and
-    any scheme other than a same-folder-relative reference) and `width`/`height` attributes; `<span>`
-    with only a `style` attribute, and within `style`, only the `color` and `font-size` properties
-    (any other CSS property in the same `style` string is stripped, not the whole tag).
+  - Allowed tags: `<img>` with only `src` (relative path only — reject absolute paths, `file://`, any
+    scheme other than a same-folder-relative reference, **and any path containing a `..` segment**, to
+    prevent a hand-typed/pasted `src` from referencing a file outside the tab folder,
+    `DECISIONS.md` "Image `src` Allowlist: Reject `..` Path-Traversal Segments") and `width`/`height`
+    attributes; `<span>` with only a `style` attribute, and within `style`, only the `color` and
+    `font-size` properties (any other CSS property in the same `style` string is stripped, not the
+    whole tag).
   - Everything else — `<script>`, any `on*` event-handler attribute, `javascript:`-scheme URLs in any
     attribute, `<iframe>`, `<style>`, `position`/`behavior`/etc. CSS — is stripped entirely during
     preview rendering, on every render pass (not just at save time), so pasted or hand-typed unsafe
@@ -592,6 +794,44 @@ delete normally (delete is then equivalent to deleting any other tab's registrat
   through the chosen editor engine's normal emphasis handling. Color/size use
   `<span style="color:...;font-size:...">...</span>` inserted/edited via toolbar helpers (manual
   hand-typing of the same syntax is also valid input).
+- **Toolbar Color button palette — confirmed, distinct from `label.color`** (§3.3's tree-memo color tag
+  is a separate feature; this is the toolbar's text-decoration Color button, applying
+  `<span style="color:...">` to the current selection). Closed 5-choice enum plus a separate "clear
+  color" control, adopted verbatim from the legacy app's `MarkdownToolbar.tsx`:
+
+  | Choice | value |
+  |---|---|
+  | Red | `#e53935` |
+  | Blue | `#1e88e5` |
+  | Green | `#43a047` |
+  | Orange | `#fb8c00` |
+  | Purple | `#8e24aa` |
+
+  A 6th control, separate from the 5 swatches, removes the color styling from the selection ("clear
+  color"), carried over from the legacy toolbar. No "None" swatch among the 5 — clearing is its own
+  control.
+- **Toolbar Font-size button palette — confirmed**: applies `<span style="font-size:...">` to the
+  current selection. Closed 3-choice enum plus a separate "clear size" control, adopted verbatim from
+  the legacy app:
+
+  | Choice | value |
+  |---|---|
+  | Small | `12px` |
+  | Large | `20px` |
+  | Extra-large | `28px` |
+
+  A 4th control removes the font-size styling from the selection ("clear size"), same treatment as
+  Color's clear control.
+
+  Both palettes above are closed enums, not free-form pickers — same "adopted verbatim, no new design"
+  treatment as the `label.color` palette in §3.3.
+- **Default keyboard shortcuts for all 16 toolbar actions — confirmed policy**: every one of the 16
+  actions in the grid above gets a default keyboard shortcut, registered as an entry in the existing
+  generic shortcut system (`AppSettings.shortcuts`, `[spec §3.4]`; default keymap already tracked in
+  `docs/plans/window-operation/PLAN.md` §3 — no new mechanism). Users may rebind any of them via
+  Settings → Shortcuts, same as any other shortcut in the app. This is a policy decision only (every
+  action gets *some* default binding, none stay toolbar-click-only) — the exact key combination for
+  each of the 16 is `developer-lite`'s implementation discretion (§9).
 - **Resize behavior**: pasting an image inserts standard `![alt](relative/path.png)`; resizing (via a
   UI resize handle on the rendered image) converts that single image's markup to
   `<img src="relative/path.png" width=".." height="..">`. Reverting a resize back to "natural size" may
@@ -688,15 +928,10 @@ Elaborates the remaining bullets of `[spec §7]` not already covered by §6.1–
   already on disk.
 - **No native blocking dialogs anywhere** (`[spec §7]`): `window.confirm()`, `window.alert()`,
   `window.prompt()`, and any other OS-native/browser-native blocking dialog are prohibited throughout
-  the app (they break IME input state, per `[spec §7]`'s explicit rationale, and are visually
-  inconsistent with the app's own custom UI). This applies to every confirmation/prompt surface in this
-  document, including but not limited to: the delete confirmation for memos and tabs (§4.1, §4.2), the
-  `TRASH_FAILED` fallback consent dialog (§7 Error Handling table), the tab-lock password/unlock prompt
-  (§5.9), the external-change conflict-resolution dialog (§6.4), and the metadata/app-settings
-  corruption notifications (§6.4 above). All of these must be built as one consistent custom
-  non-blocking dialog component (a single shared implementation, not one-off dialogs per feature),
-  matching `[spec §9.1 item 2]`'s "unify all custom UI surfaces" spirit already established for the
-  right-click context menu.
+  the app (breaks IME input state). Every confirmation/prompt/notification surface in this document
+  (delete confirm, `TRASH_FAILED` consent, tab-lock unlock prompt §5.9, conflict-resolution dialog §6.4,
+  corruption notices §6.4) is built from one shared custom non-blocking dialog component, matching
+  `[spec §9.1 item 2]`'s "unify all custom UI surfaces" already established for the context menu.
 - **Dialogs are Esc-closable, with one named exception** (`[spec §7]`): every dialog built with the
   shared custom dialog component above must close on Esc — **except** the external-change conflict
   dialog (§6.4 "External edit conflict"), which is intentionally Esc-disabled so a user cannot
@@ -741,8 +976,6 @@ Builds on the table in `[spec §5.8]`. Each `ErrorCode` from `[spec §3.4]`, wit
 These are explicitly left open by `spec.md` itself for `developer-lite` to finalize during planning or
 implementation, and should not be escalated to `QA.md`:
 
-- Exact key binding for the dedicated force-delete shortcut (`spec.md` suggests `Ctrl+Delete` as an
-  example only, `[spec §9.1 item 3]`).
 - Exact error code used for the (rare) "both UTF-8 and Shift_JIS decode failed" case, since
   `[spec §3.4]`'s `ErrorCode` enum doesn't name one specifically for this.
 - Exact regex/heuristics for auto-link recognition of URLs/emails/file paths (§5.8).
@@ -755,16 +988,29 @@ implementation, and should not be escalated to `QA.md`:
 - IME auto-enable-on-startup validation spike, and its go/no-go outcome (`[spec §7]`, already framed by
   `spec.md` as a build-time experiment, not a spec decision).
 - Tauri/Rust naming conventions for the operations inventoried in §4 and for backend→frontend events.
+- Exact HTML-comment marker text delimiting the TOC block (§5.10), as long as it stays inert in
+  live-view rendering.
+- Exact action-ID string spellings used in `AppSettings.window.toolbarOrder` (§3.2, §5.10), as long as
+  the set stays fixed at 16 and the array's slot→action mapping role is preserved.
+- Exact key combination assigned as the default shortcut for each of the 16 Markdown-toolbar actions
+  (§5.10) — only the policy that all 16 get *a* default binding is spec-level; the specific combos are
+  added to `docs/plans/window-operation/PLAN.md` §3's default keymap list by `developer-lite`.
 
 ---
 
 ## 10. Open Questions Requiring User Decision
 
-No open items remain from the original pass. The one item previously listed here — editor engine choice
-for Markdown editing (CodeMirror 6 vs. a ProseMirror-based WYSIWYG library such as Milkdown/TipTap) —
-has been resolved by the user (CodeMirror 6, confirmed) and is now reflected in `[spec §4.2]`,
-`DECISIONS.md`, and §5.10 above; it has been removed from `QA.md` (see that file's header for the
-resolved-item convention).
+No open items remain from the original pass.
+
+- Editor engine choice for Markdown editing (CodeMirror 6 vs. a ProseMirror-based WYSIWYG library such
+  as Milkdown/TipTap) was resolved by the user (CodeMirror 6, confirmed) and is now reflected in
+  `[spec §4.2]`, `DECISIONS.md`, and §5.10 above; it has been removed from `QA.md` (see that file's
+  header for the resolved-item convention).
+- Former `QA.md` Q1 ("Tab Lock: crash window mid-locking leaves orphaned encrypted files invisible to
+  recovery") was resolved by the user (Option B: explicit in-progress marker with resume/rollback
+  recovery) and is now reflected in `DECISIONS.md` ("Tab Lock: Crash-Mid-Lock Recovery via Explicit
+  Marker + Resume/Rollback") and §5.9 above (marker-write step + "Recovery on tab-folder access"
+  subsection); it has been removed from `QA.md` per the same resolved-item convention.
 
 Any newly identified genuine spec-level ambiguity should be appended here and to `QA.md` following the
 same process.
