@@ -27,9 +27,9 @@ import {
   quoteCommand,
   strikethroughCommand,
   tableCommand,
-  tocUpdateStub,
 } from "../../../editor/decorationCommands";
 import { redoCommand, undoCommand } from "../../../editor/textCommands";
+import { tocUpdateCommand } from "../../../editor/tocGenerator";
 import type { AppSettings, AppSettingsPatch } from "../../../shared/models";
 import "./MarkdownToolbar.css";
 
@@ -204,7 +204,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         runOnView(codeBlockCommand);
         break;
       case "tocUpdate":
-        runOnView(tocUpdateStub);
+        runOnView(tocUpdateCommand);
         break;
       case "table":
         runOnView(tableCommand);
