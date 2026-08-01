@@ -1,0 +1,43 @@
+[package]
+name = "tabtreenotemd"
+version = "0.1.0"
+description = "TabTreeNoteMD: a tab x tree personal note editor"
+authors = ["TabTreeNoteMD"]
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+# Tauri app shell (project-architecture/PLAN.md §1)
+tauri = { version = "2.11.5", features = [] }
+# IPC / persisted-JSON serialization (project-architecture/PLAN.md §1, §3)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Folder watching for external-change detection (persistence-fs/PLAN.md §5).
+# The debouncer coalesces the multiple raw OS notifications a single logical
+# write can generate (observed in practice on Windows/NTFS: one `fs::write`
+# call already produces >1 raw ReadDirectoryChangesW event for the same
+# path) into one logical event per quiet period, matching chokidar's
+# built-in debouncing behavior that the legacy app relied on.
+notify = "8.2.0"
+notify-debouncer-full = "0.6.0"
+# Content hash for watcher composite conflict classification (persistence-fs/PLAN.md §5)
+sha2 = "0.11.0"
+# OS trash for memo delete (persistence-fs/PLAN.md §9)
+trash = "5.2.6"
+# Internal-only diagnostic logging (spec.md §5.10)
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+# Async runtime, required by Tauri and by tab-lock's async scrypt (detailed-spec.md §3.4)
+tokio = { version = "1.53.1", features = ["full"] }
+# Random token/IV/salt generation (tab-lock, image-handling)
+rand = "0.10.2"
+# Tab lock encryption (tab-lock/PLAN.md, detailed-spec.md §3.4)
+aes-gcm = "0.11.0"
+scrypt = "0.12.0"
+# Shift_JIS fallback decoding for memo bodies (editor-save/PLAN.md)
+encoding_rs = "0.8.35"
