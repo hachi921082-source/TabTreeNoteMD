@@ -74,3 +74,80 @@
   color: #c0392b;
   font-size: 12px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Markdown live-view decorations (`docs/plans/markdown-editing/PLAN.md` §2/§6,
+ * `editor/markdownDecorations.ts`). Pure CSS overlays over unmodified text — see that module's
+ * header comment for why marker text is never hidden (risk-reduction for `[spec §8]`'s flagged
+ * defect zone).
+ * --------------------------------------------------------------------------- */
+
+.cm-md-h1 { font-size: 1.8em; font-weight: 700; }
+.cm-md-h2 { font-size: 1.5em; font-weight: 700; }
+.cm-md-h3 { font-size: 1.3em; font-weight: 600; }
+.cm-md-h4 { font-size: 1.15em; font-weight: 600; }
+.cm-md-h5 { font-size: 1.05em; font-weight: 600; }
+.cm-md-h6 { font-size: 1em; font-weight: 600; color: #555; }
+
+.cm-md-em { font-style: italic; }
+.cm-md-strong { font-weight: 700; }
+.cm-md-strike { text-decoration: line-through; }
+.cm-md-inline-code {
+  font-family: "Consolas", "Cascadia Code", monospace;
+  background: #f0f0f0;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.cm-md-list-mark { font-weight: 700; color: #555; }
+.cm-md-quote-mark { color: #888; }
+
+.cm-md-blockquote {
+  border-left: 3px solid #c8c8c8;
+  padding-left: 8px;
+  color: #555;
+}
+
+.cm-md-codeblock {
+  font-family: "Consolas", "Cascadia Code", monospace;
+  background: #f5f5f5;
+}
+
+.cm-md-table-line {
+  font-family: "Consolas", "Cascadia Code", monospace;
+  background: #fafafa;
+}
+
+.cm-md-hr {
+  border-top: 2px solid #ccc;
+}
+
+.cm-md-link {
+  color: #1e88e5;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.cm-md-link-syntax {
+  color: #999;
+}
+
+.cm-md-checkbox {
+  cursor: pointer;
+  user-select: none;
+  padding: 0 2px;
+}
+
+.cm-md-checkbox-readonly {
+  cursor: default;
+}
+
+.cm-md-image-placeholder {
+  display: inline-block;
+  border: 1px dashed #bbb;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #f7f7f7;
+  color: #777;
+  font-size: 0.9em;
+}
