@@ -3,25 +3,29 @@
 // This crate wires up `settings_get`/`settings_set` (persistence-fs/PLAN.md),
 // the tab domain (tab-management/PLAN.md, everything except lock
 // operations), the session-only window always-on-top toggle
-// (tab-management/PLAN.md §4.1), and the tree/memo domain (memo-tree/PLAN.md).
-// Several foundational primitives built here for OTHER features to call —
-// the folder watcher (`watch::watcher`/`watch::conflict`/`watch::active_memo`)
-// and the `DecryptFailed`/`Conflict` `ErrorCode` variants — are intentionally
-// not yet referenced; they are consumed once `editor-save/PLAN.md` and
-// `tab-lock/PLAN.md` are implemented on top of this foundation
-// (`docs/plans/persistence-fs/PLAN.md` §10 "Cross-References"). Remove this
-// allow once those call sites exist.
+// (tab-management/PLAN.md §4.1), the tree/memo domain (memo-tree/PLAN.md),
+// and `editor_load`/`editor_save` (editor-save/PLAN.md). Several
+// foundational primitives built here for OTHER features to call — the
+// folder watcher itself (`watch::watcher`/`watch::conflict`, not yet
+// instantiated for any tab folder) and the `DecryptFailed` `ErrorCode`
+// variant — are intentionally not yet referenced; they are consumed once
+// the watcher is actually wired up (`persistence-fs/PLAN.md` §5, still
+// outstanding) and `tab-lock/PLAN.md` is implemented on top of this
+// foundation (`docs/plans/persistence-fs/PLAN.md` §10 "Cross-References").
+// Remove this allow once those call sites exist.
 #![allow(dead_code)]
 
 mod commands;
 mod fs;
 mod model;
 mod settings;
+mod store;
 mod util;
 mod watch;
 
 use fs::self_write_registry::SelfWriteRegistry;
 use settings::app_settings_store::AppSettingsStore;
+use watch::active_memo::ActiveMemoTracker;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -44,6 +48,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(SelfWriteRegistry::new())
         .manage(AppSettingsStore::new())
+        .manage(ActiveMemoTracker::new())
         .invoke_handler(tauri::generate_handler![
             commands::settings::settings_get,
             commands::settings::settings_set,
@@ -66,6 +71,8 @@ fn main() {
             commands::tree::memo_set_editor_override,
             commands::tree::memo_set_edit_lock,
             commands::tree::memo_get_properties,
+            commands::editor::editor_load,
+            commands::editor::editor_save,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
