@@ -6,3 +6,4 @@
 pub mod app_settings;
 pub mod app_settings_patch;
 pub mod result;
+pub mod tab_meta;
