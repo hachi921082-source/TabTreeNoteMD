@@ -842,6 +842,11 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 fn touch_search_index_upsert(_tab_id: &str, _memo_name: &str, _plaintext: &str) {
     // TODO(search-index): call `SearchIndex::upsert(tab_id, memo_name, plaintext)` once
     // `search/index.rs` exists (`search-index/PLAN.md` §2, §4).
+    //
+    // NOTE: `memo_create`'s call site passes `""` legitimately (a brand-new file has no
+    // content yet). `memo_rename`/`memo_move`'s call sites also currently pass `""` as a
+    // placeholder since this function is a no-op stub — once a real index is wired in, those
+    // two call sites must be updated to pass the memo's actual file content instead.
 }
 
 fn touch_search_index_remove(_tab_id: &str, _memo_name: &str) {
