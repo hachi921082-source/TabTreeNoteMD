@@ -56,6 +56,31 @@ impl AppSettingsStore {
         atomic_write(&settings_json_path(), &json, registry)?;
         Ok((settings, outcome))
     }
+
+    /// Read-modify-write in a single critical section: `f` receives a mutable
+    /// reference to the currently-persisted settings and either mutates it in
+    /// place and returns `Ok(())` (persisted immediately after `f` returns),
+    /// or aborts without writing by returning `Err(...)`.
+    ///
+    /// Used by callers that need to validate against the *current* settings
+    /// before writing (e.g. `tab-management/PLAN.md`'s duplicate-name and
+    /// locked-tab checks) without the check-then-write race a separate
+    /// `get()` call followed by a `patch()` call would leave open (each of
+    /// those two methods only locks for the duration of its own call, so a
+    /// second command could interleave between them).
+    pub fn modify<F, E>(&self, registry: &SelfWriteRegistry, f: F) -> io::Result<Result<(AppSettings, RecoveryOutcome), E>>
+    where
+        F: FnOnce(&mut AppSettings) -> Result<(), E>,
+    {
+        let _guard = self.write_lock.lock().expect("app settings store lock poisoned");
+        let (mut settings, outcome) = load_with_recovery(registry);
+        if let Err(e) = f(&mut settings) {
+            return Ok(Err(e));
+        }
+        let json = serde_json::to_vec_pretty(&settings)?;
+        atomic_write(&settings_json_path(), &json, registry)?;
+        Ok(Ok((settings, outcome)))
+    }
 }
 
 impl Default for AppSettingsStore {
