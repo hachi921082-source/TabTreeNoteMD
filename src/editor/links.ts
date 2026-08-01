@@ -1,16 +1,32 @@
 // Click-to-open handling for auto-links and `memo:`/`[text](memo:...)` links rendered by the
-// Markdown decoration layer (`docs/plans/markdown-editing/PLAN.md` §2/§7). Detection (which text
-// spans are clickable) lives here and in `markdownDecorations.ts`; actual `memo:` resolution is
-// `link/PLAN.md`'s command (not yet implemented — stubbed below, see that function's doc comment)
-// and same-document `#slug` heading-anchor resolution is `table-of-contents/PLAN.md`'s scan (also
-// not yet implemented — likewise stubbed). External URL/email/file-path opening already works
-// today via `ipc/link.ts`'s `linkOpenExternal` (`docs/plans/editor-save/PLAN.md`'s "Search with
-// Google" forward seam), so that path is real, not a stub.
+// Markdown decoration layer (`docs/plans/markdown-editing/PLAN.md` §2/§7). Detection of *which*
+// text spans are clickable is split between here and `markdownDecorations.ts`: bare
+// `http(s)://`/`www.`/email tokens are already recognized by `@lezer/markdown`'s GFM autolink
+// extension as `URL` syntax-tree nodes (so `markdownDecorations.ts` reads those directly from the
+// tree rather than re-detecting them with regex here); this module supplies the two token shapes
+// the tree parser does NOT know about (bare `memo:...` and bare file paths), plus the
+// classification/open-trigger/resolution logic shared by every link kind regardless of how its
+// range was detected.
+//
+// Real vs. stub, per this pass's scope:
+// - `url` (bare `http(s)://`/`www.`/`ftp://`, or a Markdown-link whose URL isn't `memo:`/`#slug`):
+//   REAL — opens via `ipc/link.ts`'s already-implemented `linkOpenExternal`.
+// - `email`, `filePath`: rendering as clickable is this plan's scope, but `commands/link.rs`'s own
+//   doc comment explicitly excludes "email/file-path special-casing" from what's implemented so
+//   far (mailto:-prefixing, relative-to-absolute path resolution against the tab folder) — calling
+//   `linkOpenExternal` with a bare email/relative path would silently fail rather than open
+//   anything, so these are explicit stubs instead of a broken real call.
+// - `memo`: STUB — `link/PLAN.md`'s `memo:` resolution command does not exist yet.
+// - `headingAnchor`: STUB — `table-of-contents/PLAN.md`'s heading scan/resolution does not exist
+//   yet.
+// Every stub's behavior (silently do nothing) is externally indistinguishable from this app's own
+// confirmed "unresolved link" behavior (`[spec §2.8]`), so none of them are user-visible breakage —
+// they become real once their owning plan lands, by replacing the function body only.
 import type { EditorView } from "@codemirror/view";
 import { linkOpenExternal } from "../ipc/link";
 import type { AppSettings } from "../shared/models";
 
-export type LinkKind = "external" | "memo" | "heading-anchor";
+export type LinkKind = "url" | "email" | "filePath" | "memo" | "headingAnchor";
 
 export interface DetectedLink {
   /** Clickable region — the whole bare token for an auto-link, or the link's visible label span
@@ -18,38 +34,45 @@ export interface DetectedLink {
   from: number;
   to: number;
   kind: LinkKind;
-  /** For `external`: the URL/email/path to open. For `memo`: the raw `memo:...` target (scheme
-   * included). For `heading-anchor`: the slug, without the leading `#`. */
+  /** The URL/email/path/`memo:...` target, or (for `headingAnchor`) the slug without its leading
+   * `#`. */
   target: string;
 }
 
-// Reasonable best-effort patterns (`[detailed-spec §5.8]`: "exact regexes are an implementation
-// detail, not a spec-level ambiguity"). Applied per-line (line text passed in), never across
-// fenced code blocks — `markdownDecorations.ts` is responsible for excluding code-block lines
-// before calling these.
-const URL_RE = /\b(?:https?:\/\/|ftp:\/\/|www\.)[^\s<>()[\]]+/gi;
-const EMAIL_RE = /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g;
+/** `true` if `text` (an already-detected bare token) looks like an email address rather than a
+ * URL — both shapes come out of the same `@lezer/markdown` GFM `URL` node type, which does not
+ * itself distinguish them (`markdownDecorations.ts` calls this to classify). */
+export function looksLikeEmail(text: string): boolean {
+  return /^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(text);
+}
+
+// Bare-token shapes `@lezer/markdown`'s GFM autolink extension does NOT recognize on its own —
+// `[detailed-spec §5.8]`: "exact regexes are an implementation detail, not a spec-level ambiguity".
 const BARE_MEMO_RE = /\bmemo:[^\s<>()[\]]*/g;
 const FILE_PATH_RE = /\b(?:[a-zA-Z]:[\\/]|\.{1,2}[\\/])[^\s<>()[\]]+/g;
 
-/** Scans one line of plain text (with `lineFrom` its document offset) for bare auto-link tokens:
- * URLs, emails, file paths, and bare `memo:...` tokens. Does NOT detect `[text](url)` Markdown-link
- * syntax — that is `markdownDecorations.ts`'s job, driven off the syntax tree's `Link` nodes, since
- * distinguishing the label span from the URL span needs the parsed node structure, not regex. */
-export function scanAutoLinks(lineText: string, lineFrom: number): DetectedLink[] {
+/** Scans one line of plain text (with `lineFrom` its document offset) for bare `memo:...` tokens.
+ * Callers (`markdownDecorations.ts`) are responsible for excluding fenced-code-block lines first
+ * and for de-duplicating against any overlapping tree-detected `URL`/`Link` range. */
+export function scanBareMemoTokens(lineText: string, lineFrom: number): DetectedLink[] {
   const results: DetectedLink[] = [];
-  const push = (re: RegExp, kind: LinkKind, stripLeadingHash = false) => {
-    re.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(lineText))) {
-      const target = stripLeadingHash ? m[0].replace(/^#/, "") : m[0];
-      results.push({ from: lineFrom + m.index, to: lineFrom + m.index + m[0].length, kind, target });
-    }
-  };
-  push(BARE_MEMO_RE, "memo");
-  push(URL_RE, "external");
-  push(EMAIL_RE, "external");
-  push(FILE_PATH_RE, "external");
+  BARE_MEMO_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = BARE_MEMO_RE.exec(lineText))) {
+    results.push({ from: lineFrom + m.index, to: lineFrom + m.index + m[0].length, kind: "memo", target: m[0] });
+  }
+  return results;
+}
+
+/** Scans one line of plain text for bare file-path-shaped tokens (`./foo`, `../foo`, `C:\foo`).
+ * Same caller responsibilities as `scanBareMemoTokens`. */
+export function scanBareFilePathTokens(lineText: string, lineFrom: number): DetectedLink[] {
+  const results: DetectedLink[] = [];
+  FILE_PATH_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FILE_PATH_RE.exec(lineText))) {
+    results.push({ from: lineFrom + m.index, to: lineFrom + m.index + m[0].length, kind: "filePath", target: m[0] });
+  }
   return results;
 }
 
@@ -62,33 +85,49 @@ export function isHeadingAnchor(url: string): boolean {
 }
 
 /** Stub — `link/PLAN.md`'s `memo:` resolution command (`memo:MemoName` / `memo:TabName/MemoName` /
- * `memo:TabName/`) does not exist yet. Per `[spec §2.8]`, an unresolved link "does nothing" — this
- * stub always behaves that way, which is externally indistinguishable from a real "not found"
- * result, so it is a safe placeholder rather than a broken one. Replace this function's body with
- * a real `ipc/link.ts` call once `link/PLAN.md` is implemented. */
+ * `memo:TabName/`) does not exist yet. See this module's header comment for why a silent no-op
+ * here is a safe placeholder rather than broken behavior. */
 export async function resolveAndOpenMemoLink(target: string): Promise<void> {
   console.info(`[markdown-editing] memo: link resolution not implemented yet (see link/PLAN.md); target=${target}`);
 }
 
 /** Stub — `table-of-contents/PLAN.md`'s heading-anchor scan/resolution does not exist yet. Real
  * behavior (`[spec §2.8, §4.2]`): re-scan the current memo's headings at click time and scroll to
- * a match; no match is a silent no-op. This stub always no-ops, which is externally
- * indistinguishable from "no matching heading" — safe placeholder, not broken behavior. */
+ * a match; no match is a silent no-op. */
 export function resolveAndScrollToHeadingAnchor(view: EditorView, slug: string): void {
   console.info(`[markdown-editing] #slug heading-anchor resolution not implemented yet (see table-of-contents/PLAN.md); slug=${slug}`);
   void view;
 }
 
+/** Stub — `link/PLAN.md`'s email special-casing (`mailto:` prefixing) is not implemented yet. */
+export function resolveAndOpenEmailLink(target: string): void {
+  console.info(`[markdown-editing] email link opening not implemented yet (see link/PLAN.md); target=${target}`);
+}
+
+/** Stub — `link/PLAN.md`'s file-path special-casing (relative-to-absolute resolution against the
+ * tab folder) is not implemented yet. */
+export function resolveAndOpenFilePathLink(target: string): void {
+  console.info(`[markdown-editing] file-path link opening not implemented yet (see link/PLAN.md); target=${target}`);
+}
+
 export async function openDetectedLink(view: EditorView, link: DetectedLink): Promise<void> {
-  if (link.kind === "external") {
-    void linkOpenExternal(link.target);
-    return;
+  switch (link.kind) {
+    case "url":
+      void linkOpenExternal(link.target);
+      return;
+    case "email":
+      resolveAndOpenEmailLink(link.target);
+      return;
+    case "filePath":
+      resolveAndOpenFilePathLink(link.target);
+      return;
+    case "memo":
+      await resolveAndOpenMemoLink(link.target);
+      return;
+    case "headingAnchor":
+      resolveAndScrollToHeadingAnchor(view, link.target);
+      return;
   }
-  if (link.kind === "memo") {
-    await resolveAndOpenMemoLink(link.target);
-    return;
-  }
-  resolveAndScrollToHeadingAnchor(view, link.target);
 }
 
 /** `AppSettings.links.openTrigger` gating (`[spec §2.8]`, default `singleClick`). `eventType`

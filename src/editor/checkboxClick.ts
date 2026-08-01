@@ -23,26 +23,31 @@ class CheckboxWidget extends WidgetType {
     readonly checked: boolean,
     readonly from: number,
     readonly to: number,
+    /** `true` while the memo is read-only (edit-locked or a conflict dialog is open) — the glyph
+     * still renders, but clicking it does not mutate the buffer (`[spec §2.2]`, "Edit Lock blocks
+     * text editing"). */
+    readonly readOnly: boolean,
   ) {
     super();
   }
 
   eq(other: CheckboxWidget): boolean {
-    return other.checked === this.checked && other.from === this.from && other.to === this.to;
+    return other.checked === this.checked && other.from === this.from && other.to === this.to && other.readOnly === this.readOnly;
   }
 
   toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("span");
-    el.className = "cm-md-checkbox";
+    el.className = "cm-md-checkbox" + (this.readOnly ? " cm-md-checkbox-readonly" : "");
     el.textContent = this.checked ? "☑" : "☐";
     el.setAttribute("role", "checkbox");
     el.setAttribute("aria-checked", this.checked ? "true" : "false");
-    el.title = this.checked ? "クリックでチェックを外す" : "クリックでチェック";
+    el.title = this.readOnly ? "" : this.checked ? "クリックでチェックを外す" : "クリックでチェック";
     el.addEventListener("mousedown", (e) => {
       // Prevent CodeMirror from also placing the cursor via its own mousedown handling before
       // our toggle transaction runs — the widget fully owns this click.
       e.preventDefault();
       e.stopPropagation();
+      if (this.readOnly) return;
       toggleCheckboxRange(view, this.from, this.to, this.checked);
     });
     return el;
@@ -61,6 +66,6 @@ export function toggleCheckboxRange(view: EditorView, from: number, to: number, 
 /** Builds the replace-decoration for one task-marker range. `checked` reflects the *current*
  * document text at the time of the decoration pass (recomputed every pass, so it always matches
  * the buffer — there is no separately-tracked widget state to go stale). */
-export function checkboxDecoration(checked: boolean, from: number, to: number) {
-  return Decoration.replace({ widget: new CheckboxWidget(checked, from, to), inclusive: false });
+export function checkboxDecoration(checked: boolean, from: number, to: number, readOnly: boolean) {
+  return Decoration.replace({ widget: new CheckboxWidget(checked, from, to, readOnly), inclusive: false });
 }
