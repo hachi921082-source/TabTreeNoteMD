@@ -4,6 +4,62 @@
 
 ---
 
+## Scroll Position: Document-Position-Based Anchor, Not Raw Pixel Offset (2026-08-01)
+
+**Decision**: `MemoEditorSettings.scrollPosition` is a 1-indexed document line number (the line visible
+at the top of the viewport), not a raw pixel/`scrollTop` value. Elaborated in `detailed-spec.md`
+§3.3/§5.3, `plans/editor-save/PLAN.md` (save/restore mechanism, clamping).
+
+## Code-Fence Awareness in Markdown Scanning (2026-08-01)
+
+**Decision**: The Table of Contents heading scanner (`table-of-contents/PLAN.md`) and the full-text
+search plaintext converter (`search-index/PLAN.md` §3) must recognize fenced code blocks via a real
+fence-boundary scan, not a uniform line-by-line marker regex. Elaborated in `detailed-spec.md`
+§5.4/§5.10.
+
+## Overlapping Text-Styling Decorations: Implement as Composable Mark Decorations (2026-08-01)
+
+**Decision**: Color-span styling and link click-affordance rendering (e.g. a `memo:` link inside a
+`<span style="color:...">`-decorated range) must both be implemented as CodeMirror "mark" decorations,
+not "widget" decorations. Added as required test coverage (item 5) in `markdown-editing/PLAN.md` §9,
+elaborated in `detailed-spec.md` §5.10.
+
+## Image `src` Allowlist: Reject `..` Path-Traversal Segments (2026-08-01)
+
+**Decision**: The sanitization allowlist's `<img src>` rule additionally rejects any value containing a
+`..` path segment. Elaborated in `detailed-spec.md` §5.10, `markdown-editing/PLAN.md` §5.
+
+## Markdown Toolbar: Finalized 16-Slot Fixed Grid Layout (2026-08-01)
+
+**Decision**: Toolbar is a fixed 8 columns × 2 rows = 16-slot grid, no blanks. Supersedes the earlier
+6×2/12-slot and 6×2/12-with-gear concepts in `detailed-spec.md` §5.10 and `docs/plans/markdown-editing/PLAN.md` §4.
+Bold and Italic are two separate actions (the earlier "combined single button" idea is dropped). Icon set:
+Lucide (MIT), bundled locally, no CDN. Full slot layout, icon mapping, and the new rearrange-mode
+mechanism (16th slot toggles reorder-by-drag mode; OFF = normal click-to-invoke; ON = drag-only, click
+does nothing, Esc or re-click exits, whole-toolbar tint indicates the mode) are recorded in
+`detailed-spec.md` §5.10. New persisted field `AppSettings.window.toolbarOrder` (16-element action-ID
+array) added alongside the already-decided `toolbarPosition` field (see "UI-State Persistence
+Decisions" below, unaffected by this change).
+
+**Addendum (2026-08-01) — Color/Font-size button palettes and default shortcuts confirmed**: The
+toolbar's Color button (`<span style="color:...">`, distinct from `label.color` in §3.3, which keeps
+its own separate 5-choice palette) and Font-size button (`<span style="font-size:...">`) each get a
+concrete closed palette adopted verbatim from the legacy app's `MarkdownToolbar.tsx`: Color — Red
+`#e53935`, Blue `#1e88e5`, Green `#43a047`, Orange `#fb8c00`, Purple `#8e24aa`, plus a separate "clear
+color" control; Font size — Small `12px`, Large `20px`, Extra-large `28px`, plus a separate "clear
+size" control. Additionally, all 16 toolbar actions get a default keyboard shortcut registered in the
+existing `AppSettings.shortcuts` system (no new mechanism); exact key combos are left to
+`developer-lite`'s implementation discretion, same treatment as other deferred items in
+`detailed-spec.md` §9. Full values and elaboration in `detailed-spec.md` §5.10.
+
+## New Feature: Table of Contents (TOC) (2026-08-01)
+
+**Decision**: Added to v1 scope. Triggered only by the toolbar's "Update" button (manual, one-shot,
+never auto/background). Generates a nested Markdown list of slugified heading links in a
+marker-delimited block, inserted or replaced in place on click. Adds a new same-document
+heading-anchor link type (`#slug`) to the Link domain. Fully elaborated in `spec.md` §4.2/§2.8 and
+`detailed-spec.md` §5.10/§4.6/§5.8.
+
 ## Technology Stack: Adopting Tauri (2026-07-30)
 
 **Decision**: Tauri (Rust backend + OS standard WebView2 frontend). Changed from the previous v1's Electron+TypeScript.
@@ -87,6 +143,162 @@ folder or any files in it. It only unregisters the folder from the app's tab lis
 - **User-facing consequence**: to actually delete a registered folder's contents, the user must do so
   outside the app (e.g. via Windows Explorer) after removing the tab, or before/without ever
   registering it.
+
+## Tab Lock: Crash-Mid-Lock Recovery via Explicit Marker + Resume/Rollback (2026-08-01)
+
+**Decision**: **Option B** from `QA.md` item Q1 ("Tab Lock: crash window mid-locking leaves orphaned
+encrypted files invisible to recovery"). Locking a tab (`detailed-spec.md` §5.9 "Locking a tab") now
+writes an explicit in-progress marker (e.g. a sibling `.tabtreenote.lock-inprogress` file; exact format
+left to `developer-lite`) *before* the per-file rename/encrypt loop begins. The app checks for this
+marker whenever the tab's folder is next accessed and, if found, deterministically either (a) finishes
+the incomplete lock by re-running the remaining renames, or (b) rolls it back by renaming the
+already-token-named files back to their original names — so a crash or kill between the start of the
+rename loop and the final lock-blob write (`detailed-spec.md` §5.9 "Locking a tab") never leaves memo
+files as permanently unreadable, unmapped token blobs.
+
+- **Why the gap was worth closing, despite the added cost**: Tab Lock exists specifically to protect
+  data the user has deliberately flagged as important or private (`spec.md` §4.1). The general
+  "memo body (`.md`) is never lost" guarantee (`spec.md` §3.2) does not cover this crash window (its
+  reconciliation/flat-rebuild scan only looks at `.md` files, so a partially-locked tab's token files
+  are invisible to it — `QA.md` Q1 background) — leaving it as an accepted risk would mean the one
+  guarantee users rely on most is silently weaker for exactly the subset of data they most want
+  protected. The user chose to close this gap entirely rather than document it as accepted risk.
+- **Cost judged acceptable**: the recovery check is a single extra file-existence check at tab-folder
+  access (startup or that specific tab's open, exact trigger point left to `detailed-spec.md`/
+  `PLAN.md`), not a scan whose cost scales with memo count — so it does not meaningfully work against
+  the app's general lightweight-performance goal (`spec.md` §6), even though it does add new design
+  and engineering surface (a new marker file/format, a new recovery flow, and resume/rollback logic)
+  beyond what was originally scoped for the lock operation.
+- **Rejected Alternative — Option A (accept as risk, optionally reorder writes)**: Leaving this as an
+  accepted, out-of-scope risk (parallel to the already-accepted `spec.md` §5.3 sync-order crash gap)
+  was rejected because — unlike that general gap, which only risks a tree-position edit needing to be
+  redone — this one risks memo bodies becoming permanently inaccessible, for the tab class the user
+  cares most about protecting. The milder variant of Option A (write the lock blob's `fileMap` *before*
+  the rename loop, so token names are anticipated rather than confirmed after the fact) was also
+  rejected: it avoids needing a real recovery mechanism, but leaves the lock blob and the actual
+  on-disk token names free to disagree after a mid-rename crash, which would require `developer-lite`
+  to design an equally complex fallback-matching heuristic ("if the fileMap-listed token file is
+  missing, check whether a `.md` file with the original name still exists") without the deterministic
+  before/after certainty that an explicit progress marker gives for free.
+- **Where elaborated**: `detailed-spec.md` §5.9 "Locking a tab" (marker-write step inserted before the
+  rename loop) and a new "Recovery on tab-folder access" subsection (resume/rollback logic). `QA.md`
+  item Q1 is resolved and removed from that file per its own resolved-item convention; this entry is
+  its permanent record.
+
+## UI-State Persistence Decisions: Scroll Position, Toolbar Position, Search History (2026-08-01)
+
+Three previously-unaddressed or hedged "does this survive app restart?" questions were resolved
+together during an ad-hoc review conversation, with different outcomes for each:
+
+- **Per-memo scroll position (`detailed-spec.md` §5.3) — now persisted across app restart.**
+  Previously phrased as session-only by default with restart-persistence merely "not prohibited."
+  The user decided this should be a firm requirement: scroll position is stored per-memo in
+  `MemoEditorSettings` (part of the tab's `.tabtreenote.json` tree metadata, `[spec §3.4]`), the
+  same place other per-memo editor overrides (wrap, tab width, view mode, etc.) already live, so no
+  new storage location was introduced — just a new field in an existing structure.
+- **Markdown toolbar drag position (`detailed-spec.md` §5.10) — now persisted across app restart.**
+  This was entirely unaddressed in `detailed-spec.md`; `developer-lite` had independently chosen
+  session-only at the `PLAN.md` level (`docs/plans/markdown-editing/PLAN.md` §4) in the absence of
+  spec guidance. The user decided it should persist. Placement: `AppSettings.window` (a top-level
+  window UI field, not per-memo) rather than `MemoEditorSettings`, because the toolbar is a
+  per-window UI element — its position is not tied to which memo is open, unlike scroll position,
+  which is inherently per-memo (each memo has its own natural scroll range).
+- **Search/replace history (`detailed-spec.md` §5.4) — confirmed session-only, finalized.**
+  This was already `detailed-spec.md`'s "starting default" with an explicit escape hatch letting
+  `developer-lite` persist it instead if convenient. The user confirmed the session-only default is
+  final; the escape hatch is removed since there is no longer any ambiguity to resolve at
+  implementation time.
+
+**Why the split outcome (two persisted, one not)**: no single blanket rule was applied — each was a
+distinct product-feel judgment by the user (scroll position and toolbar position are workspace-layout
+state worth restoring on every launch; search/replace history is considered transient working-context
+that's fine to lose between sessions), not a technical constraint.
+
+**Where elaborated**: `detailed-spec.md` §3.2 (new `AppSettings.window.toolbarPosition` field in the
+schema example), §3.3 (new `MemoEditorSettings.scrollPosition` field in the schema example), §5.3
+(scroll-position bullet restated as decided), §5.4 (search-history bullet restated as decided), §5.10
+(toolbar bullet gains a persistence sentence).
+
+## Force-Delete Shortcut Key: Confirmed as `Ctrl+Delete` (2026-08-01)
+
+**Decision**: `spec.md` §9.1 item 3's `Ctrl+Delete` — originally presented purely as an illustrative
+example ("exact key confirmed at implementation") — is now the final, confirmed key binding for the
+dedicated tree force-delete shortcut. No alternative binding was seriously considered during this
+review; the user simply confirmed the existing example as-is rather than leaving it open.
+
+**Where elaborated**: `detailed-spec.md` §5.2 (Memo Tree elaboration) states the binding directly
+instead of citing it as an example; §9's deferred-to-implementation list no longer includes this item
+(moved out since it is no longer a `developer-lite`-discretion item).
+
+## Tab-Lock Placeholder Display Name: 🔒 Glyph Alone (2026-08-01)
+
+**Decision**: the placeholder text shown in `AppSettings.tabs[i].name` and the tab bar for a locked
+tab (`[spec §4.1]`, "tab name itself hidden ... shown as 🔒") is the 🔒 glyph by itself, with no
+accompanying text (e.g. no "(locked)" or similar). `detailed-spec.md` §3.2 previously called this
+"a UI-copy decision for implementation, not a spec concern" and left it fully open; the user decided
+to pin it down rather than leave it to `developer-lite`'s taste, since it is a small, easily-decided
+question and pinning it avoids inconsistent phrasing surfacing later (e.g. in error messages or
+tooltips that also need to reference the locked tab's placeholder name).
+
+**Where elaborated**: `detailed-spec.md` §3.2's placeholder-name bullet, restated as decided.
+
+## Icon Submenu Clarified as the `label.color` Picker; Concrete Palette Adopted from Legacy; `label.kind` Confirmed Reserved (2026-08-01)
+
+**Background**: `spec.md` §2.2 confirms a right-click "Icon" submenu on tree memos, but neither
+`spec.md` nor the original `detailed-spec.md` ever connected this submenu to a concrete mechanism.
+Separately, `detailed-spec.md` §3.3's data model shows a `Label { color, kind }` shape but only
+`label.kind` had elaboration text (reserved, unimplemented for v1); `label.color` had no enumerated
+values anywhere, just an example (`"color": "blue"`) with no accompanying palette definition.
+
+**Investigation**: during this review, the orchestrator hypothesized that the "Icon" submenu might be
+the intended UI for setting `label.kind` (a memo "type" tag), which would have meant `label.kind`
+staying unimplemented in v1 conflicts with an already-confirmed `spec.md` UI element. This was checked
+against the legacy `TabTreeNote` repository's actual implementation
+(`src/renderer/components/Tree/FileIcon.tsx`, `Tree.tsx`, reference-only per `CLAUDE.md`): the legacy
+"Icon" submenu is entirely a `label.color` picker. It renders the identical document/lock-shaped SVG
+outline for every choice, varying only stroke color, and its `onSelect` handler calls
+`onRequestSetLabel(memoName, preset.color, lockToken)` — setting only `color`, never `kind`. The
+legacy `Label.kind` field existed in `src/shared/models.ts`'s type definition but was never read or
+written anywhere in the legacy UI; it was effectively dead/unused there too. The hypothesized conflict
+does not exist.
+
+**Decisions**:
+1. **`spec.md` §2.2's "Icon" submenu is the `label.color` picker.** This connection is now made
+   explicit in `detailed-spec.md` (previously the submenu and the `label.color` field were never tied
+   together anywhere in the documentation, even though they were always the same feature in spirit).
+2. **`label.color` palette — adopted verbatim from the legacy app**: exactly 5 choices, same names
+   and hex values —
+   `{ name: 'なし' (None), color: null }`, `{ name: '赤' (Red), color: '#e05a5a' }`,
+   `{ name: '青' (Blue), color: '#4a90d9' }`, `{ name: '緑' (Green), color: '#4caf50' }`,
+   `{ name: '黄' (Yellow), color: '#e0c040' }`. No new colors were added and no existing ones were
+   dropped or changed — a straight carry-over, since the legacy palette was already a reasonable,
+   already-battle-tested small fixed set and there was no stated reason to change it.
+3. **`label.kind` remains reserved/unimplemented for v1 (`null` only)** — same conclusion as before,
+   but now resting on a concrete finding (dead field in the legacy app, no UI ever built for it) rather
+   than a speculative "not blocking" statement.
+
+**Where elaborated**: `detailed-spec.md` §3.3 (palette table added near the `label.kind` bullet,
+cross-referenced from the Icon-submenu mention) and §5.2 (Memo Tree elaboration, Icon submenu bullet
+now names the palette and cross-references §3.3).
+
+## Mouse-Wheel Tab Switching: Removed from v1 Scope (2026-08-01)
+
+**Decision**: mouse-wheel-based active-tab switching, previously listed in `spec.md` §2.1 ("switch
+via click / shortcut / mouse wheel"), is dropped entirely from v1 scope — not deferred, not left as a
+`developer-lite`-discretion detail, genuinely removed as a feature. Click and keyboard-shortcut
+switching are unaffected.
+
+- **Rationale**: user preference; the feature was judged not needed. No elaborate technical or UX
+  problem drove this — it was simply decided to be out of scope, and there is nothing to compare it
+  against (no rejected alternative implementation approach; the feature itself is the thing dropped).
+- **Scope classification**: this is a genuine `spec.md`-level feature-scope change (removing an item
+  from the v1 core feature list touched by `spec.md` §1 Q4), not merely a `detailed-spec.md`
+  elaboration detail — hence it is recorded here with the same rigor as any other scope-affecting
+  decision, and `spec.md` §2.1 itself was edited (the "mouse wheel" clause removed from the "switch
+  via click / shortcut / mouse wheel" sentence, leaving "switch via click / shortcut").
+- **Where elaborated**: `detailed-spec.md` §5.1's now-inapplicable "mouse wheel over the tab bar
+  cycles the active tab" elaboration bullet was removed entirely (nothing to elaborate for a feature
+  that no longer exists).
 
 ## Memo Identification Method: Filename = Memo Name (UUID Not Adopted)
 
