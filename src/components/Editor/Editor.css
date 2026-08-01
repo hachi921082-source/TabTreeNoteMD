@@ -1,0 +1,76 @@
+.ttn-editor-pane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.ttn-editor-empty {
+  align-items: center;
+  justify-content: center;
+  color: #888;
+}
+
+.ttn-editor-loading {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  color: #888;
+  font-size: 12px;
+}
+
+.ttn-editor-cm-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ttn-editor-cm-container .cm-editor {
+  height: 100%;
+}
+
+.ttn-editor-status-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #444;
+  background: #f4f4f4;
+  border-top: 1px solid #d8d8d8;
+}
+
+.ttn-editor-status-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ttn-editor-status-locked {
+  color: #c0392b;
+}
+
+.ttn-editor-error {
+  position: absolute;
+  bottom: 28px;
+  left: 8px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #fdecea;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  color: #c0392b;
+  font-size: 12px;
+}
