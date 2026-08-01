@@ -3,5 +3,9 @@
   "identifier": "default",
   "description": "Capabilities for the main window. Extended per-domain as each feature's commands are implemented.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy"
+  ]
 }
