@@ -34,6 +34,7 @@ function App() {
               appSettings={settingsState.settings}
               memoEditorOverride={openMemoOverride}
               setEditorOverride={treeState.setEditorOverride}
+              patchSettings={settingsState.patch}
             />
           </>
         )}

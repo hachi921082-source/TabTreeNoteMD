@@ -1,24 +1,32 @@
-// Right-pane plain-text editor surface (`docs/plans/editor-save/PLAN.md`). Mounts one CodeMirror
-// 6 `EditorView` per open memo — a fresh `EditorState`/history is created on every memo switch
-// (`editor-save/PLAN.md` §1: "no cross-memo undo"), while settings/read-only/whitespace-visibility
-// changes reconfigure the existing view's compartments in place. Owns: the CodeMirror mount, the
-// status bar, the right-click context menu (Convert/Check/Search-with-Google/Properties, shared
-// component per `[spec §9.1 item 2]`), the in-memo search panel, and the conflict-resolution
-// dialog. The Markdown live-view decoration layer is `markdown-editing/PLAN.md`'s separate,
-// not-yet-implemented concern — this component only renders the plain-text "source" surface.
-import { useEffect, useMemo, useRef, useState } from "react";
+// Right-pane editor surface (`docs/plans/editor-save/PLAN.md` for the plain-text layer;
+// `docs/plans/markdown-editing/PLAN.md` for the live-view decoration/toolbar layer on top of it).
+// Mounts one CodeMirror 6 `EditorView` per open memo — a fresh `EditorState`/history is created on
+// every memo switch (`editor-save/PLAN.md` §1: "no cross-memo undo"), while settings/read-only/
+// whitespace-visibility/live-view-toggle changes reconfigure the existing view's compartments in
+// place. Owns: the CodeMirror mount, the status bar, the right-click context menu
+// (Convert/Check/Search-with-Google/Properties, shared component per `[spec §9.1 item 2]`), the
+// in-memo search panel, the conflict-resolution dialog, the floating Markdown toolbar
+// (`components/Editor/Toolbar/MarkdownToolbar.tsx`), and the live/source runtime toggle.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useEditor } from "../../state/useEditor";
 import { useSearch } from "../../state/useSearch";
 import { memoGetProperties } from "../../ipc/tree";
-import type { AppSettings, EditorDefaults, MemoEditorSettings, MemoProperties } from "../../shared/models";
+import type { AppSettings, AppSettingsPatch, EditorDefaults, MemoEditorSettings, MemoProperties } from "../../shared/models";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { ContextMenu } from "../ContextMenu/ContextMenu";
 import type { ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { Dialog } from "../dialogs/Dialog";
 import { SearchPanel } from "../Search/SearchPanel";
 import { ConflictDialog } from "./ConflictDialog";
+import { MarkdownToolbar } from "./Toolbar/MarkdownToolbar";
+import type { MarkdownToolbarHandle } from "./Toolbar/MarkdownToolbar";
+import type { ToolbarActionId } from "../../editor/toolbarSlots";
+import { buildMarkdownExtensions, liveViewCompartment, liveViewExtension } from "../../editor/codeMirrorSetup";
+import type { MarkdownDecorationConfig } from "../../editor/markdownDecorations";
+import { imagePasteExtension } from "../../editor/imagePaste";
+import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import {
   buildPlainTextExtensions,
   buildSettingsExtension,
@@ -68,9 +76,12 @@ export interface EditorPaneProps {
   appSettings: AppSettings | null;
   memoEditorOverride: MemoEditorSettings | undefined;
   setEditorOverride: (path: string, editor: MemoEditorSettings | null) => Promise<void>;
+  /** `state/useSettings.ts`'s generic patch — used by `MarkdownToolbar` to persist
+   * `AppSettings.window.toolbarPosition`/`toolbarOrder` (`docs/plans/markdown-editing/PLAN.md` §4). */
+  patchSettings: (patch: AppSettingsPatch) => Promise<void>;
 }
 
-export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, setEditorOverride }: EditorPaneProps) {
+export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, setEditorOverride, patchSettings }: EditorPaneProps) {
   const ed = useEditor(tabId, memoName, appSettings);
   const search = useSearch();
 
@@ -84,10 +95,33 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [properties, setProperties] = useState<MemoProperties | null>(null);
+  const toolbarRef = useRef<MarkdownToolbarHandle>(null);
 
   const editorDefaults = appSettings?.editorDefaults ?? FALLBACK_EDITOR_DEFAULTS;
   const resolvedSettings = useMemo(() => resolveEditorSettings(memoEditorOverride, editorDefaults), [memoEditorOverride, editorDefaults]);
   const readOnly = Boolean(ed.content?.editLocked) || ed.conflict !== null;
+
+  // Live/source view mode (`docs/plans/markdown-editing/PLAN.md` §3). `resolvedViewMode` is the
+  // *governed* setting a memo opens with (per-memo override, falling back to the global default);
+  // `liveViewOverride` is the current session's runtime toggle only — `null` until the user toggles
+  // at least once for the currently-open memo, reset to `null` on every memo switch (a fresh load
+  // always starts at the governed setting, `[detailed-spec §5.10]`: the toggle "does not, by
+  // itself, change either setting value").
+  const resolvedViewMode = memoEditorOverride?.viewMode ?? editorDefaults.viewMode;
+  const [liveViewOverride, setLiveViewOverride] = useState<"live" | "source" | null>(null);
+  const liveViewEnabled = (liveViewOverride ?? resolvedViewMode) === "live";
+  const onToggleLiveView = useCallback(() => {
+    setLiveViewOverride((current) => {
+      const currentlyLive = current !== null ? current === "live" : resolvedViewMode === "live";
+      return currentlyLive ? "source" : "live";
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedViewMode]);
+
+  const markdownConfig = useMemo<MarkdownDecorationConfig>(
+    () => ({ openTrigger: appSettings?.links.openTrigger ?? "singleClick", readOnly }),
+    [appSettings, readOnly],
+  );
 
   // Refs so the debounced scroll listener / view-teardown flush always see the latest identity
   // without stale closures (same pattern as `state/useEditor.ts`).
@@ -126,6 +160,13 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
       return;
     }
 
+    // A fresh load always starts at the *governed* view mode (per-memo override falling back to
+    // the global default) — any prior session's runtime toggle never carries over to a newly
+    // opened memo (`docs/plans/markdown-editing/PLAN.md` §3). Computed directly from
+    // `resolvedViewMode` here (not `liveViewEnabled`) so this initial build can't see a stale
+    // `liveViewOverride` left over from the memo just switched away from.
+    const initialLiveView = resolvedViewMode === "live";
+
     const state = EditorState.create({
       doc: ed.content.text,
       extensions: [
@@ -135,6 +176,8 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
           showWhitespace,
           onDocChanged: (text) => ed.notifyTextChanged(text),
         }),
+        ...buildMarkdownExtensions(initialLiveView, markdownConfig),
+        imagePasteExtension(),
         // Keeps the status bar's char/line/cursor-position derived state live on every doc
         // change or cursor/selection move, not just after (re)creating the view.
         EditorView.updateListener.of((update) => {
@@ -145,6 +188,10 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
     const view = new EditorView({ state, parent: containerRef.current });
     viewRef.current = view;
     setRenderTick((n) => n + 1);
+    // Reset the session-only toggle for the newly-opened memo (harmless if `liveViewEnabled`
+    // already equalled `initialLiveView` — the reconfigure effect below just re-dispatches the
+    // same extension content in that case).
+    setLiveViewOverride(null);
 
     const savedScrollLine = ed.content.scrollPosition;
     let raf = 0;
@@ -182,6 +229,14 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
     viewRef.current?.dispatch({ effects: whitespaceCompartment.reconfigure(whitespaceExtension(showWhitespace)) });
   }, [showWhitespace]);
 
+  // Live/source toggle (`docs/plans/markdown-editing/PLAN.md` §3) — reconfigures only the
+  // decoration compartment, never the document, so cursor/scroll survive the toggle. Also
+  // reconfigured here whenever `markdownConfig` changes (e.g. read-only flips while a memo stays
+  // open) without needing a separate effect.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: liveViewCompartment.reconfigure(liveViewExtension(liveViewEnabled, markdownConfig)) });
+  }, [liveViewEnabled, markdownConfig]);
+
   // Destroy the view (and flush its scroll position) on unmount.
   useEffect(() => {
     return () => {
@@ -207,6 +262,36 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [search]);
+
+  // Default keyboard shortcuts for the 16 Markdown toolbar actions plus the live/source toggle
+  // (`docs/detailed-spec.md` §5.10: "every one of the 16 toolbar actions gets a default keyboard
+  // shortcut, registered as an entry in the existing generic shortcut system"). Dispatches through
+  // `MarkdownToolbar`'s imperative handle rather than duplicating its action switch statement here.
+  // Scoped to when focus is within this editor's own CodeMirror content, so these common
+  // combinations (Ctrl+B, Ctrl+I, etc.) don't fire while typing elsewhere in the app (e.g. a
+  // rename input or a dialog).
+  useEffect(() => {
+    const shortcuts = resolveShortcuts(appSettings?.shortcuts);
+    const reverse = new Map<string, string>();
+    for (const [actionId, combo] of Object.entries(shortcuts)) {
+      if (actionId.startsWith("markdown.")) reverse.set(combo, actionId);
+    }
+    const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !viewRef.current) return;
+      if (!containerRef.current?.contains(document.activeElement)) return;
+      const actionId = reverse.get(comboFromEvent(e));
+      if (!actionId) return;
+      if (actionId === "markdown.toggleLiveView") {
+        e.preventDefault();
+        onToggleLiveView();
+        return;
+      }
+      e.preventDefault();
+      toolbarRef.current?.invokeAction(actionId.slice("markdown.".length) as ToolbarActionId);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [appSettings?.shortcuts, onToggleLiveView]);
 
   const runOnView = (fn: (view: EditorView) => void) => {
     const view = viewRef.current;
@@ -275,6 +360,16 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
       {ed.loading && <div className="ttn-editor-loading">読み込み中...</div>}
 
       <div className="ttn-editor-cm-container" ref={containerRef} />
+
+      <MarkdownToolbar
+        ref={toolbarRef}
+        getView={() => viewRef.current}
+        appSettings={appSettings}
+        patchSettings={patchSettings}
+        liveViewEnabled={liveViewEnabled}
+        onToggleLiveView={onToggleLiveView}
+        readOnly={readOnly}
+      />
 
       {search.isOpen && <SearchPanel search={search} getView={() => viewRef.current} />}
 
