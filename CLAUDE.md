@@ -20,6 +20,8 @@ Operated using a three-agent system: designer-lite → developer-lite → review
 
 Commit one file per commit, with a message stating that file's role/purpose (not just what changed).
 
+Exception: a set of new, mutually-dependent files (e.g. a group of Rust modules that reference each other and would not compile if split across separate commits) may be committed together as one logical unit. This does not relax the rule for independent/pre-existing files — split those normally.
+
 ## Language
 
 Do not create or maintain `.ja.md` Japanese mirror files going forward. Write documentation in English only.
