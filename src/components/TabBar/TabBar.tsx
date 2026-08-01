@@ -6,12 +6,17 @@
 // NOT implemented here (deliberately out of scope for this pass):
 // - Mouse-wheel tab switching — removed from v1 scope entirely
 //   (`docs/DECISIONS.md` "Mouse-Wheel Tab Switching: Removed from v1 Scope").
-// - The 📌 "pin to foreground" button — its observable effect and
-//   placement are unresolved, see `docs/QA.md` "Pin to Foreground Tab
-//   Button"; do not guess at this until that's answered.
 // - "Lock tab" context-menu action — belongs to `tab-lock/PLAN.md`
 //   (out of scope for `tab-management/PLAN.md`), which owns adding it once
 //   `tab_lock`/`tab_unlock` exist.
+//
+// The 📌 "always-on-top" toggle button IS implemented here: a single global
+// button (not per-tab), leftmost in the tab bar's toolbar area (order:
+// pin, search, theme toggle — the search/theme buttons themselves belong to
+// `search-index/PLAN.md`/`appearance-theme/PLAN.md` and are added later to
+// this same toolbar group). Session-only React state, never persisted
+// (`docs/DECISIONS.md` "'Pin' Button: Global Window Always-On-Top Toggle,
+// Not Per-Tab", `docs/plans/tab-management/PLAN.md` §4).
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -23,6 +28,7 @@ import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { errorMessageFor } from "../../shared/errorMessages";
+import { windowSetAlwaysOnTop } from "../../ipc/window";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -54,6 +60,8 @@ export function TabBar({ tabsState }: TabBarProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [pendingDialog, setPendingDialog] = useState<PendingDialog | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Session-only; deliberately not read from or written to `AppSettings`.
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
 
   useEffect(() => {
     if (draggingIdRef.current) return; // don't clobber an in-progress drag's local order
@@ -90,6 +98,17 @@ export function TabBar({ tabsState }: TabBarProps) {
     },
     [registerExistingTab],
   );
+
+  // Toggles OS-level "always on top" for the whole app window
+  // (`window_set_always_on_top`). Optimistic local toggle, reverted if the
+  // OS call fails; the button's own pressed state is the sole source of
+  // truth for the current session (nothing is read back from the backend).
+  const handleToggleAlwaysOnTop = useCallback(async () => {
+    const next = !alwaysOnTop;
+    setAlwaysOnTop(next);
+    const result = await windowSetAlwaysOnTop(next);
+    if (!result.ok) setAlwaysOnTop(!next);
+  }, [alwaysOnTop]);
 
   const handleCreateTab = useCallback(async () => {
     const result = await createTab();
@@ -202,6 +221,22 @@ export function TabBar({ tabsState }: TabBarProps) {
         <button type="button" className="ttn-tab-create" title="新しいタブを作成" onClick={() => void handleCreateTab()}>
           ＋
         </button>
+
+        {/* Toolbar group, left-to-right order: pin, search, theme toggle
+            (`docs/plans/tab-management/PLAN.md` §4). Search/theme buttons
+            are added here by `search-index/PLAN.md`/`appearance-theme/PLAN.md`
+            when those features are implemented. */}
+        <div className="ttn-tab-bar-toolbar">
+          <button
+            type="button"
+            className={`ttn-toolbar-btn${alwaysOnTop ? " ttn-toolbar-btn-active" : ""}`}
+            title={alwaysOnTop ? "最前面固定を解除" : "最前面に固定"}
+            aria-pressed={alwaysOnTop}
+            onClick={() => void handleToggleAlwaysOnTop()}
+          >
+            📌
+          </button>
+        </div>
       </div>
 
       {lastErrorCode && (
