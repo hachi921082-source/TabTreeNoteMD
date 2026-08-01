@@ -139,11 +139,17 @@ class MarkdownDecorationsPlugin implements PluginValue {
     const config = state.facet(markdownConfigFacet);
     const ranges: Range<Decoration>[] = [];
     const links: DetectedLink[] = [];
-    // Ranges to exclude from the raw-text regex scans below (fenced/indented code, inline code,
-    // and any Link/Image node's full range — the latter so a bare `memo:`/file-path token that
-    // happens to sit inside a `[label](url)`'s parenthesized URL isn't separately, redundantly
-    // detected as its own bare auto-link).
-    const skipRanges: Range2[] = [];
+    // Ranges to exclude the color-span/image-tag regex scans from (fenced/indented code, inline
+    // code) — so a `<span>`/`<img>` shown literally as example text inside a code block isn't
+    // treated as a live decoration. Deliberately does NOT include Link/Image node ranges: a
+    // `<span style="color:...">` commonly WRAPS a `[label](url)` link (§9 item 5's own required
+    // nested-decoration test case), and excluding on Link/Image overlap would wrongly suppress the
+    // color span whenever it contains one.
+    const codeSkipRanges: Range2[] = [];
+    // Superset of `codeSkipRanges` plus every Link/Image node's full range — used only by the bare
+    // `memo:`/file-path token scan, so a bare token that happens to sit inside a `[label](url)`'s
+    // parenthesized URL isn't separately, redundantly detected as its own bare auto-link.
+    const linkNodeRanges: Range2[] = [];
 
     const addMark = (from: number, to: number, deco: Decoration) => {
       if (from < to) ranges.push(deco.range(from, to));
@@ -179,7 +185,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
             break;
           case "InlineCode":
             addMark(node.from, node.to, Decoration.mark({ class: "cm-md-inline-code" }));
-            skipRanges.push({ from: node.from, to: node.to });
+            codeSkipRanges.push({ from: node.from, to: node.to });
             break;
           case "ListMark":
             addMark(node.from, node.to, Decoration.mark({ class: "cm-md-list-mark" }));
@@ -195,7 +201,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
             break;
           case "FencedCode":
           case "CodeBlock":
-            skipRanges.push({ from: node.from, to: node.to });
+            codeSkipRanges.push({ from: node.from, to: node.to });
             forEachLine(state, node.from, node.to, (line) => addLine(line, Decoration.line({ class: "cm-md-codeblock" })));
             break;
           case "Table":
@@ -209,7 +215,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
           }
           case "Link":
           case "Image": {
-            skipRanges.push({ from: node.from, to: node.to });
+            linkNodeRanges.push({ from: node.from, to: node.to });
             const { marks, url } = collectLinkParts(node);
             if (marks.length < 2 || !url) break; // reference-style / malformed — leave undecorated
             const labelFrom = marks[0].to;
@@ -254,18 +260,19 @@ class MarkdownDecorationsPlugin implements PluginValue {
 
     // Bare `memo:...`/file-path tokens (`links.ts`) and the allowlisted `<span>`/`<img>` HTML
     // fragments (`markdownSpanParser.ts`) — regex-scanned over the raw text since neither is part
-    // of the Lezer grammar, skipping anything inside code/Link/Image ranges collected above.
+    // of the Lezer grammar.
     const docText = state.doc.toString();
+    const bareTokenSkipRanges = [...codeSkipRanges, ...linkNodeRanges];
     for (let lineNo = 1; lineNo <= state.doc.lines; lineNo++) {
       const line = state.doc.line(lineNo);
       for (const link of [...scanBareMemoTokens(line.text, line.from), ...scanBareFilePathTokens(line.text, line.from)]) {
-        if (overlapsAny(skipRanges, link.from, link.to)) continue;
+        if (overlapsAny(bareTokenSkipRanges, link.from, link.to)) continue;
         links.push(link);
         addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
       }
     }
     for (const span of findColorSpans(docText)) {
-      if (overlapsAny(skipRanges, span.openFrom, span.closeTo)) continue;
+      if (overlapsAny(codeSkipRanges, span.openFrom, span.closeTo)) continue;
       if (span.style) addMark(span.contentFrom, span.contentTo, Decoration.mark({ attributes: { style: span.style } }));
       if (!touchesSelection(state, span.openFrom, span.closeTo)) {
         addReplace(span.openFrom, span.openTo, Decoration.replace({}));
@@ -273,7 +280,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
       }
     }
     for (const img of findImageTags(docText)) {
-      if (overlapsAny(skipRanges, img.from, img.to)) continue;
+      if (overlapsAny(codeSkipRanges, img.from, img.to)) continue;
       if (!touchesSelection(state, img.from, img.to)) {
         addReplace(img.from, img.to, Decoration.replace({ widget: new ImagePlaceholderWidget(img.src, "") }));
       }
