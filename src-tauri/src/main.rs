@@ -1,15 +1,16 @@
 // Prevents an additional console window on Windows in release builds, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-// This crate currently only wires up the `settings_get`/`settings_set`
-// commands (persistence-fs/PLAN.md's own initial scope). Several
-// foundational primitives built here for OTHER features to call — the
-// folder watcher (`watch::watcher`/`watch::conflict`/`watch::active_memo`),
-// `fs::trash`, `fs::path_safety`/`util::name_sanitize`'s validators, and most
-// `ErrorCode` variants — are intentionally not yet referenced from `main.rs`
-// or `commands::settings`; they are consumed once `tab-management/PLAN.md`,
-// `memo-tree/PLAN.md`, `editor-save/PLAN.md`, and `tab-lock/PLAN.md` are
-// implemented on top of this foundation (`docs/plans/persistence-fs/PLAN.md`
-// §10 "Cross-References"). Remove this allow once those call sites exist.
+// This crate wires up `settings_get`/`settings_set` (persistence-fs/PLAN.md)
+// and the tab domain (tab-management/PLAN.md, everything except lock
+// operations). Several foundational primitives built here for OTHER
+// features to call — the folder watcher
+// (`watch::watcher`/`watch::conflict`/`watch::active_memo`), `fs::trash`,
+// and the `IoLocked`/`TrashFailed`/`DecryptFailed`/`Conflict`/`MetaCorrupt`/
+// `LongPath` `ErrorCode` variants — are intentionally not yet referenced;
+// they are consumed once `memo-tree/PLAN.md`, `editor-save/PLAN.md`, and
+// `tab-lock/PLAN.md` are implemented on top of this foundation
+// (`docs/plans/persistence-fs/PLAN.md` §10 "Cross-References"). Remove this
+// allow once those call sites exist.
 #![allow(dead_code)]
 
 mod commands;
@@ -39,9 +40,21 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(SelfWriteRegistry::new())
         .manage(AppSettingsStore::new())
-        .invoke_handler(tauri::generate_handler![commands::settings::settings_get, commands::settings::settings_set])
+        .invoke_handler(tauri::generate_handler![
+            commands::settings::settings_get,
+            commands::settings::settings_set,
+            commands::tab::tab_list,
+            commands::tab::tab_create,
+            commands::tab::tab_register_existing,
+            commands::tab::tab_rename,
+            commands::tab::tab_reorder,
+            commands::tab::tab_remove,
+            commands::tab::tab_open_location,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
