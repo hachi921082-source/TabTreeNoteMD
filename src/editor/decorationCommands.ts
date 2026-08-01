@@ -4,11 +4,13 @@
 // `editor/textCommands.ts`'s existing `undoCommand`/`redoCommand` re-exports rather than
 // duplicating them — only import those from the toolbar UI layer directly.
 //
-// "Update" (TOC) and "Image insert" are explicit stubs: `table-of-contents/PLAN.md` and
-// `image-handling/PLAN.md` (the plans that actually own heading-scan/TOC generation and
-// `image_save_pasted`) are not implemented yet. Both stubs log a clearly-labeled no-op rather than
-// silently doing nothing unexplained, so their forward seam is visible in the console during
-// manual testing; wiring the real behavior in later is just replacing these function bodies.
+// "Image insert" is an explicit stub: `image-handling/PLAN.md` (the plan that actually owns
+// `image_save_pasted`) is not implemented yet. It logs a clearly-labeled no-op rather than silently
+// doing nothing unexplained, so its forward seam is visible in the console during manual testing;
+// wiring the real behavior in later is just replacing this function body. "Update" (TOC) is real —
+// see `tocGenerator.ts`'s `tocUpdateCommand`, imported directly by
+// `components/Editor/Toolbar/MarkdownToolbar.tsx` rather than re-exported from here, since it's
+// `table-of-contents/PLAN.md`'s own module, not this plan's.
 import type { EditorView } from "@codemirror/view";
 import { findColorSpans } from "./markdownSpanParser";
 
@@ -221,16 +223,9 @@ export function clearFontSizeSpan(view: EditorView): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Stubs — `table-of-contents/PLAN.md` (heading scan / TOC insert-replace) and
-// `image-handling/PLAN.md` (`image_save_pasted`) are not implemented yet. See this module's header
-// comment for why these log-and-no-op rather than silently doing nothing.
+// Stub — `image-handling/PLAN.md` (`image_save_pasted`) is not implemented yet. See this module's
+// header comment for why this logs-and-no-ops rather than silently doing nothing.
 // ---------------------------------------------------------------------------
-
-export function tocUpdateStub(view: EditorView): boolean {
-  console.info("[markdown-editing] TOC 'Update' is not implemented yet (see table-of-contents/PLAN.md) — no changes were made.");
-  view.focus();
-  return true;
-}
 
 export function imageInsertStub(view: EditorView): boolean {
   console.info("[markdown-editing] Image insert is not implemented yet (see image-handling/PLAN.md) — no image was inserted.");
