@@ -37,7 +37,11 @@ pub fn with_retry<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     }
 }
 
-fn is_lock_class_error(err: &io::Error) -> bool {
+/// Exposed beyond this module so a command handler that already caught a
+/// `with_retry`-exhausted error can classify it the same way, to decide
+/// between `ErrorCode::IoLocked` and a more generic error code
+/// (`docs/plans/memo-tree/PLAN.md` §3 `memo_rename`/`memo_move`).
+pub fn is_lock_class_error(err: &io::Error) -> bool {
     const ERROR_SHARING_VIOLATION: i32 = 32;
     const ERROR_LOCK_VIOLATION: i32 = 33;
 
