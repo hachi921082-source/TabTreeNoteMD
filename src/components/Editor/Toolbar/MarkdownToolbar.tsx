@@ -7,7 +7,7 @@
 // The live/source view-mode runtime toggle (`docs/plans/markdown-editing/PLAN.md` §3) is NOT one
 // of the 16 grid slots — it's a separate control in this panel's header, since the 16-slot grid's
 // contents are fixed by spec and don't include it.
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { EditorView } from "@codemirror/view";
 import { DEFAULT_TOOLBAR_ORDER, TOOLBAR_ACTIONS, normalizeToolbarOrder } from "../../../editor/toolbarSlots";
@@ -72,7 +72,19 @@ export interface MarkdownToolbarProps {
   readOnly: boolean;
 }
 
-export function MarkdownToolbar({ getView, appSettings, patchSettings, liveViewEnabled, onToggleLiveView, readOnly }: MarkdownToolbarProps) {
+/** Exposes the 16 grid actions for external (keyboard-shortcut) invocation
+ * (`docs/plans/markdown-editing/PLAN.md` §4's "every action gets a default keyboard shortcut" —
+ * `components/Editor/EditorPane.tsx`'s global shortcut dispatcher calls this rather than
+ * duplicating the action switch statement below), since state like which popover is open or
+ * whether rearrange mode is active must stay owned here, not lifted to the parent. */
+export interface MarkdownToolbarHandle {
+  invokeAction: (id: ToolbarActionId) => void;
+}
+
+export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbarProps>(function MarkdownToolbar(
+  { getView, appSettings, patchSettings, liveViewEnabled, onToggleLiveView, readOnly },
+  ref,
+) {
   const persistedOrderKey = JSON.stringify(appSettings?.window.toolbarOrder ?? null);
   const [order, setOrder] = useState<ToolbarActionId[]>(() => normalizeToolbarOrder(appSettings?.window.toolbarOrder));
   useEffect(() => {
@@ -150,6 +162,10 @@ export function MarkdownToolbar({ getView, appSettings, patchSettings, liveViewE
     // "ON: clicking an icon does not invoke its action — only dragging works"
     // (`docs/plans/markdown-editing/PLAN.md` §4).
     if (rearranging) return;
+    // Every other slot mutates the buffer — blocked while read-only (`[spec §2.2]`), same gate the
+    // grid buttons themselves already show as `disabled`, re-checked here since keyboard-shortcut
+    // invocation (`MarkdownToolbarHandle.invokeAction`) doesn't go through the button element.
+    if (readOnly) return;
     switch (id) {
       case "undo":
         runOnView(undoCommand);
@@ -198,6 +214,8 @@ export function MarkdownToolbar({ getView, appSettings, patchSettings, liveViewE
         break;
     }
   };
+
+  useImperativeHandle(ref, () => ({ invokeAction }));
 
   return (
     <div
@@ -311,4 +329,4 @@ export function MarkdownToolbar({ getView, appSettings, patchSettings, liveViewE
       )}
     </div>
   );
-}
+});
