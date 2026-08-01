@@ -21,6 +21,16 @@ export interface AppSettings {
   shortcuts: Record<string, string>;
 }
 
+// `docs/plans/tab-management/PLAN.md` §2 `tab_list` — the tab-bar list
+// entry returned by the tab domain's read commands. For a locked tab, `name`
+// is already the 🔒-placeholder (`docs/DECISIONS.md` "Tab-Lock Placeholder
+// Display Name: 🔒 Glyph Alone").
+export interface TabInfo {
+  id: string;
+  name: string;
+  locked: boolean;
+}
+
 export interface TabSettingsEntry {
   id: string;
   name: string;
