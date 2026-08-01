@@ -3,11 +3,11 @@
 // matching `project-architecture/PLAN.md` §2's plain-hooks approach (no
 // external state library).
 //
-// NOTE: the "pin to foreground" session-only UI state
-// (`docs/spec.md` §2.1) is intentionally NOT implemented here yet — its
-// observable effect and placement (per-tab vs. a single global button) are
-// unresolved, see `docs/QA.md` "Pin to Foreground Tab Button". Add it once
-// that's answered.
+// The "always on top" pin toggle (`docs/spec.md` §2.1) is NOT part of this
+// hook's state — it's session-only, global (not per-tab), and lives as
+// local `useState` in `components/TabBar/TabBar.tsx` instead
+// (`docs/DECISIONS.md` "'Pin' Button: Global Window Always-On-Top Toggle,
+// Not Per-Tab").
 import { useCallback, useEffect, useState } from "react";
 import { tabList, tabCreate, tabRegisterExisting, tabRename, tabReorder, tabRemove, tabOpenLocation } from "../ipc/tab";
 import type { TabInfo } from "../shared/models";
