@@ -782,23 +782,12 @@ pub fn memo_get_properties(
     })
 }
 
-/// Encoding detection order (`[detailed-spec §5.3]`): UTF-8 BOM -> strict UTF-8 -> Shift_JIS
-/// fallback. Duplicated locally (rather than shared) since `editor-save/PLAN.md`'s
-/// `store/memo_file_service.rs` — the natural home for this — is not yet implemented; that
-/// feature should factor this into a shared decode helper when it lands, rather than this
-/// command growing its own divergent copy over time.
+/// Encoding detection (`[detailed-spec §5.3]`): delegates to the shared
+/// `store::memo_file_service` decoder (`editor-save/PLAN.md`), which `commands/editor.rs`'s
+/// `editor_load`/`editor_save` also use — only the decoded text is needed here, not the
+/// detected `Encoding` itself.
 fn decode_memo_body(bytes: &[u8]) -> String {
-    const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
-    if let Some(rest) = bytes.strip_prefix(&UTF8_BOM) {
-        return String::from_utf8_lossy(rest).into_owned();
-    }
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            let (decoded, _, _) = encoding_rs::SHIFT_JIS.decode(bytes);
-            decoded.into_owned()
-        }
-    }
+    crate::store::memo_file_service::decode_memo_body(bytes).0
 }
 
 /// Formats a `SystemTime` as a UTC `"YYYY-MM-DD HH:MM:SS"` string, without pulling in a
@@ -858,7 +847,7 @@ fn touch_search_index_remove(_tab_id: &str, _memo_name: &str) {
 // Tab resolution
 // ---------------------------------------------------------------------------
 
-fn resolve_tab(settings: &AppSettings, tab_id: &str) -> Result<(PathBuf, String), AppErrorPayload> {
+pub(crate) fn resolve_tab(settings: &AppSettings, tab_id: &str) -> Result<(PathBuf, String), AppErrorPayload> {
     let entry = settings
         .tabs
         .iter()
@@ -877,10 +866,12 @@ fn resolve_tab(settings: &AppSettings, tab_id: &str) -> Result<(PathBuf, String)
 // Metadata load / reconcile / save
 // ---------------------------------------------------------------------------
 
-struct LoadedTabMeta {
-    schema_version: u32,
-    app_version: String,
-    tree: Vec<MetaTreeNode>,
+/// `pub(crate)` so `commands/editor.rs` (`editor-save/PLAN.md`) can reuse `load_and_reconcile`
+/// without duplicating tree reconciliation logic.
+pub(crate) struct LoadedTabMeta {
+    pub(crate) schema_version: u32,
+    pub(crate) app_version: String,
+    pub(crate) tree: Vec<MetaTreeNode>,
 }
 
 fn load_tab_meta_with_recovery(folder: &Path) -> (Option<TabMetaFile>, RecoveryOutcome) {
@@ -905,7 +896,7 @@ fn try_parse_tab_meta(path: &Path) -> Option<TabMetaFile> {
 /// a fresh scan of the tab folder (`[detailed-spec §3.5]`). Does not persist
 /// anything itself — see this module's top-level doc comment for why that's
 /// safe to defer.
-fn load_and_reconcile(folder: &Path) -> LoadedTabMeta {
+pub(crate) fn load_and_reconcile(folder: &Path) -> LoadedTabMeta {
     let (parsed, _recovery) = load_tab_meta_with_recovery(folder);
     let (schema_version, app_version, persisted_tree) = match parsed {
         Some(meta) => (meta.schema_version, meta.app_version, meta.tree.unwrap_or_default()),
@@ -987,7 +978,10 @@ fn reconcile_tree(persisted: Vec<MetaTreeNode>, real_names: &mut BTreeSet<String
 // Tree node lookup / mutation helpers
 // ---------------------------------------------------------------------------
 
-fn find_node<'a>(tree: &'a [MetaTreeNode], name: &str) -> Option<&'a MetaTreeNode> {
+/// `pub(crate)` so `commands/editor.rs` (`editor-save/PLAN.md`) can look up a memo's
+/// `MetaTreeNode` (edit-lock flag, `MemoEditorSettings.scrollPosition`) without duplicating tree
+/// lookup logic.
+pub(crate) fn find_node<'a>(tree: &'a [MetaTreeNode], name: &str) -> Option<&'a MetaTreeNode> {
     for node in tree {
         if node.memo_name == name {
             return Some(node);
