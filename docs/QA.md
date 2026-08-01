@@ -15,4 +15,5 @@
 
 ---
 
-No open items at this time.
+_(No open items at this time. Past questions and their resolutions are available via this file's git
+history and are permanently recorded in `DECISIONS.md`.)_
