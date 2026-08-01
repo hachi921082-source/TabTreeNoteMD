@@ -1,0 +1,35 @@
+.ttn-context-menu {
+  position: fixed;
+  min-width: 180px;
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  padding: 4px 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+
+.ttn-context-menu-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ttn-context-menu-item:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+.ttn-context-menu-item:disabled {
+  color: #a0a0a0;
+  cursor: default;
+}
+
+.ttn-context-menu-item-danger {
+  color: #c0392b;
+}
