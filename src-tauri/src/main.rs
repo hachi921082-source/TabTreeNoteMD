@@ -73,6 +73,7 @@ fn main() {
             commands::tree::memo_get_properties,
             commands::editor::editor_load,
             commands::editor::editor_save,
+            commands::link::link_open_external,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
