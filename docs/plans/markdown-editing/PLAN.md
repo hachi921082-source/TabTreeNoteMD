@@ -25,7 +25,7 @@ layer's presence. Cursor and scroll position must be preserved across the toggle
 position-mapping APis (`EditorState.changes`/`RangeSet` mapping), not recomputed from scratch — this
 must hold for arbitrarily frequent toggling within one editing session (`[detailed-spec §5.10]`).
 
-## 2. Module Layout (`src/editor/`, ported/adapted from legacy per `DECISIONS.md`'s reference sanction)
+## 2. Module Layout (`src/editor/`)
 
 - `codeMirrorSetup.ts` — base `EditorState`/`EditorView` construction, extension composition
   (language support, our decoration extension, search package, keymap).
