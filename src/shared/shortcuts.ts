@@ -17,6 +17,30 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   // "Mouse-Wheel Tab Switching: Removed from v1 Scope").
   "tab.switchNext": "Ctrl+Tab",
   "tab.switchPrev": "Ctrl+Shift+Tab",
+
+  // Markdown toolbar (`docs/plans/markdown-editing/PLAN.md` §4; `docs/detailed-spec.md` §5.10:
+  // "every one of the 16 toolbar actions gets a default keyboard shortcut... exact key
+  // combination... is developer-lite's implementation discretion"). Action ids match
+  // `editor/toolbarSlots.ts`'s `ToolbarActionId`, namespaced under `markdown.`.
+  // `markdown.toggleLiveView` is the runtime live/source toggle (`[detailed-spec §5.10]`) — not
+  // one of the 16 fixed grid slots, but still gets a default binding for the same reason.
+  "markdown.undo": "Ctrl+Z",
+  "markdown.redo": "Ctrl+Y",
+  "markdown.color": "Ctrl+Shift+1",
+  "markdown.fontSize": "Ctrl+Shift+2",
+  "markdown.heading": "Ctrl+Shift+H",
+  "markdown.list": "Ctrl+Shift+L",
+  "markdown.bold": "Ctrl+B",
+  "markdown.italic": "Ctrl+I",
+  "markdown.strikethrough": "Ctrl+Shift+X",
+  "markdown.quote": "Ctrl+Shift+Q",
+  "markdown.link": "Ctrl+K",
+  "markdown.codeBlock": "Ctrl+Shift+K",
+  "markdown.tocUpdate": "Ctrl+Shift+T",
+  "markdown.table": "Ctrl+Shift+B",
+  "markdown.image": "Ctrl+Shift+G",
+  "markdown.rearrangeToggle": "Ctrl+Shift+A",
+  "markdown.toggleLiveView": "Ctrl+Shift+M",
 };
 
 /** Merges user overrides (`AppSettings.shortcuts`) over the defaults, by
