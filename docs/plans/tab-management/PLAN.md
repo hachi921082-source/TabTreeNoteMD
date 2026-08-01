@@ -39,10 +39,19 @@ decryption and never touches a locked tab's `.tabtreenote.json`.
 > no way for a retry to supply that name for the *same* already-picked folder without re-opening the
 > dialog).
 1. If `initial_path` is `None`, open the OS folder-selection dialog (Tauri's dialog plugin,
-   `tauri_plugin_dialog`'s `blocking_pick_folder`) — **never** a web `prompt()` (`[spec §2.1]`). If the
+   `tauri_plugin_dialog`) — **never** a web `prompt()` (`[spec §2.1]`). If the
    user cancels the dialog, returns `AppResult::Ok(None)` (not an error); the frontend closes the flow
    silently on `None`. If `initial_path` is `Some(path)`, the dialog is skipped entirely and `path` is
    used directly (this is what `name`-retry calls and `tab_register_existing` both do internally).
+   > **Implementation note (post-review fix)**: `tab_create` is `async` and uses the plugin's
+   > non-blocking `pick_folder(callback)` awaited via a `tokio::sync::oneshot` channel, **not**
+   > `blocking_pick_folder`. The blocking call was found (in review) to synchronously occupy the
+   > thread Tauri uses to service this IPC request for the entire time the native dialog stays open,
+   > which stalled every *other* `invoke()` (e.g. `tab_list`) until the dialog closed. Because async
+   > commands with a reference/lifetime-bearing parameter must return a literal `std::result::Result`
+   > (a Tauri macro restriction this codebase's `AppResult` wrapper doesn't satisfy), `tab_create` no
+   > longer takes `store`/`registry` as `State<'_, _>` parameters — it fetches them via `app.state()`
+   > inside the body instead. Signature is otherwise unchanged.
 2. Derive a proposed tab name from the folder's base name if `name` is `None`; otherwise use `name`
    (trimmed) as given. Validate via `path_safety::validate_name` (Strict) — folder base names are
    usually already valid, but symlink junctions or unusual folder names could collide/violate; on
