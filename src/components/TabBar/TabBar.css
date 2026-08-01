@@ -44,6 +44,15 @@
   letter-spacing: 1px;
 }
 
+/* Cross-tab memo DND hover feedback, toggled imperatively by
+   `components/Tree/TreeView.tsx` while a tree-row drag is over this tab
+   (`docs/plans/memo-tree/PLAN.md` §4). */
+.ttn-tab-drop-target {
+  background: #cfe0f5;
+  outline: 2px dashed #4a90d9;
+  outline-offset: -2px;
+}
+
 .ttn-tab-create {
   appearance: none;
   border: none;
