@@ -41,3 +41,10 @@ aes-gcm = "0.11.0"
 scrypt = "0.12.0"
 # Shift_JIS fallback decoding for memo bodies (editor-save/PLAN.md)
 encoding_rs = "0.8.35"
+# OS folder-selection dialog for tab create/register-existing (spec.md §2.1,
+# "never window.prompt()"; tab-management/PLAN.md §2)
+tauri-plugin-dialog = "2.7.2"
+# OS "reveal in file manager" for tab_open_location, via the OS-standard
+# Shell API rather than shell string concatenation (spec.md §2.8, §2.1;
+# tab-management/PLAN.md §2)
+tauri-plugin-opener = "2.5.4"
