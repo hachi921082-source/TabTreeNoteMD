@@ -1,0 +1,77 @@
+.ttn-tab-bar-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.ttn-tab-bar {
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  background: #e8e8e8;
+  border-bottom: 1px solid #cfcfcf;
+  overflow-x: auto;
+  user-select: none;
+}
+
+.ttn-tab {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-right: 1px solid #cfcfcf;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+}
+
+.ttn-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ttn-tab:hover {
+  background: #dcdcdc;
+}
+
+.ttn-tab-active {
+  background: #ffffff;
+  font-weight: 600;
+}
+
+.ttn-tab-locked .ttn-tab-name {
+  letter-spacing: 1px;
+}
+
+.ttn-tab-create {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 36px;
+  font-size: 16px;
+  cursor: pointer;
+  flex: none;
+}
+
+.ttn-tab-create:hover {
+  background: #dcdcdc;
+}
+
+.ttn-tab-bar-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fdecea;
+  color: #611a15;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.ttn-tab-bar-error button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
