@@ -36,11 +36,6 @@ body {
   min-height: 0;
 }
 
-.app-editor-pane {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #888;
-}
+/* The editor pane itself (`components/Editor/Editor.css`'s `.ttn-editor-pane`,
+   `docs/plans/editor-save/PLAN.md`) already sets `flex: 1; min-width: 0;` — no
+   `.app-editor-pane` wrapper class is needed here anymore. */
