@@ -338,7 +338,9 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
   folder or its files — unregister-only (`DECISIONS.md` "Tab Deletion Semantics: Unregister-Only, No
   Folder-Trash Option"). Rejected with `TAB_LOCKED` if the tab is currently locked and has no active
   session (`[spec §4.1 pt.7]`).
-- **Pin tab to foreground** — session-only UI state (📌), not persisted (`[spec §2.1]`).
+- **Toggle window always-on-top** — global, session-only UI state (📌), not persisted. Pins the entire
+  app window above other windows via the OS window manager; not a per-tab or tab-position effect. One
+  shared button (not one per tab), placed to the left of the search button (`[spec §2.1]`).
 - **Open tab folder location** — OS "reveal in Explorer," standard API only.
 - **Lock tab** / **Unlock tab (start session)** / **End session (leave tab)** — see §5.9 for the full
   flow.
