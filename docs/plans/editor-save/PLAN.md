@@ -1,13 +1,70 @@
 # PLAN: Editor / Save (Right Pane — Core Editing & Persistence)
 
-> Status: planning complete, not yet implemented. Covers text-editing mechanics, encoding/EOL, save
-> triggers, and conflict handling. The Markdown-specific rendering layer (live view, CodeMirror
-> decoration extension, toolbar, image resize markup) is a **separate** plan,
-> `markdown-editing/PLAN.md`, which is layered on top of the plain-text editing surface defined here —
-> read both together when implementing the editor. Depends on `project-architecture/PLAN.md` and
-> `persistence-fs/PLAN.md`.
+> Status: implemented (backend commands in `src-tauri/src/commands/editor.rs` +
+> `src-tauri/src/store/memo_file_service.rs`, frontend `components/Editor/`,
+> `components/Search/`, `state/useEditor.ts`, `state/useSearch.ts`, `editor/textCommands.ts`),
+> except the parts this file itself defers to plans that are not yet implemented: the actual
+> encrypt-on-save/decrypt-on-load path for a locked tab's active session (`tab-lock/PLAN.md`),
+> live full-text index patching on save (`search-index/PLAN.md`, currently a marked no-op seam),
+> and `evt:editor:conflict` is never actually emitted yet since `persistence-fs/PLAN.md`'s folder
+> watcher isn't wired up to a running tab folder (the frontend listener exists as a harmless
+> forward seam). The Markdown-specific rendering layer (live view, CodeMirror decoration
+> extension, toolbar, image resize markup) is a **separate** plan, `markdown-editing/PLAN.md`,
+> layered on top of the plain-text editing surface implemented here — not built by this pass.
+> Depends on `project-architecture/PLAN.md` and `persistence-fs/PLAN.md`.
 
 Sources: `docs/spec.md` §2.3, §2.6; `docs/detailed-spec.md` §4.3, §5.3, §5.6, §6.4, §7.
+
+## Implementation Notes (resolutions of this plan's discretion points)
+
+- §2 `editor_save` step 1's flagged open item (exact `ErrorCode` for a save attempt against an
+  edit-locked memo) did not turn out to be reachable in a way that matters — the frontend makes
+  the editor read-only whenever `editLocked` is true, so this stayed a defensive guard. Resolved
+  with `Unknown`, exactly as the plan's own fallback already specified; not escalated to
+  `designer-lite`.
+- `store/memo_file_service.rs` is the shared encoding/EOL/hash module the plan's §2 anticipated;
+  `commands/tree.rs`'s pre-existing `decode_memo_body` now delegates to it instead of keeping its
+  own copy (that function's own prior TODO comment invited exactly this consolidation).
+- `editor_save`'s EOL restoration (step 3) needed no separate client-supplied `eol` parameter,
+  contrary to a first read of the command signature possibly implying otherwise: since the
+  hash-conflict check (step 2) already re-reads the current on-disk bytes and proves them
+  byte-identical to what was loaded, the EOL style is re-derived from those same bytes at save
+  time rather than trusting a round-tripped client value.
+- "Search with Google" (§4) needed an OS-standard external-open primitive that `link/PLAN.md`
+  hasn't implemented yet. Added a minimal `link_open_external` command
+  (`src-tauri/src/commands/link.rs`) — only the plain `open_url` pass-through, explicitly not
+  `link/PLAN.md`'s `memo:`-resolution/confirm-dialog/email-special-casing scope — as a forward
+  seam, matching the master command inventory's reserved name.
+- Checkbox cycle (§4 "Check" menu action) mechanics (which glyph on the cursor's line gets
+  cycled, insert-if-absent behavior) aren't spelled out beyond "insert/cycles at cursor" —
+  resolved as: cycle the first `☐`/`☑` found on the current line, else insert a fresh `☐ ` at the
+  cursor. Implementation discretion (`[detailed-spec §9]`-style), not escalated.
+- Word wrap's "character-count" mode (§4) has no accompanying numeric column setting anywhere in
+  the confirmed `AppSettings`/`MemoEditorSettings` schema (`[detailed-spec §3.2, §3.3]`) — used a
+  fixed 80-column constant (`CHARS_WRAP_COLUMN` in `editor/textCommands.ts`).
+- §4's grouping of "auto-indent, line numbers, whitespace/line-break visibility, cursor-line
+  highlight" alongside the genuinely `MemoEditorSettings`-backed settings (wrap/tab
+  width/soft-tabs/line-numbers/font-size) turned out to be looser than the actual schema: only
+  the latter group has real fields. Auto-indent-on-Enter and cursor-line highlight are
+  implemented as fixed, always-on behaviors; whitespace/line-break visibility is a session-only,
+  non-persisted per-EditorPane toggle (context-menu item) rather than a settings field.
+- `state/useSettings.ts` (a `project-architecture/PLAN.md`-anticipated file with no prior owner)
+  was added by this pass, scoped narrowly to what this plan actually needs: load `AppSettings`
+  once, expose it, and a generic `patch()` for later features to reuse — `settings_get`/
+  `settings_set` already existed with no frontend consumer before this.
+- Hiragana/katakana and half-width/full-width conversion use `jaconv` (a single well-tested
+  library covering all four operations), per the plan's own "avoid a hand-rolled Unicode-range
+  map" guidance.
+- App-minimize detection uses `getCurrentWindow().onResized()` + `isMinimized()`, since Tauri v2
+  has no dedicated "minimize" event of its own.
+- Scroll-position persistence reuses `memo_set_editor_override` exactly as specified, debounced
+  during scroll (500ms) and additionally flushed immediately whenever the memo being viewed is
+  switched away from or the `EditorView` is torn down, at the same trigger points as the autosave
+  flush.
+- Functionally verified end-to-end via `tauri dev` + WebView2 CDP (see `EditorPane.tsx`'s own
+  commit message for the exact scenarios exercised): load/display, live status bar, debounced
+  autosave, immediate Ctrl+S, a real save-time hash conflict correctly surfacing the Esc-disabled
+  dialog, "keep mine" overwrite resolution, and per-memo history isolation across a memo switch.
 
 ---
 
