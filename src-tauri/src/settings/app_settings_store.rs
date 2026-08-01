@@ -98,9 +98,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     /// Points `app_data_root` at a fresh temp directory for the duration of
     /// one test by relying on the fact that `settings_json_path()` is always
@@ -108,9 +105,16 @@ mod tests {
     /// a value derived from `current_exe()` process-wide, these tests instead
     /// exercise the cascade helpers directly against explicit temp paths
     /// rather than going through the process-wide cached root.
+    ///
+    /// Uses a random suffix (matching the style already used by
+    /// `fs::atomic_write`, `watch::watcher`, and `watch::conflict` tests)
+    /// rather than a process-local `AtomicU64` counter: a counter resets to 0
+    /// on every `cargo test` invocation, so a leftover `settings.json` from a
+    /// previous run (nothing here ever deletes its temp dir) can collide with
+    /// a same-numbered directory a later run assigns to a different test,
+    /// causing spurious failures that depend on prior run history.
     fn temp_settings_path() -> PathBuf {
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("ttn-settings-store-test-{n}"));
+        let dir = std::env::temp_dir().join(format!("ttn-settings-store-test-{}", rand::random::<u64>()));
         fs::create_dir_all(&dir).unwrap();
         dir.join("settings.json")
     }
