@@ -1,6 +1,8 @@
 # PLAN: Tab Management
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md` (naming
+> Status: implemented (backend commands + `TabBar` frontend), except the 📌 pin-to-foreground button
+> (blocked on `docs/QA.md`, see "Open Items") and the "Lock tab" context-menu action (deferred to
+> `tab-lock/PLAN.md`'s own implementation pass). Depends on `project-architecture/PLAN.md` (naming
 > conventions) and `persistence-fs/PLAN.md` (atomic write, settings store, name validation). Tab Lock
 > operations (`tab_lock`/`tab_unlock`/`tab_end_session`) are specified separately in
 > `tab-lock/PLAN.md` — this file covers everything else in the tab domain and treats lock state as an
@@ -28,35 +30,50 @@ Reads `AppSettings.tabs` (via `persistence-fs`'s settings store) in array order.
 `name` is already the placeholder string stored in settings (§3 below) — this command does no
 decryption and never touches a locked tab's `.tabtreenote.json`.
 
-### `tab_create(initial_path: Option<String>) -> AppResult<TabInfo>`
-1. If `initial_path` is `None`, open the OS folder-selection dialog (Tauri's dialog plugin) — **never**
-   a web `prompt()` (`[spec §2.1]`). If the user cancels the dialog, return a no-op (not an error) —
-   exact signaling of "user cancelled" vs. a real error is implementation discretion (e.g. an `Option`
-   wrapping the `AppResult`, or a dedicated cancel variant); front end simply closes the flow silently
-   on cancel either way.
-2. Derive a proposed tab name from the folder's base name; validate via `path_safety::validate_name`
-   (Strict) — folder base names are usually already valid, but symlink junctions or unusual folder
-   names could collide/violate; on `NAME_DUPLICATE` against existing tab names (case-insensitive,
-   `[detailed-spec §5.1]`), the frontend must let the user pick a different display name before
-   retrying (tab display name is independent of the folder's actual name on disk — only the *folder
-   path* is fixed by the dialog, the tab's `name` field is a free label).
+### `tab_create(initial_path: Option<String>, name: Option<String>) -> AppResult<Option<TabInfo>>`
+> **Implemented signature note**: adds a `name: Option<String>` parameter beyond this section's
+> original draft signature, and wraps the return type's success value in `Option` instead of using a
+> separate cancel variant. Both are resolutions of discretion this section explicitly left open (see
+> step 1 and step 2 below) — `name` is required for step 2's own "let the user pick a different
+> display name before retrying" requirement to actually be implementable (the original signature had
+> no way for a retry to supply that name for the *same* already-picked folder without re-opening the
+> dialog).
+1. If `initial_path` is `None`, open the OS folder-selection dialog (Tauri's dialog plugin,
+   `tauri_plugin_dialog`'s `blocking_pick_folder`) — **never** a web `prompt()` (`[spec §2.1]`). If the
+   user cancels the dialog, returns `AppResult::Ok(None)` (not an error); the frontend closes the flow
+   silently on `None`. If `initial_path` is `Some(path)`, the dialog is skipped entirely and `path` is
+   used directly (this is what `name`-retry calls and `tab_register_existing` both do internally).
+2. Derive a proposed tab name from the folder's base name if `name` is `None`; otherwise use `name`
+   (trimmed) as given. Validate via `path_safety::validate_name` (Strict) — folder base names are
+   usually already valid, but symlink junctions or unusual folder names could collide/violate; on
+   `NAME_DUPLICATE` against existing tab names (case-insensitive), the error's `path` field carries the
+   already-picked folder path back to the frontend, which shows a prompt for an alternate name and
+   retries via `tab_create(Some(path), Some(new_name))` — no second dialog. (Tab display name is
+   independent of the folder's actual name on disk — only the *folder path* is fixed by the dialog, the
+   tab's `name` field is a free label.)
+2a. **Added safety check** (not in the original draft): rejects with `NotFound` if the resolved path is
+    not a directory (e.g. a file was passed in), since folder registration only makes sense for a
+    directory. Runs before the name-derivation step.
 3. If `<folder>/.tabtreenote.json` does not already exist, initialize it with an empty `tree: []`
    (fresh tab). If it does exist (user picked a folder that was previously used, e.g. re-registering
    after a prior `tab_remove`), leave it untouched — `tree_open` (see `memo-tree/PLAN.md`) reconciles
    it against the folder's real files on first open.
-4. Append `{ id: <new>, name, folderPath, locked: false }` to `AppSettings.tabs` via `settings_set`.
-5. Return the new `TabInfo`.
+4. Append `{ id: <new>, name, folderPath, locked: false }` to `AppSettings.tabs`. **Implemented via
+   `AppSettingsStore::modify`** (a new read-modify-write-in-one-lock method added to
+   `settings/app_settings_store.rs` alongside this feature, extending `persistence-fs/PLAN.md`'s
+   store) rather than a separate `get()` + `settings_set`/`patch()` pair, so the duplicate-name check
+   and the write happen atomically — a plain `get()`-then-`patch()` pair would leave a race window
+   where a second concurrent tab command could interleave between the check and the write.
+5. Return the new `TabInfo`, wrapped in `Some`.
 
-### `tab_register_existing(...)`
-Same flow as `tab_create` — per `[detailed-spec §5.1]`, "create new" and "register existing folder"
-differ only in whether a pre-existing `.tabtreenote.json`/memo files are expected, and step 3 above
-already handles both cases uniformly. **This may be implemented as a single command
-(`tab_create`) with no behavioral branch needed**, rather than two separate commands — the distinction
-in `spec.md` §2.1 ("drag-register existing folders") is a *UI entry-point* distinction (menu action vs.
-drag-and-drop of a folder from Explorer onto the tab bar), not a backend-logic distinction. If the
-frontend needs a separate command purely to receive a dropped-folder path instead of opening a picker
-dialog, name it `tab_register_existing(path: String)` (skips step 1, dialog) — `developer-lite`
-decides which shape is cleaner at implementation time; both are compatible with this plan.
+### `tab_register_existing(path: String, name: Option<String>) -> AppResult<TabInfo>`
+**Implemented as a separate command** (not folded into `tab_create`), since
+`project-architecture/PLAN.md` §4's command-name inventory lists `tab_create` and
+`tab_register_existing` as distinct entries. Internally, both commands call the same private helper
+function with the resolved path and optional name — behaviorally identical to `tab_create(Some(path),
+name)` (step 3's "existing `.tabtreenote.json` reconciled, not overwritten" already covers both "create
+new" and "register existing" per `[detailed-spec §5.1]`). No dialog, no cancel path (the path is
+already known to the caller — the OS-drag-and-drop-onto-tab-bar entry point).
 
 ### `tab_rename(id: String, new_name: String) -> AppResult<TabInfo>`
 - Rejected with `TabLocked` if the tab is locked with no active session (renaming the *display* name
@@ -115,11 +132,26 @@ file's commands, which trust the cache for listing purposes only.
   click to switch active tab, keyboard-shortcut tab switching (`shared/shortcuts.ts` default keymap,
   `window-operation/PLAN.md` §3). **Mouse-wheel tab switching is removed from v1 scope** (user
   decision, `[detailed-spec §5.1]`, `DECISIONS.md` "Mouse-Wheel Tab Switching: Removed from v1 Scope")
-  — do not implement a wheel handler on the tab bar. 📌 pin button per tab (session-only React state, not
-  persisted, sits left of the search button per `[spec §2.1]`), right-click → shared context menu with
-  "Rename," "Open tab location," "Remove tab," and (if unlocked) "Lock tab" / (if locked+session)
-  "Lock now" is not offered as a separate action since session end is switch-triggered only
-  (`tab-lock/PLAN.md`).
+  — do not implement a wheel handler on the tab bar.
+  - **Drag-to-reorder implementation note**: uses pointer events (`mousedown`/`mouseenter`/`mouseup`),
+    not native HTML5 `draggable`/`dragstart`/`drop`. Tauri's `tauri.conf.json` `dragDropEnabled` (default
+    `true`) is required for the OS-folder-drop-onto-tab-bar feature below to receive real filesystem
+    paths, but the Tauri config schema itself documents that setting as conflicting with the browser's
+    own HTML5 drag-and-drop API on Windows ("Disabling it is required to use HTML5 drag and drop on the
+    frontend on Windows"). Implementing tab-bar reordering with pointer events instead of HTML5 DnD
+    avoids this conflict entirely.
+  - **"Lock tab" context-menu action is NOT implemented in this file's scope** — it calls a
+    not-yet-implemented `tab_lock` command (`tab-lock/PLAN.md`), so is deferred to that feature's own
+    implementation pass rather than added here as a stub. Locked tabs currently only expose "Open tab
+    location" in the context menu; "Rename"/"Remove tab" are shown but disabled per §2's rejection
+    rules.
+  - **📌 "pin to foreground" button is NOT implemented in this pass** — its observable effect and
+    whether it's per-tab or a single global button are unresolved specification gaps, logged to
+    `docs/QA.md` ("Pin to Foreground Tab Button: Observable Effect and Placement"). Do not guess at
+    this; implement once that item is answered.
+  - Right-click → shared context menu (`components/ContextMenu/`) with "Rename," "Open tab location,"
+    "Remove tab" (Rename/Remove disabled for locked tabs, per §2's rejection rules — the backend check
+    remains as defense-in-depth).
 - Right-click outside any registered tab (empty tab-bar area) shows no context menu at all
   (`[spec §2.7]`, already-established behavior to preserve).
 - Locked tabs render with the **confirmed placeholder display name: the 🔒 glyph alone**, no
@@ -133,4 +165,17 @@ file's commands, which trust the cache for listing purposes only.
 
 ## Open Items
 
-None.
+- **📌 "Pin to foreground" button** — not implemented; blocked on `docs/QA.md` "Pin to Foreground Tab
+  Button: Observable Effect and Placement" (added during this feature's implementation). Implement once
+  the user answers both sub-questions there (observable effect, and per-tab vs. single global button
+  placement).
+- **"Lock tab" context-menu action** — intentionally not added here; `tab-lock/PLAN.md`'s own
+  implementation pass should add it to `components/TabBar/TabBar.tsx`'s context-menu `items` array once
+  `tab_lock`/`tab_unlock` exist.
+- This implementation also introduced two shared, cross-feature UI primitives that did not exist yet at
+  planning time but are referenced by `project-architecture/PLAN.md` §2's directory layout /
+  `detailed-spec.md` §6.5 / `spec.md` §9.1: `components/dialogs/Dialog.tsx` (the shared non-blocking
+  dialog shell, with `PromptDialog`/`ConfirmDialog` built on top) and `components/ContextMenu/ContextMenu.tsx`
+  (the shared unified right-click menu). Later features (`memo-tree/PLAN.md`'s tree context menu,
+  `editor-save/PLAN.md`'s editor context menu, `tab-lock/PLAN.md`'s password-entry dialog, etc.) should
+  reuse these rather than building their own.
