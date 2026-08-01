@@ -1,12 +1,45 @@
 # PLAN: Memo Tree (Left Pane)
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md` and
-> `persistence-fs/PLAN.md`. Cross-tab DND involving a **locked** target tab is specified in
-> `tab-lock/PLAN.md` §"Cross-tab DND" — this file covers the tab-to-tab case only for two
-> already-unlocked (or same-tab) endpoints, and defers to that file when the drop target is locked.
-> `tree_open`'s crash-mid-lock recovery check (§2 step 0 below) defers to `tab-lock/CRASH-RECOVERY.md`.
+> Status: implemented (backend commands in `src-tauri/src/commands/tree.rs` +
+> `src-tauri/src/model/tree.rs`, frontend `components/Tree/`), except the parts this file itself
+> defers to `tab-lock/PLAN.md` (not yet implemented): the actual crash-mid-lock recovery dialog,
+> and the password-at-drop-time flow for a cross-tab drop onto a locked target tab. Depends on
+> `project-architecture/PLAN.md` and `persistence-fs/PLAN.md`. Cross-tab DND involving a
+> **locked** target tab is specified in `tab-lock/PLAN.md` §"Cross-tab DND" — this file covers the
+> tab-to-tab case only for two already-unlocked (or same-tab) endpoints, and defers to that file
+> when the drop target is locked. `tree_open`'s crash-mid-lock recovery check (§2 step 0 below)
+> defers to `tab-lock/CRASH-RECOVERY.md`.
 
 Sources: `docs/spec.md` §2.2, §3.1–3.2, §5.3; `docs/detailed-spec.md` §3.5, §4.2, §5.2, §6.3.
+
+## Implementation Notes (resolutions of this plan's discretion points)
+
+- `NodePath = String` (the `memoName` itself) — sufficient since a `.md` file's name is already
+  unique within a tab (flat folder, no nested subfolders).
+- `TreeNode` implemented as a Rust type alias for `MetaTreeNode` (§1's explicitly-permitted option).
+- Reconciliation: a dropped metadata entry's still-real children are promoted to that level rather
+  than dropped too (§2 rule wasn't explicit about children of a dropped entry; resolved in favor of
+  "memo body is never lost," `[spec §3.2]`).
+- Every mutating command re-reconciles the tree from disk on entry and unconditionally re-saves on
+  exit, so `tree_open`'s "reconciled but not force-written" correction (§2 step 5) is picked up by
+  whichever mutating command runs next — no separate dirty-tracking store was needed.
+- `memo_move`'s cross-tab return shape: `MemoMoveResult { source: TreeSnapshot, target?:
+  TreeSnapshot }`. The frontend only ever applies `source` — since only one tab's tree is held in
+  memory at a time (the active one), the other tab's updated tree is re-fetched fresh via
+  `tree_open` whenever the user switches to it.
+- `memo_move`'s locked-target-tab seam: reuses the same `resolve_tab` locked-tab rejection already
+  used by every other mutating command, which returns `TabLocked` before touching anything — this
+  is the hand-off point `tab-lock/PLAN.md`'s drop-time password flow should intercept.
+- search-index integration is stubbed as two narrow, clearly `TODO(search-index)`-marked no-op
+  functions (`touch_search_index_upsert`/`_remove`) called from every content-changing command.
+- Frontend "Icon" submenu implemented as a click-to-expand accordion inside a newly
+  submenu-capable shared `ContextMenu` component, not a hover flyout.
+- DND is pointer-based throughout (within-tree reorder/reparent and cross-tab drag onto a
+  `TabBar` tab, identified via a `data-ttn-tab-id` attribute + `elementFromPoint` hit-testing),
+  consistent with `tab-management/PLAN.md`'s existing avoidance of HTML5 DnD (conflicts with
+  `dragDropEnabled` on Windows).
+- Ctrl+Delete skips the confirm dialog (goes straight to trash, same as any right-click "Delete");
+  only a `TRASH_FAILED` response triggers the direct-delete consent dialog either way.
 
 ---
 
