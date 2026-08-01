@@ -133,9 +133,8 @@ attempts for this memo are suspended (`[spec §5.8]` "auto-save/input lock durin
 
 ## 4. Text Editing Operations (Plain-Text Layer, Non-Markdown-Specific)
 
-These are CodeMirror commands/transactions, implemented in `src/editor/textCommands.ts` (ported from
-legacy per `DECISIONS.md`'s reference sanction), feeding the same undo history as manual typing
-(`[detailed-spec §4.3]`):
+These are CodeMirror commands/transactions, implemented in `src/editor/textCommands.ts`, feeding the
+same undo history as manual typing (`[detailed-spec §4.3]`):
 
 - Undo/redo, cut/copy/paste, select-all, line-wise operations (move line up/down, duplicate line,
   delete line) — `[spec §2.3]`.
