@@ -32,6 +32,7 @@ import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { windowSetAlwaysOnTop } from "../../ipc/window";
 import { TitleBarControls } from "./TitleBarControls";
+import { SettingsDialog } from "../Settings/SettingsDialog";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -42,9 +43,11 @@ export interface TabBarProps {
    * no-op for any other tab. Wired from `App.tsx` since it needs `EditorPane`'s imperative
    * `flushSaveNow` handle. */
   beforeLockTab: (tabId: string) => Promise<void>;
-  /** Needed for the tree-side flip button (`docs/plans/window-operation/PLAN.md` §2). */
+  /** Needed for the tree-side flip button (`docs/plans/window-operation/PLAN.md` §2) and the ⚙
+   * Settings dialog (§7). */
   settings: AppSettings | null;
   patchSettings: (patch: AppSettingsPatch) => Promise<void>;
+  applyFetched: (settings: AppSettings) => void;
 }
 
 type PendingDialog =
@@ -64,7 +67,7 @@ function baseNameOf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings }: TabBarProps) {
+export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched }: TabBarProps) {
   const { tabs, activeTabId, selectTab, createTab, registerExistingTab, retryCreateWithName, renameTab, reorderTabs, removeTab, openTabLocation, lastErrorCode, clearLastError } =
     tabsState;
 
@@ -76,6 +79,7 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
   const containerRef = useRef<HTMLDivElement>(null);
   // Session-only; deliberately not read from or written to `AppSettings`.
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (draggingIdRef.current) return; // don't clobber an in-progress drag's local order
@@ -278,6 +282,10 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           >
             ⇄
           </button>
+          {/* Settings screen shell (`docs/plans/window-operation/PLAN.md` §7). */}
+          <button type="button" className="ttn-toolbar-btn" title="設定" aria-label="設定" onClick={() => setSettingsOpen(true)}>
+            ⚙
+          </button>
         </div>
 
         {/* Custom minimize/maximize/close controls, replacing the native title bar removed by
@@ -407,6 +415,10 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
             if (ok) setPendingDialog(null);
           }}
         />
+      )}
+
+      {settingsOpen && settings && (
+        <SettingsDialog settings={settings} patchSettings={patchSettings} applyFetched={applyFetched} onClose={() => setSettingsOpen(false)} />
       )}
     </div>
   );
