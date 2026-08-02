@@ -81,7 +81,7 @@ function App() {
       className={`app-tree-pane app-tree-pane-${treeSide}${treeCollapsed ? " app-tree-pane-collapsed" : ""}`}
       style={{ width: treeCollapsed ? 0 : treeWidth }}
     >
-      <TreeView tree={treeState} tabLock={tabLockState} />
+      <TreeView tree={treeState} tabLock={tabLockState} appSettings={settingsState.settings} />
     </div>
   );
   const splitter = (
