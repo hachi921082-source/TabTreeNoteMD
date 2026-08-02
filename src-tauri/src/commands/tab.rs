@@ -1,7 +1,11 @@
-//! Tab domain commands — everything in the tab domain except lock
-//! operations (`tab_lock`/`tab_unlock`/`tab_end_session`, which belong to
-//! `tab-lock/PLAN.md` and treat `locked` here purely as an opaque
-//! read/display cache) — `docs/plans/tab-management/PLAN.md`.
+//! Tab domain commands — everything in the tab domain except the lock/unlock/session commands
+//! themselves (`tab_lock`/`tab_unlock`/`tab_end_session`, which belong to
+//! `commands/tab_lock.rs`/`tab-lock/PLAN.md`). This module treats `locked` as an opaque
+//! read/display cache for most commands, except `tab_remove`, which also consults
+//! `LockSessionStore` for `tab-lock/PLAN.md` §4's "active session lifts the deletion
+//! restriction" rule — `commands/tab_lock.rs`'s `resolve_tab_access` isn't reused here since
+//! `tab_remove` doesn't need a resolved folder/tree, only the locked+session boolean check.
+//! (`docs/plans/tab-management/PLAN.md`).
 
 use std::path::{Path, PathBuf};
 
@@ -11,6 +15,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::emit_settings_recovery_event;
+use crate::commands::tab_lock::LOCKED_PLACEHOLDER_NAME;
 use crate::fs::atomic_write::atomic_write;
 use crate::fs::path_safety::{validate_name, ValidationMode};
 use crate::fs::self_write_registry::SelfWriteRegistry;
@@ -18,6 +23,7 @@ use crate::model::app_settings::TabSettingsEntry;
 use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::model::tab_meta::TabMetaFile;
 use crate::settings::app_settings_store::AppSettingsStore;
+use crate::store::lock_session_store::LockSessionStore;
 
 /// Tab-bar list entry (`docs/plans/tab-management/PLAN.md` §2 `tab_list`).
 /// For a locked tab, `name` is already the 🔒-placeholder stored in
@@ -143,20 +149,29 @@ fn register_tab_at_path(
         return Err(AppErrorPayload::new(ErrorCode::NotFound, "the selected item is not a folder").with_path(folder_path));
     }
 
-    let proposed_name = match requested_name {
-        Some(n) => n.trim().to_string(),
-        None => derive_name_from_path(&path),
+    // Initialize `.tabtreenote.json` if absent; leave an existing one untouched
+    // (`tab-management/PLAN.md` §2 step 3 — reconciliation against the folder's real files
+    // happens later, in `tree_open`). Done before the settings mutation below so a failure here
+    // never leaves a half-registered tab in `AppSettings.tabs`.
+    let meta_path = path.join(".tabtreenote.json");
+
+    // `tab-lock/PLAN.md` §7 "Portability": a folder copied from elsewhere may already be a
+    // locked tab (a `.tabtreenote.json` with a `lock` field instead of `tree`) — this must be
+    // recognized *before* deriving/accepting a display name, since a locked tab's real name must
+    // never be read from disk or shown here (it lives only inside the encrypted blob).
+    let already_locked = meta_path.exists() && is_locked_meta_file(&meta_path);
+
+    let proposed_name = if already_locked {
+        LOCKED_PLACEHOLDER_NAME.to_string()
+    } else {
+        let name = match requested_name {
+            Some(n) => n.trim().to_string(),
+            None => derive_name_from_path(&path),
+        };
+        validate_name(&name, ValidationMode::Strict).map_err(|code| AppErrorPayload::new(code, "invalid tab name").with_path(folder_path.clone()))?;
+        name
     };
 
-    validate_name(&proposed_name, ValidationMode::Strict)
-        .map_err(|code| AppErrorPayload::new(code, "invalid tab name").with_path(folder_path.clone()))?;
-
-    // Initialize `.tabtreenote.json` if absent; leave an existing one
-    // untouched (`tab-management/PLAN.md` §2 step 3 — reconciliation against
-    // the folder's real files happens later, in `tree_open`). Done before the
-    // settings mutation below so a failure here never leaves a
-    // half-registered tab in `AppSettings.tabs`.
-    let meta_path = path.join(".tabtreenote.json");
     if !meta_path.exists() {
         let fresh = TabMetaFile::fresh();
         let json = serde_json::to_vec_pretty(&fresh).map_err(|err| {
@@ -174,17 +189,23 @@ fn register_tab_at_path(
         id: id.clone(),
         name: proposed_name.clone(),
         folder_path: folder_path.clone(),
-        locked: Some(false),
+        locked: Some(already_locked),
     };
 
     let result = store.modify(registry, |settings| {
-        let duplicate = settings.tabs.iter().any(|t| t.name.eq_ignore_ascii_case(&proposed_name));
-        if duplicate {
-            // `path` is attached so the frontend can retry with a different
-            // name for the same already-picked folder without re-opening the
-            // OS folder dialog (`tab-management/PLAN.md` §2 step 2's retry
-            // requirement).
-            return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "a tab with this name already exists").with_path(folder_path.clone()));
+        // The placeholder name is allowed to collide with another locked tab's — `tab_lock`'s
+        // own step 10 placeholder swap on an already-registered tab doesn't run this
+        // duplicate-name check either, so registering a second locked tab under the same 🔒
+        // placeholder must not be treated differently here.
+        if !already_locked {
+            let duplicate = settings.tabs.iter().any(|t| t.name.eq_ignore_ascii_case(&proposed_name));
+            if duplicate {
+                // `path` is attached so the frontend can retry with a different
+                // name for the same already-picked folder without re-opening the
+                // OS folder dialog (`tab-management/PLAN.md` §2 step 2's retry
+                // requirement).
+                return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "a tab with this name already exists").with_path(folder_path.clone()));
+            }
         }
         settings.tabs.push(new_entry.clone());
         Ok(())
@@ -193,7 +214,7 @@ fn register_tab_at_path(
     match result {
         Ok(Ok((_settings, outcome))) => {
             emit_settings_recovery_event(app, outcome);
-            Ok(TabInfo { id, name: proposed_name, locked: false })
+            Ok(TabInfo { id, name: proposed_name, locked: already_locked })
         }
         Ok(Err(payload)) => Err(payload),
         Err(io_err) => {
@@ -201,6 +222,21 @@ fn register_tab_at_path(
             Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to save new tab"))
         }
     }
+}
+
+/// `true` if `meta_path` parses as a `TabMetaFile` with a `lock` field present (`tab-lock/PLAN.md`
+/// §2's on-disk shape) — any read/parse failure is treated as "not locked" so a corrupt or
+/// unrelated file doesn't block ordinary registration (the existing `load_tab_meta_with_recovery`
+/// machinery, not this best-effort check, is what actually handles that case once the tab is
+/// opened).
+fn is_locked_meta_file(meta_path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(meta_path) else {
+        return false;
+    };
+    let Ok(meta) = serde_json::from_slice::<TabMetaFile>(&bytes) else {
+        return false;
+    };
+    meta.lock.is_some()
 }
 
 fn derive_name_from_path(path: &Path) -> String {
@@ -300,12 +336,17 @@ pub fn tab_reorder(app: AppHandle, order: Vec<String>, store: State<AppSettingsS
 }
 
 #[tauri::command]
-pub fn tab_remove(app: AppHandle, id: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<()> {
+pub fn tab_remove(app: AppHandle, id: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>, sessions: State<LockSessionStore>) -> AppResult<()> {
+    // `tab-lock/PLAN.md` §4: locked-with-no-active-session rejects; locked-with-an-active-session
+    // behaves like removing any other tab (the still-encrypted files on disk are untouched
+    // either way, same "unregister only" rule).
+    let has_session = sessions.has_session(&id);
+
     let result = store.modify(&registry, |settings| {
         let target = settings.tabs.iter().find(|t| t.id == id);
         match target {
             None => Err(AppErrorPayload::new(ErrorCode::NotFound, "tab not found")),
-            Some(t) if t.locked.unwrap_or(false) => Err(AppErrorPayload::new(ErrorCode::TabLocked, "cannot remove a locked tab")),
+            Some(t) if t.locked.unwrap_or(false) && !has_session => Err(AppErrorPayload::new(ErrorCode::TabLocked, "cannot remove a locked tab")),
             Some(_) => {
                 // Never deletes/trashes the folder or its files — unregister
                 // only (`DECISIONS.md` "Tab Deletion Semantics").
@@ -323,6 +364,9 @@ pub fn tab_remove(app: AppHandle, id: String, store: State<AppSettingsStore>, re
     match result {
         Ok(Ok((_settings, outcome))) => {
             emit_settings_recovery_event(&app, outcome);
+            // Nothing left to reference this session's in-memory plaintext once the tab is
+            // unregistered.
+            sessions.end(&id);
             AppResult::ok(())
         }
         Ok(Err(payload)) => AppResult::err(payload),
@@ -385,5 +429,60 @@ mod tests {
         };
         let info = TabInfo::from(&entry);
         assert!(!info.locked);
+    }
+
+    fn tempdir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ttn-tab-cmd-test-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // `tab-lock/PLAN.md` §7 "Portability": `register_tab_at_path` must recognize an already-
+    // locked `.tabtreenote.json` (a `lock` field instead of `tree`) at registration time, since
+    // its real name must never be read from disk or displayed — these tests exercise
+    // `is_locked_meta_file` directly, the pure piece of that logic that doesn't need a live
+    // `AppHandle` to construct (same rationale `commands::editor::tests` documents for testing
+    // its own helpers directly rather than the full command functions).
+    #[test]
+    fn is_locked_meta_file_detects_a_lock_field() {
+        let dir = tempdir();
+        let meta_path = dir.join(".tabtreenote.json");
+        std::fs::write(
+            &meta_path,
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "appVersion": "0.1.0",
+                "lock": { "formatVersion": 1 }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(is_locked_meta_file(&meta_path));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn is_locked_meta_file_is_false_for_an_unlocked_tree_shape() {
+        let dir = tempdir();
+        let meta_path = dir.join(".tabtreenote.json");
+        std::fs::write(&meta_path, serde_json::to_vec(&TabMetaFile::fresh()).unwrap()).unwrap();
+
+        assert!(!is_locked_meta_file(&meta_path));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn is_locked_meta_file_is_false_when_the_file_is_missing_or_unparsable() {
+        let dir = tempdir();
+        let missing = dir.join(".tabtreenote.json");
+        assert!(!is_locked_meta_file(&missing));
+
+        std::fs::write(&missing, b"not json").unwrap();
+        assert!(!is_locked_meta_file(&missing));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
