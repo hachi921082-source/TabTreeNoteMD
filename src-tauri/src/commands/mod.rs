@@ -1,11 +1,12 @@
 //! One module per domain, Tauri `#[command]` fns
 //! (`docs/plans/project-architecture/PLAN.md` §2). Domains other than
-//! `settings`/`tab`/`window`/`tree`/`editor` (search, image, lock) are added
-//! by their own feature `PLAN.md` when implemented. `link` is a partial
-//! exception — see `commands/link.rs`'s own doc comment: only a minimal
-//! `link_open_external` seam exists so far, not `link/PLAN.md`'s actual
-//! feature set.
+//! `settings`/`tab`/`window`/`tree`/`editor`/`autostart` (search, image,
+//! lock) are added by their own feature `PLAN.md` when implemented. `link`
+//! is a partial exception — see `commands/link.rs`'s own doc comment: only a
+//! minimal `link_open_external` seam exists so far, not `link/PLAN.md`'s
+//! actual feature set.
 
+pub mod autostart;
 pub mod editor;
 pub mod link;
 pub mod settings;

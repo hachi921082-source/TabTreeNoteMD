@@ -4,12 +4,16 @@
 // the tab domain (tab-management/PLAN.md and tab-lock/PLAN.md's lock/unlock/
 // session commands), the session-only window always-on-top toggle
 // (tab-management/PLAN.md §4.1), the tree/memo domain (memo-tree/PLAN.md,
-// including tab-lock/PLAN.md's locked-active-session branch), and
-// `editor_load`/`editor_save` (editor-save/PLAN.md, ditto). One foundational
-// primitive built here for a future feature to call — the folder watcher
-// itself (`watch::watcher`/`watch::conflict`, not yet instantiated for any
-// tab folder) — is intentionally not yet referenced; it is consumed once
-// the watcher is actually wired up (`persistence-fs/PLAN.md` §5, still
+// including tab-lock/PLAN.md's locked-active-session branch),
+// `editor_load`/`editor_save` (editor-save/PLAN.md, ditto), and
+// window-operation/PLAN.md's app-shell integrations: second-instance
+// prevention (§5, `tauri_plugin_single_instance`, registered first),
+// auto-launch-to-tray (§4, `tauri_plugin_autostart` + `commands::autostart`),
+// and the tray icon (§4, built in `.setup()`). One foundational primitive
+// built here for a future feature to call — the folder watcher itself
+// (`watch::watcher`/`watch::conflict`, not yet instantiated for any tab
+// folder) — is intentionally not yet referenced; it is consumed once the
+// watcher is actually wired up (`persistence-fs/PLAN.md` §5, still
 // outstanding). Remove this allow once that call site exists.
 #![allow(dead_code)]
 
@@ -21,6 +25,10 @@ mod settings;
 mod store;
 mod util;
 mod watch;
+
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
+use tauri_plugin_autostart::MacosLauncher;
 
 use fs::self_write_registry::SelfWriteRegistry;
 use settings::app_settings_store::AppSettingsStore;
@@ -44,12 +52,57 @@ fn main() {
     }
 
     tauri::Builder::default()
+        // Must be the first plugin registered (`docs/plans/window-operation/PLAN.md` §5): when a
+        // second instance is launched, this callback runs inside the FIRST (already-running)
+        // instance, bringing its window to the foreground; the second process then exits
+        // immediately, before this app ever reaches `.setup()`/opens a window/touches
+        // settings.json of its own.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // Auto-launch-to-tray-on-Windows-login (`docs/plans/window-operation/PLAN.md` §4). `--tray`
+        // is the argument the OS-relaunched process receives; `commands::window::window_is_tray_launch`
+        // reads it back to decide whether to reveal the main window at startup.
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--tray"])))
         .manage(SelfWriteRegistry::new())
         .manage(AppSettingsStore::new())
         .manage(ActiveMemoTracker::new())
         .manage(LockSessionStore::new())
+        .setup(|app| {
+            // Tray icon: left-/double-click restores the window
+            // (`docs/plans/window-operation/PLAN.md` §4), handled directly in Rust rather than a
+            // round-trip event, per `project-architecture/PLAN.md` §5's "only add events actually
+            // needed" note.
+            if let Some(icon) = app.default_window_icon().cloned() {
+                TrayIconBuilder::new()
+                    .icon(icon)
+                    .tooltip("TabTreeNoteMD")
+                    .on_tray_icon_event(|tray, event| {
+                        let restore = matches!(
+                            event,
+                            TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+                        ) || matches!(event, TrayIconEvent::DoubleClick { button: MouseButton::Left, .. });
+                        if !restore {
+                            return;
+                        }
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    })
+                    .build(app)?;
+            } else {
+                tracing::warn!("no default window icon available; tray icon not created");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::settings::settings_get,
             commands::settings::settings_set,
@@ -67,6 +120,8 @@ fn main() {
             commands::tab_lock::tab_lock_recovery_finish,
             commands::tab_lock::tab_lock_recovery_restore,
             commands::window::window_set_always_on_top,
+            commands::window::window_is_tray_launch,
+            commands::autostart::autostart_set_enabled,
             commands::tree::tree_open,
             commands::tree::memo_create,
             commands::tree::memo_create_child,

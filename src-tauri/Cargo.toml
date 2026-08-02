@@ -12,8 +12,9 @@ rust-version = "1.77.2"
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-# Tauri app shell (project-architecture/PLAN.md §1)
-tauri = { version = "2.11.5", features = [] }
+# Tauri app shell (project-architecture/PLAN.md §1). `tray-icon` is needed for
+# window-operation/PLAN.md §4's auto-launch-to-tray feature.
+tauri = { version = "2.11.5", features = ["tray-icon"] }
 # IPC / persisted-JSON serialization (project-architecture/PLAN.md §1, §3)
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -51,3 +52,11 @@ tauri-plugin-dialog = "2.7.2"
 # Shell API rather than shell string concatenation (spec.md §2.8, §2.1;
 # tab-management/PLAN.md §2)
 tauri-plugin-opener = "2.5.4"
+# Second-launch detection: brings the already-running instance's window to the foreground and
+# exits the new process immediately, rather than opening a second window or racing two processes
+# on settings.json (window-operation/PLAN.md §5).
+tauri-plugin-single-instance = "2.4.3"
+# Windows-Startup-folder auto-launch-to-tray setting (window-operation/PLAN.md §4). Chosen over a
+# hand-rolled registry Run-key per that plan's reasoning: keeps user data/settings entirely out of
+# the registry, preserving the portability principle (spec.md §2.6).
+tauri-plugin-autostart = "2.5.1"
