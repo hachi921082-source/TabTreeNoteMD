@@ -19,9 +19,13 @@ export interface DialogProps {
   onClose?: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** Appended to the inner `.ttn-dialog` box's className — an escape hatch for callers that need
+   * more than the default `min-width: 320px; max-width: 480px` (e.g. the Settings screen,
+   * `docs/plans/window-operation/PLAN.md` §7). */
+  className?: string;
 }
 
-export function Dialog({ title, onClose, children, footer }: DialogProps) {
+export function Dialog({ title, onClose, children, footer, className }: DialogProps) {
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,7 +47,7 @@ export function Dialog({ title, onClose, children, footer }: DialogProps) {
         if (onClose && e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="ttn-dialog" role="dialog" aria-modal="true" aria-label={title} ref={boxRef}>
+      <div className={`ttn-dialog${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-label={title} ref={boxRef}>
         <div className="ttn-dialog-title">{title}</div>
         <div className="ttn-dialog-body">{children}</div>
         {footer && <div className="ttn-dialog-footer">{footer}</div>}
