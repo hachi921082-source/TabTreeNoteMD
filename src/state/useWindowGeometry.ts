@@ -10,6 +10,7 @@
 // avoiding a flash at the config-file default position.
 import { useEffect, useRef } from "react";
 import { availableMonitors, getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
+import { windowIsTrayLaunch } from "../ipc/window";
 import type { AppSettings, AppSettingsPatch } from "../shared/models";
 
 /** `docs/plans/persistence-fs/PLAN.md` §6.2's "window-geometry note": debounce writes during
@@ -72,11 +73,14 @@ export function useWindowGeometry(settings: AppSettings | null, patch: (p: AppSe
       await appWindow.setSize(new PhysicalSize(clamped.width, clamped.height));
       await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
       if (maximized) await appWindow.maximize();
-      // `main.rs`'s setup step decides whether to show the window at all (tray-autostart launch
-      // stays hidden) — this hook only ever shows it for the normal (non-tray) launch path, which
-      // is also the only path where the frontend even mounts far enough to run this effect while
-      // hidden. If launched to tray, the window is simply never revealed until the tray icon is
-      // clicked, at which point Rust calls `show()`/`set_focus()` directly, not through here.
+
+      // Launched via the tray-autostart Startup entry (`--tray`, `window-operation/PLAN.md` §4):
+      // stay hidden. The window is only revealed later when the tray icon is clicked, at which
+      // point `main.rs`'s tray event handler calls `show()`/`set_focus()` directly in Rust, not
+      // through this hook.
+      const trayLaunch = await windowIsTrayLaunch();
+      if (trayLaunch.ok && trayLaunch.value) return;
+
       await appWindow.show();
       await appWindow.setFocus();
     })();
