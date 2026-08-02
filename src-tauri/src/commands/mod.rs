@@ -1,10 +1,11 @@
 //! One module per domain, Tauri `#[command]` fns
 //! (`docs/plans/project-architecture/PLAN.md` §2). Domains other than
-//! `settings`/`tab`/`window`/`tree`/`editor`/`autostart`/`link` (search,
-//! image, lock) are added by their own feature `PLAN.md` when implemented.
+//! `settings`/`tab`/`window`/`tree`/`editor`/`autostart`/`link`/`image`
+//! (search, lock) are added by their own feature `PLAN.md` when implemented.
 
 pub mod autostart;
 pub mod editor;
+pub mod image;
 pub mod link;
 pub mod search;
 pub mod settings;
