@@ -1,7 +1,16 @@
 # PLAN: Appearance and Theme
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md` and
-> `persistence-fs/PLAN.md` (`settings_get`/`settings_set` for persisting theme/font choices).
+> Status: implemented. Two CSS variable sets (`src/theme.css`'s `:root[data-theme="light"]` /
+> `:root[data-theme="dark"]`), theme switch via `state/useAppearance.ts` toggling `data-theme` on
+> `document.documentElement` (no re-render/remount). `uiFontScale` and `appearance.*`
+> (`accentColor`/`uiFontFamily`/`treeRowLineHeight`) applied as inline CSS custom properties by the
+> same hook; the editor body font stays structurally separate via `editor/textCommands.ts`'s
+> `EditorView.theme` fixed-px extension, unaffected by `--ui-font-scale`. Settings UI: Appearance
+> section in `components/Settings/SettingsDialog.tsx` (theme select, UI font scale slider, accent
+> color picker, UI font family input, tree row line-height slider), all writing immediately via
+> `settings_set`. Schema: `AppearanceSettings` in `src-tauri/src/model/app_settings.rs` (`#[serde(default)]`
+> for backward compatibility) mirrored in `src/shared/models.ts`. Depends on `project-architecture/PLAN.md`
+> and `persistence-fs/PLAN.md` (`settings_get`/`settings_set` for persisting theme/font choices).
 
 Sources: `docs/spec.md` §2.5; `docs/detailed-spec.md` §5.5.
 
