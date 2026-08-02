@@ -2,7 +2,7 @@
 // `docs/plans/memo-tree/PLAN.md`'s TreeView, `docs/plans/editor-save/PLAN.md`'s EditorPane, and
 // `docs/plans/tab-lock/PLAN.md`'s lock/unlock session state (see
 // docs/plans/project-architecture/PLAN.md).
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useTabs } from "./state/useTabs";
 import { useTree } from "./state/useTree";
 import { useSettings } from "./state/useSettings";
@@ -13,8 +13,11 @@ import { EmptyState } from "./components/TabBar/EmptyState";
 import { TreeView } from "./components/Tree/TreeView";
 import { EditorPane } from "./components/Editor/EditorPane";
 import type { EditorPaneHandle } from "./components/Editor/EditorPane";
+import { TreeSplitter } from "./components/Layout/TreeSplitter";
 import { locateNode } from "./shared/treeOps";
 import { editorClose } from "./ipc/editor";
+
+const DEFAULT_TREE_WIDTH = 260;
 
 function App() {
   const tabsState = useTabs();
@@ -52,17 +55,62 @@ function App() {
 
   const openMemoOverride = treeState.openMemoName ? locateNode(treeState.nodes, treeState.openMemoName)?.node.editor : undefined;
 
+  // Tree pane width/side/hide-toggle (`docs/plans/window-operation/PLAN.md` §2). `previewTreeWidth`
+  // holds the live value while dragging the splitter; `settingsState.patch` is only called once, on
+  // drag release — same "preview locally, persist on release" split already used elsewhere in this
+  // app (`components/Editor/Toolbar/MarkdownToolbar.tsx`'s toolbar-position drag).
+  const [previewTreeWidth, setPreviewTreeWidth] = useState<number | null>(null);
+  const windowSettings = settingsState.settings?.window;
+  const treeSide = windowSettings?.treeSide ?? "left";
+  const treeCollapsed = windowSettings?.treeCollapsed ?? false;
+  const treeWidth = previewTreeWidth ?? windowSettings?.treeWidth ?? DEFAULT_TREE_WIDTH;
+
+  const handleSplitterCommit = useCallback(
+    (width: number) => {
+      setPreviewTreeWidth(null);
+      void settingsState.patch({ window: { treeWidth: width } });
+    },
+    [settingsState],
+  );
+  const handleToggleTreeCollapsed = useCallback(() => {
+    void settingsState.patch({ window: { treeCollapsed: !treeCollapsed } });
+  }, [settingsState, treeCollapsed]);
+
+  const treePane = (
+    <div
+      className={`app-tree-pane app-tree-pane-${treeSide}${treeCollapsed ? " app-tree-pane-collapsed" : ""}`}
+      style={{ width: treeCollapsed ? 0 : treeWidth }}
+    >
+      <TreeView tree={treeState} tabLock={tabLockState} />
+    </div>
+  );
+  const splitter = (
+    <TreeSplitter
+      treeWidth={treeWidth}
+      collapsed={treeCollapsed}
+      side={treeSide}
+      onPreview={setPreviewTreeWidth}
+      onCommit={handleSplitterCommit}
+      onToggleCollapse={handleToggleTreeCollapsed}
+    />
+  );
+
   return (
     <div className="app-shell">
-      <TabBar tabsState={tabsState} tabLockState={tabLockState} beforeLockTab={beforeLockTab} />
+      <TabBar
+        tabsState={tabsState}
+        tabLockState={tabLockState}
+        beforeLockTab={beforeLockTab}
+        settings={settingsState.settings}
+        patchSettings={settingsState.patch}
+      />
       <div className="app-content">
         {!tabsState.loading && tabsState.tabs.length === 0 ? (
           <EmptyState onCreateTab={() => void tabsState.createTab()} />
         ) : (
           <>
-            <div className="app-tree-pane">
-              <TreeView tree={treeState} tabLock={tabLockState} />
-            </div>
+            {treeSide === "left" && treePane}
+            {treeSide === "left" && splitter}
             <EditorPane
               ref={editorRef}
               tabId={treeState.activeTabId}
@@ -72,6 +120,8 @@ function App() {
               setEditorOverride={treeState.setEditorOverride}
               patchSettings={settingsState.patch}
             />
+            {treeSide === "right" && splitter}
+            {treeSide === "right" && treePane}
           </>
         )}
       </div>
