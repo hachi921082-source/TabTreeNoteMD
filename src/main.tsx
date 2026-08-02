@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import "./theme.css";
 import "./App.css";
 
 // App-wide native-context-menu suppression (`docs/plans/window-operation/PLAN.md` §6,
