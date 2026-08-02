@@ -48,3 +48,94 @@
   align-items: center;
   gap: 4px;
 }
+
+/* Cross-tab full-text search dialog (`docs/plans/search-index/PLAN.md` §5) — distinct from the
+   `.ttn-search-*` in-memo find/replace panel styles above. */
+.ttn-crosstab-search-dialog {
+  min-width: 420px;
+}
+
+.ttn-crosstab-search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ttn-crosstab-search-row {
+  display: flex;
+  gap: 6px;
+}
+
+.ttn-crosstab-search-row input[type="text"] {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.ttn-crosstab-search-options {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #444;
+}
+
+.ttn-crosstab-search-options label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ttn-crosstab-search-error {
+  color: #b00020;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+.ttn-crosstab-search-status {
+  color: #666;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+.ttn-crosstab-search-results {
+  margin-top: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ttn-crosstab-search-hit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.ttn-crosstab-search-hit:hover {
+  background: #f0f0f0;
+}
+
+.ttn-crosstab-search-hit-memo {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ttn-crosstab-search-hit-tab {
+  color: #888;
+  font-size: 11px;
+}
+
+.ttn-crosstab-search-hit-match {
+  color: #aaa;
+  font-size: 11px;
+}
