@@ -78,3 +78,16 @@
   `sanitizeMarkdownHtml()` in for real, or update the plan's Implementation Notes to state why the
   DOMPurify wrapper was left unused in favor of the narrower parser-level filters (and remove the dead
   code if so).
+
+### Bare `memo:` false-positive auto-link match on ordinary prose
+
+- **Found by**: `reviewer-lite`, reviewing `docs/plans/link/PLAN.md`.
+- **Symptom**: `src/editor/links.ts`'s `BARE_MEMO_RE` (`/\bmemo:[^\s<>()[\]]*/g`) allows a zero-length
+  target after the colon, so any standalone literal occurrence of the word "memo:" in prose (not
+  intended as a link) gets rendered as a clickable `cm-md-link` span.
+- No functional break: clicking it safely resolves to `Unresolved` and is a silent no-op, per
+  `[spec §2.8]`'s "unresolved links do nothing." Purely an over-eager-match UX quirk — exactly the kind
+  of risk PLAN.md §3 itself flagged as lower priority than false negatives.
+- **Fix**: require at least one non-whitespace char after the colon (e.g. `/\bmemo:\S+/`) so a bare
+  `memo:` with nothing following it doesn't match. Pure regex tightening in `src/editor/links.ts`, no
+  behavior change to any valid `memo:` link form.
