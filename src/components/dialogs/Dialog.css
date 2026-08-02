@@ -1,7 +1,7 @@
 .ttn-dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--ttn-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9,9 +9,10 @@
 }
 
 .ttn-dialog {
-  background: #fff;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 24px var(--ttn-shadow);
   min-width: 320px;
   max-width: 480px;
   padding: 16px;
@@ -39,25 +40,28 @@
 
 .ttn-dialog-field input {
   padding: 6px 8px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
 }
 
 .ttn-dialog-error {
-  color: #c0392b;
-  font-size: 12px;
+  color: var(--ttn-danger);
+  font-size: calc(12px * var(--ui-font-scale));
   margin-top: 6px;
 }
 
 .ttn-dialog-hint-text {
-  color: #555;
-  font-size: 13px;
+  color: var(--ttn-fg-muted);
+  font-size: calc(13px * var(--ui-font-scale));
   margin: 0 0 10px 0;
 }
 
 /* Tab Lock's crash-recovery dialog (`docs/plans/tab-lock/CRASH-RECOVERY.md`). */
 .ttn-recovery-summary {
-  font-size: 13px;
-  color: #555;
+  font-size: calc(13px * var(--ui-font-scale));
+  color: var(--ttn-fg-muted);
   margin: 0 0 10px 0;
 }
 
