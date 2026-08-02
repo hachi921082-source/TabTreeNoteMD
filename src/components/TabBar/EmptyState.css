@@ -5,19 +5,20 @@
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: #666;
+  color: var(--ttn-fg-muted);
 }
 
 .ttn-empty-state button {
   appearance: none;
-  border: 1px solid #b0b0b0;
+  border: 1px solid var(--ttn-border-strong);
   border-radius: 4px;
-  background: #fff;
+  background: var(--ttn-bg);
   padding: 8px 16px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   cursor: pointer;
+  color: var(--ttn-fg);
 }
 
 .ttn-empty-state button:hover {
-  background: #f0f0f0;
+  background: var(--ttn-bg-hover-surface);
 }
