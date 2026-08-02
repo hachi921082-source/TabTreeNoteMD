@@ -264,17 +264,20 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Ctrl+F opens the in-memo search panel (`editor-save/PLAN.md` §5).
+  // Default Ctrl+F opens the in-memo search panel (`editor-save/PLAN.md` §5;
+  // `docs/plans/window-operation/PLAN.md` §3's rebindable-shortcut system, action id
+  // "editor.findReplace").
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.altKey && (e.key === "f" || e.key === "F")) {
+      const shortcuts = resolveShortcuts(appSettings?.shortcuts);
+      if (comboFromEvent(e) === shortcuts["editor.findReplace"]) {
         e.preventDefault();
         search.open();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [search]);
+  }, [search, appSettings?.shortcuts]);
 
   // Default keyboard shortcuts for the 16 Markdown toolbar actions plus the live/source toggle
   // (`docs/detailed-spec.md` §5.10: "every one of the 16 toolbar actions gets a default keyboard
