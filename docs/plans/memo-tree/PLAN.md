@@ -1,14 +1,16 @@
 # PLAN: Memo Tree (Left Pane)
 
 > Status: implemented (backend commands in `src-tauri/src/commands/tree.rs` +
-> `src-tauri/src/model/tree.rs`, frontend `components/Tree/`), except the parts this file itself
-> defers to `tab-lock/PLAN.md` (not yet implemented): the actual crash-mid-lock recovery dialog,
-> and the password-at-drop-time flow for a cross-tab drop onto a locked target tab. Depends on
-> `project-architecture/PLAN.md` and `persistence-fs/PLAN.md`. Cross-tab DND involving a
-> **locked** target tab is specified in `tab-lock/PLAN.md` §"Cross-tab DND" — this file covers the
-> tab-to-tab case only for two already-unlocked (or same-tab) endpoints, and defers to that file
-> when the drop target is locked. `tree_open`'s crash-mid-lock recovery check (§2 step 0 below)
-> defers to `tab-lock/CRASH-RECOVERY.md`.
+> `src-tauri/src/model/tree.rs`, frontend `components/Tree/`). The parts this file itself deferred
+> to `tab-lock/PLAN.md` — the crash-mid-lock recovery dialog, and the password-at-drop-time flow
+> for a cross-tab drop onto a locked target tab — are now implemented too, by that plan's own
+> implementation pass (`components/dialogs/RecoveryDialog.tsx`, `commands/tab_lock.rs`'s
+> `move_cross_tab_*` functions). Depends on `project-architecture/PLAN.md` and
+> `persistence-fs/PLAN.md`. Cross-tab DND involving a **locked** target tab is specified in
+> `tab-lock/PLAN.md` §"Cross-tab DND" — this file covers the tab-to-tab case only for two
+> already-unlocked (or same-tab) endpoints, and deferred to that file when the drop target is
+> locked. `tree_open`'s crash-mid-lock recovery check (§2 step 0 below) also now fully implements
+> `tab-lock/CRASH-RECOVERY.md`'s trigger point (previously just a detection seam).
 
 Sources: `docs/spec.md` §2.2, §3.1–3.2, §5.3; `docs/detailed-spec.md` §3.5, §4.2, §5.2, §6.3.
 
