@@ -1,15 +1,18 @@
 // Default keyboard shortcut keymap (`docs/plans/window-operation/PLAN.md`
 // §3; `docs/spec.md` §2.7/§2.1 "switch via click / shortcut"). Every action
 // gets an action-id here; `AppSettings.shortcuts` overrides entries by
-// action-id at startup (not wired up yet — no Settings screen exists to
-// edit it, `window-operation/PLAN.md`'s own scope). Only the entries needed
-// by already-implemented features are populated so far; later features add
-// their own action-ids here rather than duplicating this file.
+// action-id, merged over these defaults at startup — every consumer below
+// calls `resolveShortcuts`/`comboFromEvent` rather than hardcoding a key
+// check, so every entry here is rebindable via the Settings screen's
+// Shortcuts tab (`components/Settings/SettingsDialog.tsx`).
 //
 // Combo strings use the same "Ctrl+Shift+X" style as the rest of the app's
-// documentation (`docs/plans/window-operation/PLAN.md` §3's toolbar-action
-// table). Exact key combinations not already fixed by `spec.md` are
-// implementation discretion (`docs/detailed-spec.md` §9).
+// documentation. The 16 markdown-toolbar combos (plus `markdown.tocUpdate`'s
+// pairing with "Update (TOC)") match `window-operation/PLAN.md` §3's
+// explicit table verbatim; the rest (tab switching, save, rename,
+// force-delete, find/replace) are implementation discretion not otherwise
+// fixed by `spec.md` (`docs/detailed-spec.md` §9), chosen to not collide
+// with the table or each other.
 
 export const DEFAULT_SHORTCUTS: Record<string, string> = {
   // Tab bar (`docs/plans/tab-management/PLAN.md` §4). Mouse-wheel switching
@@ -18,16 +21,24 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "tab.switchNext": "Ctrl+Tab",
   "tab.switchPrev": "Ctrl+Shift+Tab",
 
+  // `docs/plans/editor-save/PLAN.md` §6 (save), §5 (find/replace);
+  // `docs/plans/memo-tree/PLAN.md` §3 (rename), §4 (force-delete).
+  "editor.save": "Ctrl+S",
+  "editor.findReplace": "Ctrl+F",
+  "tree.rename": "F2",
+  "tree.forceDelete": "Ctrl+Delete",
+
   // Markdown toolbar (`docs/plans/markdown-editing/PLAN.md` §4; `docs/detailed-spec.md` §5.10:
-  // "every one of the 16 toolbar actions gets a default keyboard shortcut... exact key
-  // combination... is developer-lite's implementation discretion"). Action ids match
+  // "every one of the 16 toolbar actions gets a default keyboard shortcut"; combos fixed by
+  // `docs/plans/window-operation/PLAN.md` §3's table). Action ids match
   // `editor/toolbarSlots.ts`'s `ToolbarActionId`, namespaced under `markdown.`.
   // `markdown.toggleLiveView` is the runtime live/source toggle (`[detailed-spec §5.10]`) — not
-  // one of the 16 fixed grid slots, but still gets a default binding for the same reason.
+  // one of the 16 fixed grid slots (so not in that table), but still gets a default binding for
+  // the same reason.
   "markdown.undo": "Ctrl+Z",
   "markdown.redo": "Ctrl+Y",
-  "markdown.color": "Ctrl+Shift+1",
-  "markdown.fontSize": "Ctrl+Shift+2",
+  "markdown.color": "Ctrl+Shift+C",
+  "markdown.fontSize": "Ctrl+Shift+F",
   "markdown.heading": "Ctrl+Shift+H",
   "markdown.list": "Ctrl+Shift+L",
   "markdown.bold": "Ctrl+B",
@@ -36,10 +47,10 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "markdown.quote": "Ctrl+Shift+Q",
   "markdown.link": "Ctrl+K",
   "markdown.codeBlock": "Ctrl+Shift+K",
-  "markdown.tocUpdate": "Ctrl+Shift+T",
-  "markdown.table": "Ctrl+Shift+B",
-  "markdown.image": "Ctrl+Shift+G",
-  "markdown.rearrangeToggle": "Ctrl+Shift+A",
+  "markdown.tocUpdate": "Ctrl+Shift+O",
+  "markdown.table": "Ctrl+Shift+T",
+  "markdown.image": "Ctrl+Shift+I",
+  "markdown.rearrangeToggle": "Ctrl+Shift+R",
   "markdown.toggleLiveView": "Ctrl+Shift+M",
 };
 
