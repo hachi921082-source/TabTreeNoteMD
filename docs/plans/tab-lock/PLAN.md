@@ -1,16 +1,34 @@
 # PLAN: Tab Lock
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md` and
-> `persistence-fs/PLAN.md` (atomic write, self-write registry, retry policy — this feature is a heavy
-> consumer of all three). Interacts with `tab-management/PLAN.md` (lock/unlock are tab-domain
-> commands), `memo-tree/PLAN.md` (cross-tab DND onto a locked tab, and the lazy recovery-check trigger
-> point inside `tree_open`), and `search-index/PLAN.md` (index purge on lock). This is the
-> highest-risk feature in the app (data-loss/security consequences of a mistake are severe) — treat
-> every deviation from this plan as requiring explicit re-confirmation with `designer-lite` before
-> implementing differently, not silent improvisation.
+> Status: implemented. Backend: `src-tauri/src/crypto/{kdf,lock_blob,obfuscated_naming}.rs`
+> (scrypt/AES-256-GCM primitives), `src-tauri/src/store/lock_session_store.rs` (in-memory active
+> sessions), `src-tauri/src/commands/tab_lock.rs` (`tab_lock`/`tab_unlock`/`tab_end_session`, the
+> centralized `TabAccess`/`resolve_tab_access` branch point, every session-path tree/editor
+> helper, and the four cross-tab-move combos), plus the resulting session dispatch wired into
+> `src-tauri/src/commands/tree.rs` and `src-tauri/src/commands/editor.rs`, and the deletion
+> restriction wired into `src-tauri/src/commands/tab.rs`'s `tab_remove`. Frontend:
+> `src/state/useTabLock.ts`, `src/ipc/tabLock.ts`, `src/components/dialogs/PasswordDialog.tsx`,
+> `src/components/TabBar/TabBar.tsx` (Lock/Unlock context-menu entries + name overlay),
+> `src/components/Tree/TreeView.tsx` (unlock button, recovery dialog, drop-onto-locked-tab
+> password flow), `src/App.tsx` (wiring + the pre-lock force-save-and-close via
+> `EditorPane`'s new imperative `flushSaveNow` handle). Depends on `project-architecture/PLAN.md`
+> and `persistence-fs/PLAN.md` (atomic write, self-write registry, retry policy — this feature is
+> a heavy consumer of all three, confirmed already implemented and usable despite those two
+> plans' own stale status headers at the time of this feature's implementation — see this repo's
+> `docs/ISSUES.md`/git history for that correction). Interacts with `tab-management/PLAN.md`
+> (lock/unlock are tab-domain commands), `memo-tree/PLAN.md` (cross-tab DND onto a locked tab, and
+> the lazy recovery-check trigger point inside `tree_open`), and `search-index/PLAN.md` (index
+> purge on lock — implemented as a local no-op stub, `touch_search_index_purge_tab` in
+> `commands/tab_lock.rs`, matching the same seam convention `commands/tree.rs`/`commands/editor.rs`
+> already use for that not-yet-implemented dependency; confirmed applicable by `designer-lite`
+> during this feature's implementation). This was the highest-risk feature in the app
+> (data-loss/security consequences of a mistake are severe) — every implementation choice below
+> follows this file/`CRASH-RECOVERY.md` literally; no deviations were made without
+> `designer-lite` re-confirmation (see "Implementation Notes" below for the one such point:
+> §3 step 11's search-index seam).
 >
 > Crash-mid-lock recovery (marker-based, resumable/rollback): see the companion
-> [`CRASH-RECOVERY.md`](CRASH-RECOVERY.md).
+> [`CRASH-RECOVERY.md`](CRASH-RECOVERY.md), also implemented.
 
 Sources: `docs/spec.md` §2.9, §4.1, §6; `docs/detailed-spec.md` §3.4, §5.9; `docs/DECISIONS.md` ("Tab
 Lock: Crash-Mid-Lock Recovery via Explicit Marker + Resume/Rollback" for the recovery flow now detailed
@@ -220,6 +238,57 @@ within the copied files, this should work without any special-casing as long as 
 concrete acceptance check `reviewer-lite`/`developer-lite` should verify during implementation
 (`[detailed-spec §8]`).
 
+## Implementation Notes (resolutions of this plan's discretion points)
+
+- **Obfuscated memo-body on-disk layout** (§2's "developer-lite's call"): `[12-byte IV][ciphertext][16-byte
+  GCM tag]`, concatenated directly with no version header — documented inline in
+  `crypto/lock_blob.rs`'s doc comment. No header is needed because the containing tab's
+  `lock.formatVersion` already versions the whole locked tab's on-disk shape.
+- **`tab_lock` step 7's "rename+replace" ordering, resolved as encrypt-into-a-new-token-file
+  first, then delete the original** (not a raw `fs::rename` followed by in-place re-encryption):
+  this guarantees a crash can never leave a `CRASH-RECOVERY.md`-`Renamed`-classified entry with
+  still-plaintext content, since `Renamed` is only reachable once the encrypted token file already
+  exists — the narrow crash window where both the real and token file transiently coexist maps
+  exactly onto `CRASH-RECOVERY.md`'s own explicitly-acknowledged "both" anomalous case, rather than
+  an unaccounted-for third state that would silently break the Restore flow's "decrypt every
+  `Renamed` entry" assumption.
+- **Crash-recovery Finish/Restore's tree-source discrimination**: since `.tabtreenote.json`'s two
+  possible shapes during an interrupted lock (`tree` field still present vs. already-replaced by
+  `lock`) map to "step 8 never ran" vs. "step 8 already succeeded" respectively, both recovery
+  actions branch on which field is present rather than trusting `renamed_count` alone (which can't
+  by itself distinguish "all renamed, lock blob not yet written" from "all renamed, lock blob
+  already written" — the crash window between those is real, if narrow). Restore's "already
+  succeeded" branch decrypts the already-written lock blob (with the now-verified key) to recover
+  its exact tree rather than falling back to a flat rebuild, so structure/labels survive.
+- **§3 step 11's search-index seam**: implemented as a local no-op stub
+  (`touch_search_index_purge_tab` in `commands/tab_lock.rs`) matching the exact convention already
+  established by `commands/tree.rs`'s/`commands/editor.rs`'s own `touch_search_index_*` stubs for
+  the same not-yet-implemented `search-index/PLAN.md` dependency — confirmed applicable to this
+  call site by `designer-lite` during this feature's implementation (a purely in-memory index
+  side-effect among 12 steps, not a persisted invariant), per this file's own re-confirmation
+  policy for deviations.
+- **Cross-tab move combos** (§5): `commands/tree.rs`'s `memo_move` now dispatches on both
+  endpoints' resolved `TabAccess` (Plain/Session × Plain/Session), covering the pre-existing
+  Plain↔Plain path plus three new ones in `commands/tab_lock.rs`
+  (`move_cross_tab_plain_to_session`/`_session_to_plain`/`_session_to_session`) — the last of
+  these also covers two *different* locked tabs each with their own independent active session,
+  which §5's prose doesn't spell out as its own bullet but which the same decrypt-then-re-encrypt
+  mechanics handle uniformly.
+- **`tab_end_session` multi-session model**: the backend (`LockSessionStore`) and frontend
+  (`state/useTabLock.ts`) both support more than one tab holding an active session at once — e.g.
+  a cross-tab drop-onto-a-locked-tab unlocks that tab in place without leaving the drag-source tab
+  (§5), so its session can outlive the drag-source tab remaining active. The frontend ends a given
+  tab's session the moment the user switches *away* from that specific tab (not a single
+  global "the one active session"), matching §3's per-tab wording literally.
+- **`tab_lock` step 2's defensive check, fixed post-review**: `reviewer-lite` found live that
+  nothing ever called `ActiveMemoTracker::clear()`, so this defensive check stayed permanently
+  tripped once any memo in a tab had ever been opened — breaking `tab_lock` on the tab the user
+  just had open, the single most common case. Fixed by adding `editor_close`
+  (`commands/editor.rs`), called on every real "memo closed" transition
+  (`state/useEditor.ts`'s switch-away cleanup) and explicitly awaited by `App.tsx`'s
+  `beforeLockTab` right before invoking `tab_lock`, so that call is guaranteed to see a cleared
+  tracker rather than racing a React effect.
+
 ## Open Items
 
 None. The previously-blocked crash-mid-lock recovery question (formerly `docs/QA.md` item Q1) has been
@@ -227,5 +296,4 @@ resolved by the user (Option B) and landed in `docs/DECISIONS.md`, `docs/detaile
 this feature's companion [`CRASH-RECOVERY.md`](CRASH-RECOVERY.md) (marker file format, trigger point,
 finish-vs-rollback tie-break rule). Every flow in this file and its companion — `tab_lock` (including
 crash-mid-lock recovery), `tab_unlock`, session-active behavior, deletion restriction (§4), cross-tab
-DND (§5), search exclusion (§6), and portability (§7) — is fully specified and ready for
-implementation.
+DND (§5), search exclusion (§6), and portability (§7) — is fully specified and now implemented.
