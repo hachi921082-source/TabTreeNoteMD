@@ -46,6 +46,20 @@
 - Whether this was an intentional drop or needs to be built is tracked as an open question in
   [docs/QA.md](QA.md).
 
+### `Cargo.toml` autostart comment describes the wrong mechanism
+
+- **Found by**: `reviewer-lite`, reviewing `docs/plans/window-operation/PLAN.md`.
+- **Symptom**: `src-tauri/Cargo.toml`'s `tauri-plugin-autostart` dependency comment still describes the
+  originally-considered "Windows-Startup-folder auto-launch-to-tray... keeps user data/settings entirely
+  out of the registry" approach. The actual shipped implementation uses the Registry `Run`-key fallback
+  (as pre-approved by `detailed-spec.md` §5.7, since no Startup-folder-shortcut Tauri plugin was found)
+  — `main.rs` and `commands/autostart.rs`'s own comments correctly describe this. Only the `Cargo.toml`
+  comment is stale.
+- No functional defect (verified: the Registry Run-key is written/removed correctly at runtime); risk is
+  a future reader being misled about where autostart data is stored.
+- **Fix**: update the `Cargo.toml` comment to match the Registry Run-key approach. Pure doc correction,
+  no code change.
+
 ### `sanitizeMarkdownHtml()` defined but unused; enforcement path diverges from PLAN.md §5
 
 - **Found by**: `reviewer-lite`, reviewing `docs/plans/markdown-editing/PLAN.md`.
