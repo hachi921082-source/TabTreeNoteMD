@@ -221,7 +221,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           onDocChanged: (text) => ed.notifyTextChanged(text),
         }),
         ...buildMarkdownExtensions(initialLiveView, markdownConfig),
-        imagePasteExtension(),
+        imagePasteExtension({ tabId, onError: ed.reportError }),
         // Keeps the status bar's char/line/cursor-position derived state live on every doc
         // change or cursor/selection move, not just after (re)creating the view.
         EditorView.updateListener.of((update) => {
@@ -416,6 +416,8 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         liveViewEnabled={liveViewEnabled}
         onToggleLiveView={onToggleLiveView}
         readOnly={readOnly}
+        tabId={tabId}
+        onImageError={ed.reportError}
       />
 
       {search.isOpen && <SearchPanel search={search} getView={() => viewRef.current} />}
