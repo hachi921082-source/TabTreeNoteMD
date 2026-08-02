@@ -103,6 +103,7 @@ function App() {
         beforeLockTab={beforeLockTab}
         settings={settingsState.settings}
         patchSettings={settingsState.patch}
+        applyFetched={settingsState.applyFetched}
       />
       <div className="app-content">
         {!tabsState.loading && tabsState.tabs.length === 0 ? (
