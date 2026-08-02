@@ -5,7 +5,7 @@
 // cross-tab move/copy). Selection/keyboard-nav *semantics* live in
 // `state/useTree.ts` (backed by the pure functions in
 // `shared/treeSelection.ts`) — this component only wires DOM events to them.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { TreeRow } from "./TreeRow";
 import type { DropPosition } from "./TreeRow";
@@ -21,12 +21,16 @@ import { errorMessageFor } from "../../shared/errorMessages";
 import { locateNode } from "../../shared/treeOps";
 import type { UseTreeResult } from "../../state/useTree";
 import type { UseTabLockResult } from "../../state/useTabLock";
-import type { LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
+import type { AppSettings, LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
+import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import "./Tree.css";
 
 export interface TreeViewProps {
   tree: UseTreeResult;
   tabLock: UseTabLockResult;
+  /** Needed for the rebindable F2-rename/Ctrl+Delete-force-delete shortcuts
+   * (`docs/plans/window-operation/PLAN.md` §3). */
+  appSettings: AppSettings | null;
 }
 
 type PendingDialog =
@@ -63,7 +67,7 @@ const LABEL_CHOICES: { label: string; color: LabelColor }[] = [
   { label: "🟡 黄", color: "yellow" },
 ];
 
-export function TreeView({ tree, tabLock }: TreeViewProps) {
+export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const hoveredTabElRef = useRef<HTMLElement | null>(null);
@@ -111,12 +115,16 @@ export function TreeView({ tree, tabLock }: TreeViewProps) {
     el?.scrollIntoView({ block: "nearest" });
   }, [openMemoName]);
 
-  // ---- F2 rename / arrow-key nav: only while the tree container has focus,
-  // must not steal focus from a future editor pane (`[spec §2.2]`) --------
+  // Rebindable shortcuts (`docs/plans/window-operation/PLAN.md` §3), recomputed only when the
+  // user's overrides actually change.
+  const shortcuts = useMemo(() => resolveShortcuts(appSettings?.shortcuts), [appSettings?.shortcuts]);
+
+  // ---- F2 rename (default) / arrow-key nav: only while the tree container has focus, must not
+  // steal focus from a future editor pane (`[spec §2.2]`) --------
   const handleContainerKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (renamingPath) return; // let the inline rename input's own handler deal with it
-      if (e.key === "F2") {
+      if (comboFromEvent(e) === shortcuts["tree.rename"]) {
         if (selection.selected.size === 1) {
           e.preventDefault();
           setRenamingPath(Array.from(selection.selected)[0]);
@@ -131,10 +139,10 @@ export function TreeView({ tree, tabLock }: TreeViewProps) {
         tree.handleArrowNav("up");
       }
     },
-    [renamingPath, selection.selected, tree],
+    [renamingPath, selection.selected, tree, shortcuts],
   );
 
-  // ---- Ctrl+Delete: global, regardless of current focus target ----------
+  // ---- force-delete (default Ctrl+Delete): global, regardless of current focus target --------
   const requestDelete = useCallback(
     async (paths: string[], forceDirect = false) => {
       const outcome = await tree.deleteMemo(paths, forceDirect);
@@ -147,7 +155,7 @@ export function TreeView({ tree, tabLock }: TreeViewProps) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "Delete") {
+      if (comboFromEvent(e) === shortcuts["tree.forceDelete"]) {
         const selected = Array.from(selection.selected);
         if (selected.length === 0) return;
         e.preventDefault();
@@ -156,7 +164,7 @@ export function TreeView({ tree, tabLock }: TreeViewProps) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selection.selected, requestDelete]);
+  }, [selection.selected, requestDelete, shortcuts]);
 
   // ---- row interaction wiring --------------------------------------------
   const handleRowClick = useCallback(
