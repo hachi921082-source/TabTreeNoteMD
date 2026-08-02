@@ -19,6 +19,12 @@ export interface UseSettingsResult {
   /** Deep-partial patch; `settings_set` always returns the full post-merge `AppSettings`, which
    * replaces the local value wholesale (no separate optimistic-merge logic needed here). */
   patch: (patch: AppSettingsPatch) => Promise<void>;
+  /** Replaces the local value wholesale with an `AppSettings` obtained from some *other* command
+   * that also returns the full post-merge settings (currently just
+   * `ipc/autostart.ts`'s `autostartSetEnabled`, `docs/plans/window-operation/PLAN.md` §4 — OS
+   * registration has to go through that command, not the generic `settings_set` patch, but the
+   * frontend's cached settings still need to reflect the result the same way `patch` does). */
+  applyFetched: (settings: AppSettings) => void;
 }
 
 export function useSettings(): UseSettingsResult {
@@ -47,6 +53,7 @@ export function useSettings(): UseSettingsResult {
   }, []);
 
   const clearLastError = useCallback(() => setLastErrorCode(null), []);
+  const applyFetched = useCallback((next: AppSettings) => setSettings(next), []);
 
-  return { settings, loading, lastErrorCode, clearLastError, patch };
+  return { settings, loading, lastErrorCode, clearLastError, patch, applyFetched };
 }
