@@ -1,7 +1,13 @@
 # PLAN: Project Architecture (Foundation)
 
-> Status: planning complete, not yet implemented (no `src/` or `src-tauri/` exists yet at time of
-> writing). Read this file first — every other `docs/plans/<feature>/PLAN.md` assumes the module
+> Status: implemented. This status line was stale for some time after the actual `src/`/`src-tauri/`
+> module layout, command/event naming, and `Result<T>`/`AppResult<T>` mapping it specifies were
+> already built and in active use by every other feature plan (`tab-management`, `memo-tree`,
+> `editor-save`, `markdown-editing`, `table-of-contents`, `tab-lock`, etc.) — corrected here
+> (`tab-lock/PLAN.md`'s implementation pass, per its own task's instruction to verify actual `src/`
+> state rather than trust this line) rather than left to keep drifting; see `docs/ISSUES.md`
+> git history for the "Several `PLAN.md` `Status` lines say 'not yet implemented'" entry this
+> resolves. Read this file first — every other `docs/plans/<feature>/PLAN.md` assumes the module
 > layout, command-naming convention, event-naming convention, and `Result<T>` mapping defined here,
 > and does not repeat them. This file introduces no new product behavior; it only fixes the
 > implementation-discretion items `detailed-spec.md` §9 explicitly leaves open (Rust/Tauri naming
