@@ -4,13 +4,13 @@
 // `editor/textCommands.ts`'s existing `undoCommand`/`redoCommand` re-exports rather than
 // duplicating them — only import those from the toolbar UI layer directly.
 //
-// "Image insert" is an explicit stub: `image-handling/PLAN.md` (the plan that actually owns
-// `image_save_pasted`) is not implemented yet. It logs a clearly-labeled no-op rather than silently
-// doing nothing unexplained, so its forward seam is visible in the console during manual testing;
-// wiring the real behavior in later is just replacing this function body. "Update" (TOC) is real —
-// see `tocGenerator.ts`'s `tocUpdateCommand`, imported directly by
-// `components/Editor/Toolbar/MarkdownToolbar.tsx` rather than re-exported from here, since it's
-// `table-of-contents/PLAN.md`'s own module, not this plan's.
+// "Image insert" is NOT one of the commands defined here — it's async (file picker + IPC
+// round-trip, not a synchronous `(view) => boolean` transaction) and lives in
+// `imagePaste.ts`'s `insertImageViaFilePicker` instead (`docs/plans/image-handling/PLAN.md` §6),
+// imported directly by `components/Editor/Toolbar/MarkdownToolbar.tsx`. "Update" (TOC) is the same
+// shape of exception — see `tocGenerator.ts`'s `tocUpdateCommand`, also imported directly by that
+// component rather than re-exported from here, since it's `table-of-contents/PLAN.md`'s own
+// module, not this plan's.
 import type { EditorView } from "@codemirror/view";
 import { findColorSpans } from "./markdownSpanParser";
 
@@ -220,15 +220,4 @@ export function clearColorSpan(view: EditorView): boolean {
 
 export function clearFontSizeSpan(view: EditorView): boolean {
   return clearSpanProperty(view, "font-size");
-}
-
-// ---------------------------------------------------------------------------
-// Stub — `image-handling/PLAN.md` (`image_save_pasted`) is not implemented yet. See this module's
-// header comment for why this logs-and-no-ops rather than silently doing nothing.
-// ---------------------------------------------------------------------------
-
-export function imageInsertStub(view: EditorView): boolean {
-  console.info("[markdown-editing] Image insert is not implemented yet (see image-handling/PLAN.md) — no image was inserted.");
-  view.focus();
-  return true;
 }
