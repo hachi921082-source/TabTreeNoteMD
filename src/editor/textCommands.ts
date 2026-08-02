@@ -297,7 +297,7 @@ export function searchSelectionWithGoogle(view: EditorView): void {
   const trimmed = text.trim();
   if (!trimmed) return;
   const url = `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-  void linkOpenExternal(url);
+  void linkOpenExternal("url", url);
 }
 
 // ---------------------------------------------------------------------------
