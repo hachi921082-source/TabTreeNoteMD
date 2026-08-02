@@ -29,6 +29,7 @@ use crate::model::app_settings::AppSettings;
 use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::model::tab_meta::{TabMetaFile, TAB_META_FILE_NAME, TAB_META_SCHEMA_VERSION};
 use crate::model::tree::{Label, LabelColor, MemoEditorSettings, MetaTreeNode, NodePath};
+use crate::search::index::SearchIndex;
 use crate::settings::app_settings_store::{AppSettingsStore, RecoveryOutcome};
 use crate::store::lock_session_store::LockSessionStore;
 
@@ -193,8 +194,9 @@ pub fn memo_create(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
-    memo_create_impl(&app, &tab_id, &name, parent.as_deref(), &store, &registry, &sessions)
+    memo_create_impl(&app, &tab_id, &name, parent.as_deref(), &store, &registry, &sessions, &search_index)
 }
 
 /// `parent` is required (not `Option`) here, matching the right-click "Create as Child" entry
@@ -208,8 +210,9 @@ pub fn memo_create_child(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
-    memo_create_impl(&app, &tab_id, &name, Some(parent.as_str()), &store, &registry, &sessions)
+    memo_create_impl(&app, &tab_id, &name, Some(parent.as_str()), &store, &registry, &sessions, &search_index)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -221,6 +224,7 @@ fn memo_create_impl(
     store: &AppSettingsStore,
     registry: &SelfWriteRegistry,
     sessions: &LockSessionStore,
+    search_index: &SearchIndex,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(registry);
     emit_settings_recovery_event(app, outcome);
@@ -267,7 +271,9 @@ fn memo_create_impl(
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
 
-    touch_search_index_upsert(tab_id, trimmed, "");
+    // A brand-new file has no content yet, so this legitimately upserts an empty body
+    // (`search-index/PLAN.md` §1's in-app update path).
+    search_index.upsert(tab_id, trimmed, "");
 
     AppResult::ok(TreeSnapshot {
         nodes: loaded.tree,
@@ -290,6 +296,7 @@ pub fn memo_rename(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -339,8 +346,8 @@ pub fn memo_rename(
 
     // `[spec §3.1]`: any `memo:` link pointing at the old name now breaks —
     // known/accepted consequence, no automatic rewrite (out of scope).
-    touch_search_index_remove(&tab_id, &path);
-    touch_search_index_upsert(&tab_id, trimmed, "");
+    search_index.remove(&tab_id, &path);
+    search_index.upsert(&tab_id, trimmed, &read_body_for_index(&folder, trimmed));
 
     AppResult::ok(TreeSnapshot {
         nodes: loaded.tree,
@@ -363,6 +370,7 @@ pub fn memo_delete(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -427,7 +435,7 @@ pub fn memo_delete(
 
     for name in &all_names {
         remove_node(&mut loaded.tree, name);
-        touch_search_index_remove(&tab_id, name);
+        search_index.remove(&tab_id, name);
     }
 
     if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, &registry) {
@@ -456,6 +464,7 @@ pub fn memo_move(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
 ) -> AppResult<MemoMoveResult> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -465,6 +474,9 @@ pub fn memo_move(
     };
 
     match target {
+        // Same-tab moves never change a memo's name/tab/content, so no search-index patch is
+        // needed here (`search-index/PLAN.md` §1 only lists create/rename/delete/move-*across*-
+        // tabs and save as content-changing triggers).
         MoveTarget::WithinTab { new_parent, index } => match source_access {
             tab_lock::TabAccess::Session { tab_id, folder } => {
                 match tab_lock::session_move_within(&sessions, &registry, &folder, &tab_id, &paths, new_parent.as_deref(), index) {
@@ -491,13 +503,20 @@ pub fn memo_move(
 
             match (source_access, target_access) {
                 (tab_lock::TabAccess::Plain { folder: source_folder, tab_name: source_tab_name }, tab_lock::TabAccess::Plain { folder: target_folder, tab_name: target_tab_name }) => {
-                    memo_move_cross_tab(&tab_id, &source_folder, &source_tab_name, &target_tab_id, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry)
+                    memo_move_cross_tab(&tab_id, &source_folder, &source_tab_name, &target_tab_id, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry, &search_index)
                 }
+                // Plain -> locked-session: the moved memo(s) leave the plain tab's index scope
+                // (`!copy` only — a copy leaves the plain original's own indexed entry intact) and
+                // never enter the locked target's (`search-index/PLAN.md` §1: unconditional
+                // exclusion, no exception for the session case).
                 (tab_lock::TabAccess::Plain { folder: source_folder, tab_name: source_tab_name }, tab_lock::TabAccess::Session { tab_id: target_tab_id, folder: target_folder }) => {
-                    tab_lock::move_cross_tab_plain_to_session(&source_folder, &source_tab_name, &target_tab_id, &target_folder, &paths, new_parent.as_deref(), index, copy, &registry, &sessions)
+                    tab_lock::move_cross_tab_plain_to_session(&tab_id, &source_folder, &source_tab_name, &target_tab_id, &target_folder, &paths, new_parent.as_deref(), index, copy, &registry, &sessions, &search_index)
                 }
+                // Locked-session -> plain: the moved memo(s) become indexable in the plain target,
+                // regardless of `copy` (the source stayed excluded either way, so there is nothing
+                // to remove there).
                 (tab_lock::TabAccess::Session { tab_id: source_tab_id, folder: source_folder }, tab_lock::TabAccess::Plain { folder: target_folder, tab_name: target_tab_name }) => {
-                    tab_lock::move_cross_tab_session_to_plain(&source_tab_id, &source_folder, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry, &sessions)
+                    tab_lock::move_cross_tab_session_to_plain(&source_tab_id, &source_folder, &target_tab_id, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry, &sessions, &search_index)
                 }
                 (tab_lock::TabAccess::Session { tab_id: source_tab_id, folder: source_folder }, tab_lock::TabAccess::Session { tab_id: target_tab_id, folder: target_folder }) => {
                     tab_lock::move_cross_tab_session_to_session(&source_tab_id, &source_folder, &target_tab_id, &target_folder, &paths, new_parent.as_deref(), index, copy, &registry, &sessions)
@@ -573,6 +592,7 @@ fn memo_move_cross_tab(
     index: usize,
     copy: bool,
     registry: &SelfWriteRegistry,
+    search_index: &SearchIndex,
 ) -> AppResult<MemoMoveResult> {
     let mut source_loaded = load_and_reconcile(source_folder);
     let mut target_loaded = load_and_reconcile(target_folder);
@@ -643,9 +663,9 @@ fn memo_move_cross_tab(
     }
 
     for name in &all_names {
-        touch_search_index_upsert(target_tab_id, name, "");
+        search_index.upsert(target_tab_id, name, &read_body_for_index(target_folder, name));
         if !copy {
-            touch_search_index_remove(source_tab_id, name);
+            search_index.remove(source_tab_id, name);
         }
     }
 
@@ -897,26 +917,20 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Search-index integration seam
+// Search-index integration
 // ---------------------------------------------------------------------------
 
-/// Seam for `search-index/PLAN.md` (not yet implemented): every mutation above that changes
-/// indexable content (create/rename/delete/move/copy) calls one of these two narrow functions
-/// instead of touching a search index directly, so wiring in the real index later is a small,
-/// localized change rather than a re-audit of every command in this file.
-fn touch_search_index_upsert(_tab_id: &str, _memo_name: &str, _plaintext: &str) {
-    // TODO(search-index): call `SearchIndex::upsert(tab_id, memo_name, plaintext)` once
-    // `search/index.rs` exists (`search-index/PLAN.md` §2, §4).
-    //
-    // NOTE: `memo_create`'s call site passes `""` legitimately (a brand-new file has no
-    // content yet). `memo_rename`/`memo_move`'s call sites also currently pass `""` as a
-    // placeholder since this function is a no-op stub — once a real index is wired in, those
-    // two call sites must be updated to pass the memo's actual file content instead.
-}
-
-fn touch_search_index_remove(_tab_id: &str, _memo_name: &str) {
-    // TODO(search-index): call `SearchIndex::remove(tab_id, memo_name)` once `search/index.rs`
-    // exists (`search-index/PLAN.md` §2).
+/// Reads and decodes `<folder>/<memo_name>.md` for a `SearchIndex::upsert` call whose caller
+/// (`memo_rename`, `memo_move`'s cross-tab path) doesn't already have the memo's content on hand
+/// the way `editor_save` does — renaming/moving a file doesn't change its bytes, so the content
+/// is simply re-read from its (already renamed/moved-to) new location. Any read failure falls
+/// back to an empty body rather than failing the whole command: by this point the real file
+/// operation the caller performed already succeeded, so a read error here would indicate trouble
+/// already surfaced elsewhere, and an under-indexed (rather than un-movable) memo is the safer
+/// degradation.
+fn read_body_for_index(folder: &Path, memo_name: &str) -> String {
+    let path = folder.join(format!("{memo_name}.md"));
+    std::fs::read(&path).map(|bytes| decode_memo_body(&bytes)).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
