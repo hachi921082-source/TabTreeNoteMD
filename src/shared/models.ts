@@ -187,3 +187,23 @@ export interface SaveResult {
   /** Hash of the just-written bytes — update `expectedHash` with this for the next save. */
   hash: string;
 }
+
+// ---------------------------------------------------------------------------
+// Tab Lock domain (`docs/plans/tab-lock/PLAN.md`, `docs/plans/tab-lock/CRASH-RECOVERY.md`;
+// mirrors Rust `commands/tab_lock.rs`'s command I/O types).
+// ---------------------------------------------------------------------------
+
+/** UI default-button tie-break for the crash-recovery dialog (`CRASH-RECOVERY.md`). */
+export type RecoveryDefaultAction = "finish" | "restore";
+
+/** Return type of `tab_lock_recovery_status`. */
+export interface RecoveryStatus {
+  renamedCount: number;
+  notRenamedCount: number;
+  anomalousCount: number;
+  total: number;
+  defaultAction: RecoveryDefaultAction;
+  /** `true` if any entry is in the anomalous (both-or-neither) state — show a distinct error
+   * message instead of the ordinary Finish/Restore choice. */
+  anomalous: boolean;
+}
