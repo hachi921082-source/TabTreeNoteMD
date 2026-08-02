@@ -1,8 +1,9 @@
 // Settings screen shell (`docs/plans/window-operation/PLAN.md` §7): General/Editor two-tab modal,
-// houses Appearance (`appearance-theme/PLAN.md`'s two schema fields implemented so far — theme,
-// uiFontScale; that plan's own "basic customization of colors/fonts/line spacing" additions slot
-// in here later), Shortcuts (§3), Links (`link/PLAN.md`'s two schema fields), Autostart (§4), and
-// Editor defaults/autosave/EOL (referenced by `editor-save/PLAN.md`/`markdown-editing/PLAN.md`).
+// houses Appearance (`appearance-theme/PLAN.md` §2/§3 in full — theme, uiFontScale, and the
+// "basic customization of colors/fonts/line spacing" layer: accent color, UI font family, tree
+// row line-height, all under `AppSettings.appearance`), Shortcuts (§3), Links (`link/PLAN.md`'s
+// two schema fields), Autostart (§4), and Editor defaults/autosave/EOL (referenced by
+// `editor-save/PLAN.md`/`markdown-editing/PLAN.md`).
 // Opened from `TabBar.tsx`'s ⚙ button; every field reads from the already-loaded `AppSettings` and
 // writes immediately on change via `settings_set` (no separate "Apply" step — `spec.md` doesn't
 // mandate one, and every value here is a cheap settings-file write).
@@ -135,6 +136,54 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 step={5}
                 value={Math.round(settings.uiFontScale * 100)}
                 onChange={(e) => void patchSettings({ uiFontScale: Number(e.target.value) / 100 })}
+              />
+            </label>
+            {/* "Basic customization of colors/fonts/line spacing" layered on top of the active
+                theme (`docs/plans/appearance-theme/PLAN.md` §3): accent color, UI font family, tree
+                row line-height. `null` accentColor/uiFontFamily means "use the theme's default" —
+                the color/text inputs below always show a concrete value (falling back to the
+                built-in default) since native `<input type="color">`/`text` can't represent
+                "unset" themselves; the ↺ buttons are how the user actually clears the override. */}
+            <label className="ttn-settings-row">
+              <span>アクセントカラー</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="color"
+                  value={settings.appearance.accentColor ?? "#4a90d9"}
+                  onChange={(e) => void patchSettings({ appearance: { accentColor: e.target.value } })}
+                />
+                {settings.appearance.accentColor && (
+                  <button type="button" className="ttn-settings-shortcut-reset" title="既定に戻す" onClick={() => void patchSettings({ appearance: { accentColor: null } })}>
+                    ↺
+                  </button>
+                )}
+              </span>
+            </label>
+            <label className="ttn-settings-row">
+              <span>UIフォント</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="text"
+                  placeholder="Segoe UI, system-ui, sans-serif"
+                  value={settings.appearance.uiFontFamily ?? ""}
+                  onChange={(e) => void patchSettings({ appearance: { uiFontFamily: e.target.value || null } })}
+                />
+                {settings.appearance.uiFontFamily && (
+                  <button type="button" className="ttn-settings-shortcut-reset" title="既定に戻す" onClick={() => void patchSettings({ appearance: { uiFontFamily: null } })}>
+                    ↺
+                  </button>
+                )}
+              </span>
+            </label>
+            <label className="ttn-settings-row">
+              <span>ツリーの行間 ({settings.appearance.treeRowLineHeight.toFixed(1)})</span>
+              <input
+                type="range"
+                min={1.0}
+                max={2.0}
+                step={0.1}
+                value={settings.appearance.treeRowLineHeight}
+                onChange={(e) => void patchSettings({ appearance: { treeRowLineHeight: Number(e.target.value) } })}
               />
             </label>
           </section>
