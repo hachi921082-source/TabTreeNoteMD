@@ -1,11 +1,75 @@
 # PLAN: Window / Operation
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md` and
-> `persistence-fs/PLAN.md` (window geometry persists through `settings_get`/`settings_set`). Covers the
-> app shell (frameless window, panes, splitter, shortcuts, tray/autostart, multi-launch prevention) —
-> the container everything else in `docs/plans/` runs inside.
+> Status: implemented. Frameless window (§1: `tauri.conf.json`'s `decorations: false`,
+> `components/TabBar/TitleBarControls.tsx`), three-pane layout with splitter/hide/side-flip and
+> window-geometry restore+persist (§2: `state/useWindowGeometry.ts`,
+> `components/Layout/TreeSplitter.tsx`), the rebindable shortcut system (§3: `shared/shortcuts.ts`,
+> wired into every consumer, editable via the new Settings screen), auto-launch-to-tray (§4:
+> `commands/autostart.rs`, `main.rs`'s tray icon + `tauri-plugin-autostart`), multi-launch
+> prevention (§5: `main.rs`'s `tauri-plugin-single-instance`, empirically verified — see
+> Implementation Notes), right-click suppression (§6: `main.tsx`'s global `contextmenu`
+> preventDefault; Tauri v2 has no default native app menu to remove), and the Settings screen shell
+> (§7: `components/Settings/SettingsDialog.tsx`). See Implementation Notes for discretion points
+> and caveats.
 
 Sources: `docs/spec.md` §2.7, §9.1 item 1, §9; `docs/detailed-spec.md` §5.7.
+
+## Implementation Notes (resolutions of this plan's discretion points)
+
+- **Markdown-toolbar shortcut combos**: `markdown-editing/PLAN.md` had already populated
+  `shared/shortcuts.ts` with its own picks for 6 of the 16 actions (color, fontSize, table, image,
+  tocUpdate, rearrangeToggle) before this plan's §3 table existed. Those 6 are now corrected to
+  match §3's table verbatim (this plan's own table is the authoritative source); the other 10
+  already matched.
+- **Ctrl+S/F2/Ctrl+Delete/Ctrl+F were hardcoded key checks**, not routed through
+  `resolveShortcuts`/`comboFromEvent` — added `editor.save`/`tree.rename`/`tree.forceDelete`/
+  `editor.findReplace` action ids and rewired each existing handler (`state/useEditor.ts`,
+  `components/Tree/TreeView.tsx`, `components/Editor/EditorPane.tsx`) to use them, so every
+  shortcut in the app (not just the 16 toolbar actions) is rebindable via the Settings screen.
+- **§4's Startup-folder vs. registry Run-key choice**: used `tauri-plugin-autostart`, which
+  registers a `HKCU\...\Run` entry on Windows (not a hand-rolled `.lnk` shortcut in the Startup
+  folder) — this plan's own text pre-approves a Registry Run-key as an acceptable fallback "if the
+  Startup-folder approach proves impractical in Tauri," and no vetted, actively-maintained Tauri
+  plugin for the Startup-folder approach was found; the actual constraint that matters (no user
+  data/settings stored in the registry, `[spec §2.6]`) holds either way since the Run-key only
+  contains the exe path + `--tray` argument.
+- **Tray icon is always created**, not only when launched via `--tray` — a persistent tray icon
+  that can restore the window makes sense regardless of how the app was launched (closing the main
+  window still fully exits the app; nothing minimizes-to-tray on close, which the plan never asked
+  for), and `--tray` only controls whether the window starts hidden vs. shown.
+- **Window reveal ordering (§1/§2/§4 intersection)**: the main window starts hidden
+  (`tauri.conf.json`'s `visible: false`) so `state/useWindowGeometry.ts` can restore the persisted
+  position/size *before* the window ever becomes visible (no flash at the config-file default),
+  then checks the new `window_is_tray_launch` command before revealing it — a `--tray` launch stays
+  hidden until the tray icon is clicked, at which point `main.rs`'s tray event handler shows/focuses
+  it directly in Rust.
+- **Settings screen tab split**: §7's "General/Editor two-tab layout" doesn't say which of
+  Appearance/Shortcuts/Links/Autostart go in which tab. Put all four in "General" (they're all
+  app-shell/behavior toggles unrelated to the CodeMirror surface itself); "Editor" holds
+  `editorDefaults`, the autosave debounce, and EOL policy (the encoding field is shown read-only —
+  `[spec §3.4]` currently only allows `"utf-8"`).
+- **`AppSettings.window.treeCollapsed`** (tree-hide-toggle persistence) and
+  **`AppSettings.autostart.enabled`** are additive schema fields, following the same
+  precedent/reasoning already used for `toolbarPosition`/`toolbarOrder` in earlier plans — not
+  enumerated in `[spec §3.4]`'s example schema, but backward-compatible additions with no version
+  bump needed (no prior schema version ships yet).
+- **Self-verification**: ran `npm run build` (tsc + vite) and `cargo check`/`cargo test --bin
+  tabtreenotemd` (87 tests, all passing, no regressions) clean, then launched the real app
+  (`npm run tauri dev`) and drove it via simulated mouse input (screenshots, not CDP) — confirmed
+  the frameless window renders with the custom minimize/maximize/close controls, the Settings
+  dialog opens showing the corrected shortcut table, and — during that same session — a *second*
+  `npm run tauri dev` launch attempt did not open a second window (`tasklist` showed only the
+  original process throughout), confirming §5's single-instance behavior empirically, not just by
+  reading the plugin's docs.
+- **Not verified end-to-end in this session** (needs a human or `reviewer-lite` with a real Windows
+  login cycle available): §4's actual "survives a Windows login and starts hidden in the tray"
+  flow. `cargo check`/`cargo test` confirm the code compiles and the argv-parsing/hidden-start
+  branch (`window_is_tray_launch`, `state/useWindowGeometry.ts`) is exercised by unit-level
+  reasoning, and the Settings dialog's Autostart checkbox was confirmed to render correctly — but
+  it was deliberately **not** clicked during self-verification, to avoid writing a real
+  `HKCU\...\Run` registry entry pointing at this dev build on the actual development machine. The
+  registry-write path itself (`tauri-plugin-autostart`'s `AutoLaunchManager::enable`) and the full
+  chain across an actual OS login event were not exercised end to end.
 
 ---
 
