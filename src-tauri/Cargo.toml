@@ -64,3 +64,9 @@ tauri-plugin-autostart = "2.5.1"
 # exact `SearchOptions` set is implementation discretion, and this well-established crate is a
 # lighter lift than hand-rolling a regex engine for a mirrored-from-in-memo-search option.
 regex = "1.11.3"
+# Pasted-image format sniffing (magic-number detection) and dimension decoding
+# (image-handling/PLAN.md §3). Only the format families spec.md §4.2/detailed-spec.md §3.6 call
+# out (png/jpg/gif/webp) plus bmp (a common raw-clipboard-bitmap-adjacent format on Windows) are
+# enabled, rather than the crate's full default feature set, to keep the dependency footprint
+# proportional to what this one command actually needs.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
