@@ -157,6 +157,7 @@ fn main() {
             commands::search::search_query,
             commands::link::link_resolve,
             commands::link::link_open_external,
+            commands::image::image_save_pasted,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
