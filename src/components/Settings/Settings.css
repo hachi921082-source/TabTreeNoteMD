@@ -12,7 +12,7 @@
 .ttn-settings-tabs {
   display: flex;
   gap: 4px;
-  border-bottom: 1px solid #d8d8d8;
+  border-bottom: 1px solid var(--ttn-border);
   margin-bottom: 12px;
 }
 
@@ -20,18 +20,19 @@
   appearance: none;
   border: none;
   background: transparent;
+  color: inherit;
   padding: 6px 14px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   cursor: pointer;
   border-bottom: 2px solid transparent;
 }
 
 .ttn-settings-tab:hover {
-  background: #f2f2f2;
+  background: var(--ttn-bg-hover-surface);
 }
 
 .ttn-settings-tab-active {
-  border-bottom-color: #4a90d9;
+  border-bottom-color: var(--ttn-accent);
   font-weight: 600;
 }
 
@@ -46,9 +47,9 @@
 }
 
 .ttn-settings-section h3 {
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   margin: 0 0 8px 0;
-  color: #444;
+  color: var(--ttn-fg-muted);
 }
 
 .ttn-settings-row {
@@ -57,13 +58,26 @@
   justify-content: space-between;
   gap: 12px;
   margin: 8px 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
 }
 
 .ttn-settings-row select,
-.ttn-settings-row input[type="number"] {
+.ttn-settings-row input[type="number"],
+.ttn-settings-row input[type="text"] {
   padding: 4px 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
+}
+
+.ttn-settings-row input[type="color"] {
+  padding: 0;
+  width: 32px;
+  height: 24px;
+  border: 1px solid var(--ttn-border);
+  background: var(--ttn-bg);
+  cursor: pointer;
 }
 
 .ttn-settings-row-checkbox {
@@ -75,8 +89,8 @@
 }
 
 .ttn-settings-error {
-  color: #c0392b;
-  font-size: 12px;
+  color: var(--ttn-danger);
+  font-size: calc(12px * var(--ui-font-scale));
   margin: 4px 0 0 0;
 }
 
@@ -91,7 +105,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
 }
 
 .ttn-settings-shortcut-label {
@@ -102,16 +116,17 @@
   min-width: 140px;
   text-align: center;
   appearance: none;
-  border: 1px solid #d8d8d8;
+  border: 1px solid var(--ttn-border);
   border-radius: 4px;
-  background: #fafafa;
+  background: var(--ttn-bg-muted);
+  color: var(--ttn-fg);
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   cursor: pointer;
 }
 
 .ttn-settings-shortcut-combo:hover {
-  background: #eef4fb;
+  background: var(--ttn-accent-bg);
 }
 
 .ttn-settings-shortcut-reset {
@@ -119,10 +134,10 @@
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 14px;
-  color: #666;
+  font-size: calc(14px * var(--ui-font-scale));
+  color: var(--ttn-fg-muted);
 }
 
 .ttn-settings-shortcut-reset:hover {
-  color: #333;
+  color: var(--ttn-fg);
 }
