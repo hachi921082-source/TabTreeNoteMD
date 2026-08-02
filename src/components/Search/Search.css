@@ -3,10 +3,11 @@
   top: 8px;
   right: 8px;
   z-index: 50;
-  background: #fff;
-  border: 1px solid #d0d0d0;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
   border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 16px var(--ttn-shadow);
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -23,11 +24,14 @@
 .ttn-search-row input[type="text"] {
   flex: 1;
   padding: 4px 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
 }
 
 .ttn-search-row button {
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   padding: 4px 8px;
   cursor: pointer;
 }
@@ -39,8 +43,8 @@
 .ttn-search-options {
   display: flex;
   gap: 12px;
-  font-size: 12px;
-  color: #444;
+  font-size: calc(12px * var(--ui-font-scale));
+  color: var(--ttn-fg-muted);
 }
 
 .ttn-search-options label {
@@ -69,14 +73,17 @@
 .ttn-crosstab-search-row input[type="text"] {
   flex: 1;
   padding: 6px 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
 }
 
 .ttn-crosstab-search-options {
   display: flex;
   gap: 12px;
-  font-size: 12px;
-  color: #444;
+  font-size: calc(12px * var(--ui-font-scale));
+  color: var(--ttn-fg-muted);
 }
 
 .ttn-crosstab-search-options label {
@@ -86,14 +93,14 @@
 }
 
 .ttn-crosstab-search-error {
-  color: #b00020;
-  font-size: 12px;
+  color: var(--ttn-danger);
+  font-size: calc(12px * var(--ui-font-scale));
   margin: 8px 0 0;
 }
 
 .ttn-crosstab-search-status {
-  color: #666;
-  font-size: 12px;
+  color: var(--ttn-fg-muted);
+  font-size: calc(12px * var(--ui-font-scale));
   margin: 8px 0 0;
 }
 
@@ -113,14 +120,15 @@
   padding: 6px 8px;
   border: none;
   background: none;
+  color: inherit;
   text-align: left;
   cursor: pointer;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
 }
 
 .ttn-crosstab-search-hit:hover {
-  background: #f0f0f0;
+  background: var(--ttn-bg-hover-surface);
 }
 
 .ttn-crosstab-search-hit-memo {
@@ -131,11 +139,11 @@
 }
 
 .ttn-crosstab-search-hit-tab {
-  color: #888;
-  font-size: 11px;
+  color: var(--ttn-fg-muted);
+  font-size: calc(11px * var(--ui-font-scale));
 }
 
 .ttn-crosstab-search-hit-match {
-  color: #aaa;
-  font-size: 11px;
+  color: var(--ttn-fg-subtle);
+  font-size: calc(11px * var(--ui-font-scale));
 }
