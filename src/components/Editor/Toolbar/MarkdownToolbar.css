@@ -1,10 +1,10 @@
 .ttn-md-toolbar {
   position: absolute;
   z-index: 30;
-  background: #fafafa;
-  border: 1px solid #d0d0d0;
+  background: var(--ttn-bg-muted);
+  border: 1px solid var(--ttn-border);
   border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px var(--ttn-shadow);
   user-select: none;
 }
 
@@ -21,22 +21,23 @@
   gap: 6px;
   padding: 2px 6px;
   cursor: move;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--ttn-border);
 }
 
 .ttn-md-toolbar-drag-hint {
-  color: #999;
-  font-size: 12px;
+  color: var(--ttn-fg-subtle);
+  font-size: calc(12px * var(--ui-font-scale));
   letter-spacing: -2px;
 }
 
 .ttn-md-toolbar-view-toggle {
   margin-left: auto;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale));
   padding: 2px 8px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--ttn-border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
   cursor: pointer;
 }
 
@@ -57,17 +58,17 @@
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
-  color: #333;
+  color: var(--ttn-fg);
   cursor: pointer;
 }
 
 .ttn-md-toolbar-btn:hover:not(:disabled) {
-  background: #e8e8e8;
-  border-color: #ccc;
+  background: var(--ttn-bg-chrome);
+  border-color: var(--ttn-border);
 }
 
 .ttn-md-toolbar-btn:disabled {
-  color: #bbb;
+  color: var(--ttn-fg-subtle);
   cursor: default;
 }
 
@@ -80,10 +81,10 @@
   gap: 6px;
   margin-top: 2px;
   padding: 6px;
-  background: #fff;
-  border: 1px solid #ccc;
+  background: var(--ttn-bg);
+  border: 1px solid var(--ttn-border);
   border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 6px var(--ttn-shadow);
 }
 
 .ttn-md-toolbar-swatch {
@@ -98,9 +99,10 @@
 .ttn-md-toolbar-popover-item,
 .ttn-md-toolbar-popover-clear {
   padding: 2px 8px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--ttn-border);
   border-radius: 3px;
-  background: #f5f5f5;
+  background: var(--ttn-bg-muted);
+  color: var(--ttn-fg);
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
 }
