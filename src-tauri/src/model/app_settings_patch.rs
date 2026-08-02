@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Deserializer};
 
 use super::app_settings::{
-    AppSettings, AutosaveSettings, EditorDefaults, EncodingSettings, EolPolicy, EolSettings, LastOpened,
-    LinkSettings, OpenTrigger, TabSettingsEntry, Theme, ToolbarPosition, TreeSide, ViewMode, WindowSettings,
-    WrapMode,
+    AppSettings, AutosaveSettings, AutostartSettings, EditorDefaults, EncodingSettings, EolPolicy, EolSettings,
+    LastOpened, LinkSettings, OpenTrigger, TabSettingsEntry, Theme, ToolbarPosition, TreeSide, ViewMode,
+    WindowSettings, WrapMode,
 };
 
 /// Distinguishes "field absent from patch" (outer `None`, leave unchanged)
@@ -55,6 +55,8 @@ pub struct AppSettingsPatch {
     pub eol: Option<EolSettingsPatch>,
     #[serde(default)]
     pub shortcuts: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub autostart: Option<AutostartSettingsPatch>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -78,6 +80,15 @@ pub struct WindowSettingsPatch {
     pub toolbar_position: Option<Option<ToolbarPosition>>,
     #[serde(default)]
     pub toolbar_order: Option<Vec<String>>,
+    #[serde(default)]
+    pub tree_collapsed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutostartSettingsPatch {
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -171,6 +182,9 @@ impl AppSettingsPatch {
         if let Some(v) = self.shortcuts {
             current.shortcuts = v;
         }
+        if let Some(autostart_patch) = self.autostart {
+            autostart_patch.apply_to(&mut current.autostart);
+        }
     }
 }
 
@@ -202,6 +216,17 @@ impl WindowSettingsPatch {
         }
         if let Some(v) = self.toolbar_order {
             current.toolbar_order = v;
+        }
+        if let Some(v) = self.tree_collapsed {
+            current.tree_collapsed = v;
+        }
+    }
+}
+
+impl AutostartSettingsPatch {
+    fn apply_to(self, current: &mut AutostartSettings) {
+        if let Some(v) = self.enabled {
+            current.enabled = v;
         }
     }
 }
