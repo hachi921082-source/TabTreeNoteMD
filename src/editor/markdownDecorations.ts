@@ -29,7 +29,7 @@ import { checkboxDecoration } from "./checkboxClick";
 import { findColorSpans, findImageTags } from "./markdownSpanParser";
 import type { DetectedLink, LinkKind } from "./links";
 import { linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens } from "./links";
-import type { AppSettings } from "../shared/models";
+import type { AppSettings, ExternalLinkKind } from "../shared/models";
 
 export interface MarkdownDecorationConfig {
   openTrigger: AppSettings["links"]["openTrigger"];
@@ -37,9 +37,31 @@ export interface MarkdownDecorationConfig {
    * checkbox widget's click-to-toggle (`checkboxClick.ts`). Link clicking and all styling remain
    * active regardless (opening a link/viewing formatting isn't "editing"). */
   readOnly: boolean;
+  /** Tab the currently-open memo belongs to (`docs/plans/link/PLAN.md` §2) — passed to
+   * `link_resolve`/`link_open_external` for `memo:` resolution and relative file-path base
+   * resolution. `null` only in contexts with no tab open at all. */
+  currentTabId: string | null;
+  /** `AppSettings.links.confirmBeforeOpen` (`[spec §2.8]`) — gates `requestExternalConfirm` below
+   * before every external (URL/email/file-path) open; `memo:`/`#slug` links never go through this
+   * gate since they never leave the app (`docs/plans/link/PLAN.md` §2, §4). */
+  confirmBeforeOpen: boolean;
+  /** Reuses the shared "open memo" path (`docs/plans/memo-tree/PLAN.md`, the same one tree click
+   * and search-result click use) — `memoName: null` for the `memo:TabName/` (tab-only) resolved
+   * form. */
+  onOpenMemo: (tabId: string, memoName: string | null) => void;
+  /** Shows the shared non-blocking confirm dialog and resolves to whether the user confirmed;
+   * only awaited when `confirmBeforeOpen` is true (`docs/plans/link/PLAN.md` §4). */
+  requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
 }
 
-const DEFAULT_CONFIG: MarkdownDecorationConfig = { openTrigger: "singleClick", readOnly: false };
+const DEFAULT_CONFIG: MarkdownDecorationConfig = {
+  openTrigger: "singleClick",
+  readOnly: false,
+  currentTabId: null,
+  confirmBeforeOpen: false,
+  onOpenMemo: () => {},
+  requestExternalConfirm: async () => true,
+};
 
 export const markdownConfigFacet = Facet.define<MarkdownDecorationConfig, MarkdownDecorationConfig>({
   combine: (values) => (values.length ? values[values.length - 1] : DEFAULT_CONFIG),
@@ -307,7 +329,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
     const config = view.state.facet(markdownConfigFacet);
     if (!linkClickMatchesTrigger(event, config.openTrigger, eventType)) return false;
     event.preventDefault();
-    void openDetectedLink(view, link);
+    void openDetectedLink(view, link, config);
     return true;
   }
 }

@@ -5,26 +5,13 @@
 // extension as `URL` syntax-tree nodes (so `markdownDecorations.ts` reads those directly from the
 // tree rather than re-detecting them with regex here); this module supplies the two token shapes
 // the tree parser does NOT know about (bare `memo:...` and bare file paths), plus the
-// classification/open-trigger/resolution logic shared by every link kind regardless of how its
-// range was detected.
-//
-// Real vs. stub, per this pass's scope:
-// - `url` (bare `http(s)://`/`www.`/`ftp://`, or a Markdown-link whose URL isn't `memo:`/`#slug`):
-//   REAL — opens via `ipc/link.ts`'s already-implemented `linkOpenExternal`.
-// - `email`, `filePath`: rendering as clickable is this plan's scope, but `commands/link.rs`'s own
-//   doc comment explicitly excludes "email/file-path special-casing" from what's implemented so
-//   far (mailto:-prefixing, relative-to-absolute path resolution against the tab folder) — calling
-//   `linkOpenExternal` with a bare email/relative path would silently fail rather than open
-//   anything, so these are explicit stubs instead of a broken real call.
-// - `memo`: STUB — `link/PLAN.md`'s `memo:` resolution command does not exist yet.
-// - `headingAnchor`: REAL — `table-of-contents/PLAN.md`'s `scanHeadings` re-scan + scroll-to-match,
-//   see `resolveAndScrollToHeadingAnchor` below.
-// Every remaining stub's behavior (silently do nothing) is externally indistinguishable from this
-// app's own confirmed "unresolved link" behavior (`[spec §2.8]`), so none of them are user-visible
-// breakage — they become real once their owning plan lands, by replacing the function body only.
+// classification/open-trigger/resolution/opening logic shared by every link kind regardless of
+// how its range was detected (`docs/plans/link/PLAN.md` §5).
 import { EditorView } from "@codemirror/view";
-import { linkOpenExternal } from "../ipc/link";
+import { linkOpenExternal, linkResolve } from "../ipc/link";
+import type { ExternalLinkKind } from "../ipc/link";
 import type { AppSettings } from "../shared/models";
+import type { MarkdownDecorationConfig } from "./markdownDecorations";
 import { scanHeadings } from "./tocGenerator";
 
 export type LinkKind = "url" | "email" | "filePath" | "memo" | "headingAnchor";
@@ -36,7 +23,7 @@ export interface DetectedLink {
   to: number;
   kind: LinkKind;
   /** The URL/email/path/`memo:...` target, or (for `headingAnchor`) the slug without its leading
-   * `#`. */
+   * `#`. `memo` targets keep their `memo:` prefix (stripped by `resolveAndOpenMemoLink`). */
   target: string;
 }
 
@@ -85,11 +72,17 @@ export function isHeadingAnchor(url: string): boolean {
   return url.startsWith("#");
 }
 
-/** Stub — `link/PLAN.md`'s `memo:` resolution command (`memo:MemoName` / `memo:TabName/MemoName` /
- * `memo:TabName/`) does not exist yet. See this module's header comment for why a silent no-op
- * here is a safe placeholder rather than broken behavior. */
-export async function resolveAndOpenMemoLink(target: string): Promise<void> {
-  console.info(`[markdown-editing] memo: link resolution not implemented yet (see link/PLAN.md); target=${target}`);
+/** `memo:` link click resolution (`docs/plans/link/PLAN.md` §2, §5): strips the leading `memo:`
+ * scheme, calls `link_resolve`, and on a `"memo"` result opens it via `onOpenMemo` — the caller's
+ * hook into the shared "open memo" path (`docs/plans/memo-tree/PLAN.md`, the same one tree click
+ * and search-result click use). `"unresolved"` (or a failed IPC call) is a silent no-op, matching
+ * `[spec §2.8]`'s "unresolved links do nothing" — no toast, no error surfaced. */
+export async function resolveAndOpenMemoLink(currentTabId: string | null, rawTarget: string, onOpenMemo: (tabId: string, memoName: string | null) => void): Promise<void> {
+  if (!currentTabId) return;
+  const target = rawTarget.startsWith("memo:") ? rawTarget.slice("memo:".length) : rawTarget;
+  const result = await linkResolve(currentTabId, target);
+  if (!result.ok || result.value.kind !== "memo") return;
+  onOpenMemo(result.value.tabId, result.value.memoName);
 }
 
 /** `#slug` heading-anchor click resolution (`docs/plans/table-of-contents/PLAN.md` §4,
@@ -108,30 +101,32 @@ export function resolveAndScrollToHeadingAnchor(view: EditorView, slug: string):
   view.focus();
 }
 
-/** Stub — `link/PLAN.md`'s email special-casing (`mailto:` prefixing) is not implemented yet. */
-export function resolveAndOpenEmailLink(target: string): void {
-  console.info(`[markdown-editing] email link opening not implemented yet (see link/PLAN.md); target=${target}`);
+/** Opens a URL/email/file-path via `link_open_external`, honoring `AppSettings.links.
+ * confirmBeforeOpen` gating on the caller side (`docs/plans/link/PLAN.md` §2, §4) — the confirm
+ * dialog itself is `config.requestExternalConfirm`'s job (an injected async prompt, since this
+ * click handler runs deep inside a CodeMirror `ViewPlugin`, not a React component). Declining the
+ * confirm is treated the same as any other unresolved/cancelled link: a silent no-op. */
+async function openExternalLink(kind: ExternalLinkKind, value: string, config: MarkdownDecorationConfig): Promise<void> {
+  if (config.confirmBeforeOpen) {
+    const confirmed = await config.requestExternalConfirm(kind, value);
+    if (!confirmed) return;
+  }
+  await linkOpenExternal(kind, value, config.currentTabId ?? undefined);
 }
 
-/** Stub — `link/PLAN.md`'s file-path special-casing (relative-to-absolute resolution against the
- * tab folder) is not implemented yet. */
-export function resolveAndOpenFilePathLink(target: string): void {
-  console.info(`[markdown-editing] file-path link opening not implemented yet (see link/PLAN.md); target=${target}`);
-}
-
-export async function openDetectedLink(view: EditorView, link: DetectedLink): Promise<void> {
+export async function openDetectedLink(view: EditorView, link: DetectedLink, config: MarkdownDecorationConfig): Promise<void> {
   switch (link.kind) {
     case "url":
-      void linkOpenExternal(link.target);
+      await openExternalLink("url", link.target, config);
       return;
     case "email":
-      resolveAndOpenEmailLink(link.target);
+      await openExternalLink("email", link.target, config);
       return;
     case "filePath":
-      resolveAndOpenFilePathLink(link.target);
+      await openExternalLink("filePath", link.target, config);
       return;
     case "memo":
-      await resolveAndOpenMemoLink(link.target);
+      await resolveAndOpenMemoLink(config.currentTabId, link.target, config.onOpenMemo);
       return;
     case "headingAnchor":
       resolveAndScrollToHeadingAnchor(view, link.target);
