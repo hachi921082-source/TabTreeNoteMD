@@ -10,6 +10,7 @@ pub mod editor;
 pub mod link;
 pub mod settings;
 pub mod tab;
+pub mod tab_lock;
 pub mod tree;
 pub mod window;
 
