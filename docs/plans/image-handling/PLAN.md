@@ -1,10 +1,21 @@
 # PLAN: Image Handling (Paste, Storage, Resize)
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md` and
+> Status: §1-§3 (storage rule, filename generation, `image_save_pasted` command,
+> `src-tauri/src/commands/image.rs`) and §6's frontend flow (`src/editor/imagePaste.ts`'s real paste
+> handler and toolbar "Image insert" file-picker action, both inserting `![alt](img_xxxx.png)` as a
+> single undoable transaction, error surfaced via the existing `state/useEditor.ts` `lastErrorCode`
+> banner) are implemented. §4's second/third bullets (resize-handle interaction converting markup to
+> `<img width height>`) and the real `<img>` rendering it depends on are **not** implemented —
+> `markdownDecorations.ts`'s `ImagePlaceholderWidget` stub still renders pasted/inserted images as a
+> placeholder, unchanged from before this pass. This gap spans this plan and
+> `markdown-editing/PLAN.md` (each pointed at the other for who owns rendering/resize, neither
+> actually specifies the mechanism) and needs a new architectural decision with real security
+> tradeoffs (Tauri asset-protocol scope for arbitrary tab folders vs. a new base64/bytes-read IPC
+> command) that isn't decidable from existing confirmed spec — see `docs/QA.md`'s "Real `<img>`
+> Rendering + Drag-Resize-Handle in Live View" entry, added during this pass. §5 (no orphan cleanup)
+> required no implementation (a confirmed non-behavior). Depends on `project-architecture/PLAN.md` and
 > `persistence-fs/PLAN.md` (for the name-collision-retry pattern, though images use a separate,
-> simpler write path — see §3). Closely tied to `markdown-editing/PLAN.md` (the decoration layer that
-> renders `<img>`/`![alt](url)` and provides the resize handle) but kept as its own plan because it has
-> a dedicated backend command and storage-path/cleanup policy worth specifying independently.
+> simpler write path — see §3).
 
 Sources: `docs/spec.md` §4.2; `docs/detailed-spec.md` §3.6, §4.7.
 
