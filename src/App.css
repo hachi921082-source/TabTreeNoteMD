@@ -25,15 +25,21 @@ body {
   min-height: 0;
 }
 
-/* 3-pane shell (tab bar / tree / editor), `docs/spec.md` §2.7 — the tree
-   pane's width comes from `AppSettings.window.treeWidth` once
-   `window-operation/PLAN.md`'s splitter lands; a fixed width is used until
-   then. */
+/* 3-pane shell (tab bar / tree / editor), `docs/spec.md` §2.7. The tree pane's width comes from
+   `AppSettings.window.treeWidth`, resized via `components/Layout/TreeSplitter.tsx`; its own
+   `.ttn-tree-splitter` renders the visual divider between the two panes, so this pane itself has
+   no border of its own — `App.tsx` renders it on whichever side (`app-tree-pane-left`/`-right`)
+   matches `AppSettings.window.treeSide` (`window-operation/PLAN.md` §2). */
 .app-tree-pane {
-  width: 260px;
   flex: none;
-  border-right: 1px solid #d8d8d8;
   min-height: 0;
+  /* `TreeView`'s own `.ttn-tree` (`components/Tree/Tree.css`) already scrolls itself
+     (`height: 100%; overflow-y: auto`) — no scroll behavior needed on this wrapper. */
+}
+
+.app-tree-pane-collapsed {
+  overflow: hidden;
+  min-width: 0;
 }
 
 /* The editor pane itself (`components/Editor/Editor.css`'s `.ttn-editor-pane`,
