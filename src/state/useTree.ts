@@ -56,6 +56,12 @@ export interface UseTreeResult {
   /** Programmatically opens a memo (e.g. future `memo:` link navigation) and moves the tree
    * selection/anchor to follow it. No-op if the memo isn't currently visible in the tree. */
   focusOnMemo: (memoName: string) => void;
+  /** Closes the currently-open memo without opening another one (`openMemoName` -> `null`).
+   * `components/Editor/EditorPane.tsx`'s load effect flushes the outgoing memo's pending save as
+   * its cleanup when `memoName` changes away, so this alone is enough to persist any unsaved
+   * content before e.g. `tab-lock/PLAN.md`'s `tab_lock` is called on this tab
+   * (`docs/plans/tab-lock/PLAN.md` §3 step 2's "force a save-confirm (auto-save-and-close)"). */
+  closeOpenMemo: () => void;
 
   createMemo: (name: string, parent?: string) => Promise<TreeMutationOutcome>;
   createChildMemo: (name: string, parent: string) => Promise<TreeMutationOutcome>;
@@ -167,6 +173,10 @@ export function useTree(tabId: string | null): UseTreeResult {
     },
     [flatOrder],
   );
+
+  const closeOpenMemo = useCallback(() => {
+    setOpenMemoName(null);
+  }, []);
 
   const clearLastError = useCallback(() => setLastErrorCode(null), []);
 
@@ -327,6 +337,7 @@ export function useTree(tabId: string | null): UseTreeResult {
     selectOnly,
     handleArrowNav,
     focusOnMemo,
+    closeOpenMemo,
     createMemo,
     createChildMemo,
     renameMemo,
