@@ -13,17 +13,19 @@
   background: transparent;
   width: 44px;
   height: 100%;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   line-height: 1;
   cursor: pointer;
-  color: #333;
+  color: var(--ttn-fg);
 }
 
 .ttn-titlebar-btn:hover {
-  background: #dcdcdc;
+  background: var(--ttn-bg-hover-chrome);
 }
 
 .ttn-titlebar-btn-close:hover {
+  /* Windows' conventional close-button red, kept fixed across themes rather than themed —
+     matches the OS's own title-bar convention, not part of the app's color palette. */
   background: #e81123;
   color: #fff;
 }
