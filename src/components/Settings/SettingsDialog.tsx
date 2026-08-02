@@ -64,9 +64,13 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
     setRecordingActionId(actionId);
     const handler = (e: KeyboardEvent) => {
       // Esc cancels recording without rebinding (consistent with Esc-closes-dialogs convention,
-      // `[spec §9]`) rather than being captured as the new combo itself.
-      if (e.key !== "Escape") {
-        e.preventDefault();
+      // `[spec §9]`) rather than being captured as the new combo itself. Stop it here so it
+      // doesn't keep propagating up to `Dialog.tsx`'s own Esc listener and close the whole
+      // Settings dialog too — only the recording should be cancelled.
+      e.preventDefault();
+      if (e.key === "Escape") {
+        e.stopPropagation();
+      } else {
         const combo = comboFromEvent(e);
         void patchSettings({ shortcuts: { ...settings.shortcuts, [actionId]: combo } });
       }
