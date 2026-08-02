@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
+use crate::commands::tab_lock;
 use crate::commands::{emit_meta_recovered, emit_settings_recovery_event};
 use crate::fs::atomic_write::{atomic_write, bak_path};
 use crate::fs::path_safety::{validate_name, ValidationMode};
@@ -29,12 +30,7 @@ use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::model::tab_meta::{TabMetaFile, TAB_META_FILE_NAME, TAB_META_SCHEMA_VERSION};
 use crate::model::tree::{Label, LabelColor, MemoEditorSettings, MetaTreeNode, NodePath};
 use crate::settings::app_settings_store::{AppSettingsStore, RecoveryOutcome};
-
-/// Crash-mid-lock recovery marker (`tab-lock/PLAN.md`, `tab-lock/CRASH-RECOVERY.md`). This file
-/// only detects its presence (step 0 of `tree_open`, `memo-tree/PLAN.md` §2) — the marker's
-/// content and the actual Finish/Restore recovery flow belong to `tab-lock/PLAN.md`'s own
-/// implementation pass.
-const LOCK_INPROGRESS_MARKER_NAME: &str = ".tabtreenote.lock-inprogress";
+use crate::store::lock_session_store::LockSessionStore;
 
 // ---------------------------------------------------------------------------
 // Command I/O types
@@ -95,7 +91,13 @@ pub struct MemoMoveResult {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn tree_open(app: AppHandle, tab_id: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<TreeSnapshot> {
+pub fn tree_open(
+    app: AppHandle,
+    tab_id: String,
+    store: State<AppSettingsStore>,
+    registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
+) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
 
@@ -106,10 +108,11 @@ pub fn tree_open(app: AppHandle, tab_id: String, store: State<AppSettingsStore>,
     let tab_name = entry.name.clone();
     let cached_locked = entry.locked.unwrap_or(false);
 
-    // Step 0 (`tab-lock/CRASH-RECOVERY.md`): crash-mid-lock marker check,
-    // before anything else. The actual recovery flow is `tab-lock/PLAN.md`'s
-    // own implementation; this is only the detection seam.
-    if folder.join(LOCK_INPROGRESS_MARKER_NAME).exists() {
+    // Step 0 (`tab-lock/CRASH-RECOVERY.md`'s "Trigger Point"): crash-mid-lock marker check,
+    // before anything else. A zero-progress marker is silently auto-rolled-back inline; anything
+    // else reports `recovery_pending: true` so the frontend shows the recovery dialog instead of
+    // this tab's normal tree/empty-state view.
+    if matches!(tab_lock::check_marker_on_tree_open(&folder, &registry), tab_lock::MarkerCheck::RecoveryPending) {
         return AppResult::ok(TreeSnapshot {
             nodes: vec![],
             tab_name,
@@ -125,19 +128,35 @@ pub fn tree_open(app: AppHandle, tab_id: String, store: State<AppSettingsStore>,
     // `AppSettings.tabs[i].locked` display cache gets corrected if it
     // disagrees with the tab's own metadata file (e.g. after an external
     // folder copy swapped in a differently-locked `.tabtreenote.json`).
+    let mut tab_name = tab_name;
     if really_locked != cached_locked {
         let _ = store.modify(&registry, |s| -> Result<(), ()> {
             if let Some(t) = s.tabs.iter_mut().find(|t| t.id == tab_id) {
                 t.locked = Some(really_locked);
+                if really_locked {
+                    // Mirrors `tab_lock`'s own step 10 placeholder swap (`tab-lock/PLAN.md` §3):
+                    // this branch is reached whenever a tab is discovered to already be locked
+                    // despite the cached `AppSettings` entry saying otherwise (e.g. `tab-lock/
+                    // PLAN.md` §7's portability case, when `tab_register_existing`'s own
+                    // detection — `commands/tab.rs`'s `register_tab_at_path` — was bypassed or
+                    // predates this fix) — the real name must not stay displayed here either.
+                    t.name = tab_lock::LOCKED_PLACEHOLDER_NAME.to_string();
+                }
             }
             Ok(())
         });
+        if really_locked {
+            tab_name = tab_lock::LOCKED_PLACEHOLDER_NAME.to_string();
+        }
     }
 
-    // Step 1: locked tab, no active session. `tab-lock/PLAN.md` is not yet
-    // implemented, so there is never an active session today — this branch
-    // is always taken for a locked tab.
     if really_locked {
+        // Step 1, session branch (`tab-lock/PLAN.md` §3 `tab_unlock` step 7): an active unlock
+        // session supplies the real tree/name via this same command.
+        if let Some(snapshot) = sessions.with_session(&tab_id, tab_lock::session_tree_snapshot) {
+            return AppResult::ok(snapshot);
+        }
+        // Step 1, no-session branch: nothing is rendered for a locked-and-not-yet-unlocked tab.
         return AppResult::ok(TreeSnapshot {
             nodes: vec![],
             tab_name,
@@ -173,8 +192,9 @@ pub fn memo_create(
     parent: Option<NodePath>,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
-    memo_create_impl(&app, &tab_id, &name, parent.as_deref(), &store, &registry)
+    memo_create_impl(&app, &tab_id, &name, parent.as_deref(), &store, &registry, &sessions)
 }
 
 /// `parent` is required (not `Option`) here, matching the right-click "Create as Child" entry
@@ -187,10 +207,12 @@ pub fn memo_create_child(
     parent: NodePath,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
-    memo_create_impl(&app, &tab_id, &name, Some(parent.as_str()), &store, &registry)
+    memo_create_impl(&app, &tab_id, &name, Some(parent.as_str()), &store, &registry, &sessions)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn memo_create_impl(
     app: &AppHandle,
     tab_id: &str,
@@ -198,18 +220,26 @@ fn memo_create_impl(
     parent: Option<&str>,
     store: &AppSettingsStore,
     registry: &SelfWriteRegistry,
+    sessions: &LockSessionStore,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(registry);
     emit_settings_recovery_event(app, outcome);
-    let (folder, tab_name) = match resolve_tab(&settings, tab_id) {
-        Ok(v) => v,
-        Err(e) => return AppResult::err(e),
-    };
 
     let trimmed = name.trim();
     if let Err(code) = validate_name(trimmed, ValidationMode::Strict) {
         return AppResult::err_code(code, "invalid memo name");
     }
+
+    let access = match tab_lock::resolve_tab_access(&settings, sessions, tab_id) {
+        Ok(v) => v,
+        Err(e) => return AppResult::err(e),
+    };
+    let (folder, tab_name) = match access {
+        tab_lock::TabAccess::Session { tab_id, folder } => {
+            return tab_lock::session_create_memo(sessions, registry, &folder, &tab_id, trimmed, parent);
+        }
+        tab_lock::TabAccess::Plain { folder, tab_name } => (folder, tab_name),
+    };
 
     let mut loaded = load_and_reconcile(&folder);
     if contains_name(&loaded.tree, trimmed) {
@@ -259,18 +289,26 @@ pub fn memo_rename(
     new_name: String,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
-    let (folder, tab_name) = match resolve_tab(&settings, &tab_id) {
-        Ok(v) => v,
-        Err(e) => return AppResult::err(e),
-    };
 
     let trimmed = new_name.trim();
     if let Err(code) = validate_name(trimmed, ValidationMode::Strict) {
         return AppResult::err_code(code, "invalid memo name");
     }
+
+    let access = match tab_lock::resolve_tab_access(&settings, &sessions, &tab_id) {
+        Ok(v) => v,
+        Err(e) => return AppResult::err(e),
+    };
+    let (folder, tab_name) = match access {
+        tab_lock::TabAccess::Session { tab_id, folder } => {
+            return tab_lock::session_rename_memo(&sessions, &registry, &folder, &tab_id, &path, trimmed);
+        }
+        tab_lock::TabAccess::Plain { folder, tab_name } => (folder, tab_name),
+    };
 
     let mut loaded = load_and_reconcile(&folder);
     if find_node(&loaded.tree, &path).is_none() {
@@ -324,12 +362,23 @@ pub fn memo_delete(
     force_direct: bool,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
-    let (folder, tab_name) = match resolve_tab(&settings, &tab_id) {
+
+    let access = match tab_lock::resolve_tab_access(&settings, &sessions, &tab_id) {
         Ok(v) => v,
         Err(e) => return AppResult::err(e),
+    };
+    let (folder, tab_name) = match access {
+        // `force_direct`/trash is a plain-tab-only distinction — a locked-session memo's
+        // obfuscated file is always permanently deleted (`tab_lock.rs`'s `session_delete_memo`
+        // doc comment).
+        tab_lock::TabAccess::Session { tab_id, folder } => {
+            return tab_lock::session_delete_memo(&sessions, &registry, &folder, &tab_id, &paths);
+        }
+        tab_lock::TabAccess::Plain { folder, tab_name } => (folder, tab_name),
     };
 
     let mut loaded = load_and_reconcile(&folder);
@@ -406,49 +455,54 @@ pub fn memo_move(
     target: MoveTarget,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<MemoMoveResult> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
-    let (source_folder, source_tab_name) = match resolve_tab(&settings, &tab_id) {
+    let source_access = match tab_lock::resolve_tab_access(&settings, &sessions, &tab_id) {
         Ok(v) => v,
         Err(e) => return AppResult::err(e),
     };
 
     match target {
-        MoveTarget::WithinTab { new_parent, index } => {
-            memo_move_within_tab(&source_folder, &source_tab_name, &paths, new_parent.as_deref(), index, &registry)
-        }
+        MoveTarget::WithinTab { new_parent, index } => match source_access {
+            tab_lock::TabAccess::Session { tab_id, folder } => {
+                match tab_lock::session_move_within(&sessions, &registry, &folder, &tab_id, &paths, new_parent.as_deref(), index) {
+                    AppResult::Ok(source) => AppResult::ok(MemoMoveResult { source, target: None }),
+                    AppResult::Err(err) => AppResult::err(err),
+                }
+            }
+            tab_lock::TabAccess::Plain { folder, tab_name } => memo_move_within_tab(&folder, &tab_name, &paths, new_parent.as_deref(), index, &registry),
+        },
         MoveTarget::OtherTab {
             target_tab_id,
             new_parent,
             index,
             copy,
         } => {
-            // Reusing `resolve_tab` here is also this command's seam for
-            // `tab-lock/PLAN.md` §"Cross-Tab DND": dropping onto a locked
-            // (no-session) target tab rejects with `TabLocked` here, before
-            // anything is touched, letting the frontend trigger the
-            // password-at-drop-time flow that plan specifies. Once
-            // `tab-lock/PLAN.md` introduces session state, `resolve_tab`
-            // (or its own equivalent check) is where that distinction needs
-            // to be threaded through.
-            let (target_folder, target_tab_name) = match resolve_tab(&settings, &target_tab_id) {
+            // This is `tab-lock/PLAN.md` §"Cross-Tab DND"'s seam: dropping onto a locked
+            // (no-session) target tab rejects with `TabLocked` here, before anything is touched,
+            // letting the frontend trigger the password-at-drop-time flow that plan specifies
+            // (an inline `tab_unlock` call, then retrying this same `memo_move`).
+            let target_access = match tab_lock::resolve_tab_access(&settings, &sessions, &target_tab_id) {
                 Ok(v) => v,
                 Err(e) => return AppResult::err(e),
             };
-            memo_move_cross_tab(
-                &tab_id,
-                &source_folder,
-                &source_tab_name,
-                &target_tab_id,
-                &target_folder,
-                &target_tab_name,
-                &paths,
-                new_parent.as_deref(),
-                index,
-                copy,
-                &registry,
-            )
+
+            match (source_access, target_access) {
+                (tab_lock::TabAccess::Plain { folder: source_folder, tab_name: source_tab_name }, tab_lock::TabAccess::Plain { folder: target_folder, tab_name: target_tab_name }) => {
+                    memo_move_cross_tab(&tab_id, &source_folder, &source_tab_name, &target_tab_id, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry)
+                }
+                (tab_lock::TabAccess::Plain { folder: source_folder, tab_name: source_tab_name }, tab_lock::TabAccess::Session { tab_id: target_tab_id, folder: target_folder }) => {
+                    tab_lock::move_cross_tab_plain_to_session(&source_folder, &source_tab_name, &target_tab_id, &target_folder, &paths, new_parent.as_deref(), index, copy, &registry, &sessions)
+                }
+                (tab_lock::TabAccess::Session { tab_id: source_tab_id, folder: source_folder }, tab_lock::TabAccess::Plain { folder: target_folder, tab_name: target_tab_name }) => {
+                    tab_lock::move_cross_tab_session_to_plain(&source_tab_id, &source_folder, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry, &sessions)
+                }
+                (tab_lock::TabAccess::Session { tab_id: source_tab_id, folder: source_folder }, tab_lock::TabAccess::Session { tab_id: target_tab_id, folder: target_folder }) => {
+                    tab_lock::move_cross_tab_session_to_session(&source_tab_id, &source_folder, &target_tab_id, &target_folder, &paths, new_parent.as_deref(), index, copy, &registry, &sessions)
+                }
+            }
         }
     }
 }
@@ -634,8 +688,9 @@ pub fn memo_set_expanded(
     expanded: bool,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
-    mutate_node_field(&app, &tab_id, &path, &store, &registry, |node| {
+    mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
         node.expanded = expanded;
         Ok(())
     })
@@ -652,8 +707,9 @@ pub fn memo_set_label(
     color: Option<LabelColor>,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
-    mutate_node_field(&app, &tab_id, &path, &store, &registry, |node| {
+    mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
         match color {
             Some(c) => {
                 let label = node.label.get_or_insert_with(|| Label { color: None, kind: None });
@@ -680,8 +736,9 @@ pub fn memo_set_editor_override(
     editor: Option<MemoEditorSettings>,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
-    mutate_node_field(&app, &tab_id, &path, &store, &registry, |node| {
+    mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
         node.editor = editor;
         Ok(())
     })
@@ -698,26 +755,36 @@ pub fn memo_set_edit_lock(
     locked: bool,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
-    mutate_node_field(&app, &tab_id, &path, &store, &registry, |node| {
+    mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
         node.locked = Some(locked);
         Ok(())
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mutate_node_field(
     app: &AppHandle,
     tab_id: &str,
     path: &str,
     store: &AppSettingsStore,
     registry: &SelfWriteRegistry,
+    sessions: &LockSessionStore,
     f: impl FnOnce(&mut MetaTreeNode) -> Result<(), ErrorCode>,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(registry);
     emit_settings_recovery_event(app, outcome);
-    let (folder, tab_name) = match resolve_tab(&settings, tab_id) {
+
+    let access = match tab_lock::resolve_tab_access(&settings, sessions, tab_id) {
         Ok(v) => v,
         Err(e) => return AppResult::err(e),
+    };
+    let (folder, tab_name) = match access {
+        tab_lock::TabAccess::Session { tab_id, folder } => {
+            return tab_lock::session_mutate_node_field(sessions, registry, &folder, &tab_id, path, f);
+        }
+        tab_lock::TabAccess::Plain { folder, tab_name } => (folder, tab_name),
     };
 
     let mut loaded = load_and_reconcile(&folder);
@@ -752,12 +819,20 @@ pub fn memo_get_properties(
     path: NodePath,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<MemoProperties> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
-    let (folder, _tab_name) = match resolve_tab(&settings, &tab_id) {
+
+    let access = match tab_lock::resolve_tab_access(&settings, &sessions, &tab_id) {
         Ok(v) => v,
         Err(e) => return AppResult::err(e),
+    };
+    let folder = match access {
+        tab_lock::TabAccess::Session { tab_id, folder } => {
+            return tab_lock::session_get_properties(&sessions, &folder, &tab_id, &path);
+        }
+        tab_lock::TabAccess::Plain { folder, .. } => folder,
     };
 
     let file_path = folder.join(format!("{path}.md"));
@@ -791,8 +866,9 @@ fn decode_memo_body(bytes: &[u8]) -> String {
 }
 
 /// Formats a `SystemTime` as a UTC `"YYYY-MM-DD HH:MM:SS"` string, without pulling in a
-/// date/time crate for this single formatting need.
-fn format_system_time_utc(t: std::time::SystemTime) -> String {
+/// date/time crate for this single formatting need. `pub(crate)` so `commands/tab_lock.rs`'s
+/// session-path `memo_get_properties` equivalent can reuse it.
+pub(crate) fn format_system_time_utc(t: std::time::SystemTime) -> String {
     let duration = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let total_secs = duration.as_secs();
     let days = (total_secs / 86400) as i64;
@@ -874,7 +950,11 @@ pub(crate) struct LoadedTabMeta {
     pub(crate) tree: Vec<MetaTreeNode>,
 }
 
-fn load_tab_meta_with_recovery(folder: &Path) -> (Option<TabMetaFile>, RecoveryOutcome) {
+/// `pub(crate)` so `commands/tab_lock.rs`'s crash-recovery Finish/Restore flow
+/// (`docs/plans/tab-lock/CRASH-RECOVERY.md`) can discriminate "step 8 (lock blob write) already
+/// succeeded" (`.tabtreenote.json` has a `lock` field) from "step 8 never ran" (it still has a
+/// `tree` field) without duplicating the corruption-recovery cascade.
+pub(crate) fn load_tab_meta_with_recovery(folder: &Path) -> (Option<TabMetaFile>, RecoveryOutcome) {
     let primary = folder.join(TAB_META_FILE_NAME);
     if let Some(meta) = try_parse_tab_meta(&primary) {
         return (Some(meta), RecoveryOutcome::Clean);
@@ -906,7 +986,11 @@ pub(crate) fn load_and_reconcile(folder: &Path) -> LoadedTabMeta {
     LoadedTabMeta { schema_version, app_version, tree }
 }
 
-fn save_tab_meta(folder: &Path, schema_version: u32, app_version: String, tree: &[MetaTreeNode], registry: &SelfWriteRegistry) -> std::io::Result<()> {
+/// `pub(crate)` so `commands/tab_lock.rs`'s crash-recovery Finish flow can write the plain-`tree`
+/// shape back if recovery rolls back before ever building a lock blob for an unrelated tab (not
+/// currently exercised, but keeps this the single write path for the `tree`-shaped
+/// `.tabtreenote.json` rather than a second ad hoc one).
+pub(crate) fn save_tab_meta(folder: &Path, schema_version: u32, app_version: String, tree: &[MetaTreeNode], registry: &SelfWriteRegistry) -> std::io::Result<()> {
     let meta = TabMetaFile {
         schema_version,
         app_version,
@@ -993,7 +1077,10 @@ pub(crate) fn find_node<'a>(tree: &'a [MetaTreeNode], name: &str) -> Option<&'a 
     None
 }
 
-fn find_node_mut<'a>(tree: &'a mut Vec<MetaTreeNode>, name: &str) -> Option<&'a mut MetaTreeNode> {
+/// `pub(crate)` so `commands/tab_lock.rs` can mutate a locked-session tab's in-memory tree
+/// (`docs/plans/tab-lock/PLAN.md` §3 "While a Session Is Active") without duplicating tree
+/// lookup/mutation logic.
+pub(crate) fn find_node_mut<'a>(tree: &'a mut Vec<MetaTreeNode>, name: &str) -> Option<&'a mut MetaTreeNode> {
     for node in tree.iter_mut() {
         if node.memo_name == name {
             return Some(node);
@@ -1006,12 +1093,14 @@ fn find_node_mut<'a>(tree: &'a mut Vec<MetaTreeNode>, name: &str) -> Option<&'a 
 }
 
 /// Case-insensitive (ASCII) — matches the same convention used for tab-name uniqueness
-/// (`commands/tab.rs`).
-fn contains_name(tree: &[MetaTreeNode], name: &str) -> bool {
+/// (`commands/tab.rs`). `pub(crate)`: reused by `commands/tab_lock.rs`'s session-path memo
+/// create/rename, same reason as `find_node_mut` above.
+pub(crate) fn contains_name(tree: &[MetaTreeNode], name: &str) -> bool {
     tree.iter().any(|n| n.memo_name.eq_ignore_ascii_case(name) || contains_name(&n.children, name))
 }
 
-fn remove_node(tree: &mut Vec<MetaTreeNode>, name: &str) -> Option<MetaTreeNode> {
+/// `pub(crate)`: reused by `commands/tab_lock.rs`'s session-path memo delete/move.
+pub(crate) fn remove_node(tree: &mut Vec<MetaTreeNode>, name: &str) -> Option<MetaTreeNode> {
     if let Some(pos) = tree.iter().position(|n| n.memo_name == name) {
         return Some(tree.remove(pos));
     }
@@ -1023,7 +1112,8 @@ fn remove_node(tree: &mut Vec<MetaTreeNode>, name: &str) -> Option<MetaTreeNode>
     None
 }
 
-fn collect_names(node: &MetaTreeNode, out: &mut Vec<String>) {
+/// `pub(crate)`: reused by `commands/tab_lock.rs`'s session-path memo delete/cross-tab move.
+pub(crate) fn collect_names(node: &MetaTreeNode, out: &mut Vec<String>) {
     out.push(node.memo_name.clone());
     for child in &node.children {
         collect_names(child, out);
@@ -1037,14 +1127,16 @@ fn children_of_mut<'a>(tree: &'a mut Vec<MetaTreeNode>, parent: Option<&str>) ->
     }
 }
 
-fn insert_node_at(tree: &mut Vec<MetaTreeNode>, parent: Option<&str>, index: usize, node: MetaTreeNode) -> Result<(), ErrorCode> {
+/// `pub(crate)`: reused by `commands/tab_lock.rs`'s session-path memo create/move.
+pub(crate) fn insert_node_at(tree: &mut Vec<MetaTreeNode>, parent: Option<&str>, index: usize, node: MetaTreeNode) -> Result<(), ErrorCode> {
     let children = children_of_mut(tree, parent)?;
     let idx = index.min(children.len());
     children.insert(idx, node);
     Ok(())
 }
 
-fn insert_node_at_end(tree: &mut Vec<MetaTreeNode>, parent: Option<&str>, node: MetaTreeNode) -> Result<(), ErrorCode> {
+/// `pub(crate)`: reused by `commands/tab_lock.rs`'s session-path memo create.
+pub(crate) fn insert_node_at_end(tree: &mut Vec<MetaTreeNode>, parent: Option<&str>, node: MetaTreeNode) -> Result<(), ErrorCode> {
     let children = children_of_mut(tree, parent)?;
     children.push(node);
     Ok(())
