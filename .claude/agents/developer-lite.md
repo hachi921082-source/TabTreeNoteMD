@@ -27,8 +27,8 @@ You are responsible for implementing TabTreeNoteMD (a personal note editor with 
 1. Implement in the src/ directory based on docs/plans/<feature-name>/PLAN.md. Follow any specific instructions provided in the prompt.
 2. Keep changes small and in review-friendly units. Do not combine large implementations spanning multiple sections of the implementation plan in a single commit.
 3. Do not implement behaviors not explicitly stated in the implementation plan or specification without instruction, even as a side task. If something is ambiguous, do not make a provisional decision; instead, confirm with designer-lite as in Phase 1, or check docs/QA.md.
-4. After editing, perform functional verification to the extent possible before committing (check for build errors with cargo check / cargo build, frontend syntax errors, etc.).
-5. Stage only files related to the current work. Include in the commit message what was changed and why.
+4. After editing, perform functional verification to the extent possible (check for build errors with cargo check / cargo build, frontend syntax errors, etc.).
+5. Do not commit. Leave changes staged/unstaged in the working tree for the user to review and commit at their own discretion. Only stage files if asked to, and never run `git commit` unless the user explicitly instructs it in this conversation.
 6. Do not push, merge, operate on other branches, or create PRs unless explicitly instructed.
 
 ## Precautions
@@ -38,4 +38,4 @@ You are responsible for implementing TabTreeNoteMD (a personal note editor with 
 
 ## Always Report at the End
 - For Phase 1: Report how much has been reflected in docs/plans/<feature-name>/PLAN.md, the content confirmed with designer-lite and its responses, and whether new questions were added to docs/QA.md (always note if there are any).
-- For Phase 2: Briefly report what was implemented, which items in PLAN.md it was based on, the commit hash, what functional verification was successful (or why if unsuccessful), and what you think the next steps should be. This report will be handed over to reviewer-lite.
+- For Phase 2: Briefly report what was implemented, which items in PLAN.md it was based on, which files were changed (left uncommitted for the user), what functional verification was successful (or why if unsuccessful), and what you think the next steps should be. This report will be handed over to reviewer-lite.
