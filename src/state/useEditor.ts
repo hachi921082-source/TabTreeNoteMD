@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { editorLoad, editorSave } from "../ipc/editor";
+import { editorClose, editorLoad, editorSave } from "../ipc/editor";
 import type { AppSettings, MemoContent } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 
@@ -153,7 +153,14 @@ export function useEditor(tabId: string | null, memoName: string | null, appSett
       cancelled = true;
       const tid = tabIdRef.current;
       const name = memoNameRef.current;
-      if (tid && name) void flushSave(tid, name);
+      if (tid && name) {
+        void flushSave(tid, name);
+        // Every switch-away is a real "memo closed" transition for the backend's
+        // `ActiveMemoTracker` (`docs/plans/tab-lock/PLAN.md` §3 step 2's defensive check relies
+        // on this) — harmless when this is actually a switch to a *different* memo, since that
+        // memo's own `editor_load` re-sets the tracker right after this clears it.
+        void editorClose(tid, name);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, memoName]);
