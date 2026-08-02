@@ -24,6 +24,10 @@ pub struct AppSettings {
     pub encoding: EncodingSettings,
     pub eol: EolSettings,
     pub shortcuts: HashMap<String, String>,
+    /// Additive field, not enumerated in `[spec §3.4]`'s schema example
+    /// (`docs/plans/window-operation/PLAN.md` §4: "a boolean in `AppSettings`... implementation
+    /// discretion for exact shape since `spec.md` only says 'setting available'").
+    pub autostart: AutostartSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +58,21 @@ pub struct WindowSettings {
     #[serde(default)]
     pub toolbar_position: Option<ToolbarPosition>,
     pub toolbar_order: Vec<String>,
+    /// Additive field (`docs/plans/window-operation/PLAN.md` §2): whether the tree pane's hide
+    /// toggle is currently collapsed. Persisted alongside `tree_width`/`tree_side` since it's the
+    /// same class of window-layout preference.
+    #[serde(default)]
+    pub tree_collapsed: bool,
+}
+
+/// `docs/plans/window-operation/PLAN.md` §4: launch-to-tray-on-Windows-login setting. The actual
+/// OS registration (Startup-folder shortcut) is performed by `commands::autostart` whenever this
+/// is toggled, not derived implicitly from this flag alone — this field is the persisted
+/// "what the user asked for" record, mirroring the OS-level state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AutostartSettings {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +194,7 @@ impl Default for AppSettings {
                 tree_side: TreeSide::Left,
                 toolbar_position: None,
                 toolbar_order: default_toolbar_order(),
+                tree_collapsed: false,
             },
             theme: Theme::Light,
             ui_font_scale: 1.0,
@@ -201,6 +221,7 @@ impl Default for AppSettings {
                 policy: EolPolicy::Preserve,
             },
             shortcuts: HashMap::new(),
+            autostart: AutostartSettings { enabled: false },
         }
     }
 }
