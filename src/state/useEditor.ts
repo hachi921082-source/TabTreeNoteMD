@@ -28,6 +28,12 @@ export interface UseEditorResult {
   loadGeneration: number;
   lastErrorCode: ErrorCode | null;
   clearLastError: () => void;
+  /** Surfaces an error via the same non-blocking `lastErrorCode` banner as save/load failures —
+   * used by callers outside this hook's own save/load flow (currently only
+   * `components/Editor/EditorPane.tsx`'s image-paste/insert wiring,
+   * `docs/plans/image-handling/PLAN.md` §6 step 4) rather than each such caller needing its own
+   * notification mechanism. */
+  reportError: (code: ErrorCode) => void;
   /** `null` when no conflict is active. While non-null, further autosave attempts for this memo
    * are suspended (`[spec §5.8]`) and the editor should be made read-only. */
   conflict: ConflictKind | null;
@@ -62,6 +68,7 @@ export function useEditor(tabId: string | null, memoName: string | null, appSett
   appSettingsRef.current = appSettings;
 
   const clearLastError = useCallback(() => setLastErrorCode(null), []);
+  const reportError = useCallback((code: ErrorCode) => setLastErrorCode(code), []);
 
   const clearDebounce = () => {
     if (debounceTimerRef.current !== null) {
@@ -298,6 +305,7 @@ export function useEditor(tabId: string | null, memoName: string | null, appSett
     loadGeneration,
     lastErrorCode,
     clearLastError,
+    reportError,
     conflict,
     resolveConflictKeepMine,
     resolveConflictReloadFromDisk,
