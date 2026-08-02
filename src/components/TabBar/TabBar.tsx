@@ -12,11 +12,16 @@
 //
 // The 📌 "always-on-top" toggle button IS implemented here: a single global
 // button (not per-tab), leftmost in the tab bar's toolbar area (order:
-// pin, search, theme toggle — the search/theme buttons themselves belong to
-// `search-index/PLAN.md`/`appearance-theme/PLAN.md` and are added later to
-// this same toolbar group). Session-only React state, never persisted
-// (`docs/DECISIONS.md` "'Pin' Button: Global Window Always-On-Top Toggle,
-// Not Per-Tab", `docs/plans/tab-management/PLAN.md` §4).
+// pin, search, theme toggle — the theme-toggle button itself belongs to
+// `appearance-theme/PLAN.md` and is added later to this same toolbar group).
+// Session-only React state, never persisted (`docs/DECISIONS.md` "'Pin'
+// Button: Global Window Always-On-Top Toggle, Not Per-Tab",
+// `docs/plans/tab-management/PLAN.md` §4).
+//
+// The 🔍 cross-tab search button (`docs/plans/search-index/PLAN.md` §5) IS also implemented
+// here, immediately to the right of the pin button per `[spec §2.1]`'s layout note ("pin sits to
+// its left") — opens `CrossTabSearchDialog`, whose "open a hit" callback is threaded down from
+// `App.tsx` since it needs both tab-switch and tree-focus state this component doesn't own.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -33,6 +38,8 @@ import { errorMessageFor } from "../../shared/errorMessages";
 import { windowSetAlwaysOnTop } from "../../ipc/window";
 import { TitleBarControls } from "./TitleBarControls";
 import { SettingsDialog } from "../Settings/SettingsDialog";
+import { CrossTabSearchDialog } from "../Search/CrossTabSearchDialog";
+import { useCrossTabSearch } from "../../state/useCrossTabSearch";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -48,6 +55,9 @@ export interface TabBarProps {
   settings: AppSettings | null;
   patchSettings: (patch: AppSettingsPatch) => Promise<void>;
   applyFetched: (settings: AppSettings) => void;
+  /** Opens a cross-tab search hit (`docs/plans/search-index/PLAN.md` §5) — switches tabs if
+   * needed and follows tree selection. Wired from `App.tsx`, which owns both tab and tree state. */
+  onOpenSearchHit: (tabId: string, memoName: string) => void;
 }
 
 type PendingDialog =
@@ -67,7 +77,7 @@ function baseNameOf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched }: TabBarProps) {
+export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched, onOpenSearchHit }: TabBarProps) {
   const { tabs, activeTabId, selectTab, createTab, registerExistingTab, retryCreateWithName, renameTab, reorderTabs, removeTab, openTabLocation, lastErrorCode, clearLastError } =
     tabsState;
 
@@ -80,6 +90,7 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
   // Session-only; deliberately not read from or written to `AppSettings`.
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const crossTabSearch = useCrossTabSearch();
 
   useEffect(() => {
     if (draggingIdRef.current) return; // don't clobber an in-progress drag's local order
@@ -255,9 +266,8 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
         </button>
 
         {/* Toolbar group, left-to-right order: pin, search, theme toggle
-            (`docs/plans/tab-management/PLAN.md` §4). Search/theme buttons
-            are added here by `search-index/PLAN.md`/`appearance-theme/PLAN.md`
-            when those features are implemented. */}
+            (`docs/plans/tab-management/PLAN.md` §4). The theme-toggle button
+            is added here by `appearance-theme/PLAN.md` when implemented. */}
         <div className="ttn-tab-bar-toolbar">
           <button
             type="button"
@@ -267,6 +277,11 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
             onClick={() => void handleToggleAlwaysOnTop()}
           >
             📌
+          </button>
+          {/* Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §5) — immediately to
+              the right of the pin button per `[spec §2.1]`'s layout note. */}
+          <button type="button" className="ttn-toolbar-btn" title="検索" aria-label="検索" onClick={crossTabSearch.open}>
+            🔍
           </button>
           {/* Flips which side the tree pane renders on (`docs/plans/window-operation/PLAN.md` §2).
               The hide/show toggle itself lives on the splitter between the two panes, not here. */}
@@ -419,6 +434,17 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {settingsOpen && settings && (
         <SettingsDialog settings={settings} patchSettings={patchSettings} applyFetched={applyFetched} onClose={() => setSettingsOpen(false)} />
+      )}
+
+      {crossTabSearch.isOpen && (
+        <CrossTabSearchDialog
+          search={crossTabSearch}
+          onClose={crossTabSearch.close}
+          onOpenHit={(tabId, memoName) => {
+            onOpenSearchHit(tabId, memoName);
+            crossTabSearch.close();
+          }}
+        />
       )}
     </div>
   );
