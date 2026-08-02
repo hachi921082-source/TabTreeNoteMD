@@ -215,3 +215,38 @@ export interface RecoveryStatus {
    * message instead of the ordinary Finish/Restore choice. */
   anomalous: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §4-§5; mirrors Rust
+// `commands/search.rs`'s command I/O types). Distinct from the in-memo search/replace feature
+// (`editor-save/PLAN.md` §5, `state/useSearch.ts`/`components/Search/SearchPanel.tsx`), which has
+// no backend command of its own.
+// ---------------------------------------------------------------------------
+
+/** `search_query`'s options — mirrors the in-memo search's own option set where applicable to a
+ * global query; the exact set is implementation discretion beyond `spec.md`'s "name+body
+ * substring match at minimum". */
+export interface CrossTabSearchOptions {
+  caseSensitive: boolean;
+  regex: boolean;
+}
+
+export type MatchLocation = "name" | "body" | "both";
+
+export interface SearchHit {
+  tabId: string;
+  tabName: string;
+  memoName: string;
+  matchedIn: MatchLocation;
+}
+
+// ---------------------------------------------------------------------------
+// Link domain (`docs/plans/link/PLAN.md` §2; mirrors Rust `commands/link.rs`'s command I/O types).
+// ---------------------------------------------------------------------------
+
+/** `link_resolve`'s return shape — pure resolution, never opens/navigates anything itself.
+ * `memoName` is `null` for the `memo:TabName/` (tab-only, no memo selected) resolved form. */
+export type ResolvedLink = { kind: "memo"; tabId: string; memoName: string | null } | { kind: "unresolved" };
+
+/** `link_open_external`'s `kind` discriminant (`docs/plans/link/PLAN.md` §2). */
+export type ExternalLinkKind = "url" | "email" | "filePath";
