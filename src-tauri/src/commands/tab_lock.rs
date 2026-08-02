@@ -27,6 +27,7 @@ use crate::model::app_settings::{AppSettings, EolPolicy};
 use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::model::tab_meta::{TabMetaFile, TAB_META_FILE_NAME, TAB_META_SCHEMA_VERSION};
 use crate::model::tree::{MetaTreeNode, NodePath};
+use crate::search::index::SearchIndex;
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::{LockSession, LockSessionStore};
 use crate::store::memo_file_service::{decode_memo_body, detect_eol, encode_for_save, hash_bytes, normalize_to_lf, restore_eol, Eol};
@@ -295,10 +296,11 @@ pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Op
         }
     }
 
-    // Step 11: search index purge — no-op stub (`search-index/PLAN.md` not yet implemented; same
-    // seam convention as `commands/tree.rs`/`commands/editor.rs`, confirmed applicable here by
-    // `designer-lite` during this feature's implementation).
-    touch_search_index_purge_tab(&tab_id);
+    // Step 11: search index purge (`search-index/PLAN.md` §1's lock-purge rule — locking a tab
+    // bulk-purges its entries; confirmed applicable here by `designer-lite` during that feature's
+    // implementation, since this is one in-memory index side-effect among `tab_lock`'s 12 steps,
+    // not a persisted invariant).
+    app.state::<SearchIndex>().purge_tab(&tab_id);
 
     // Step 12: stop this tab's file watcher — no-op today, since no per-tab watcher is wired up
     // anywhere yet in this codebase (`persistence-fs/PLAN.md` §5, see `main.rs`'s own note).
@@ -600,7 +602,7 @@ pub async fn tab_lock_recovery_finish(app: AppHandle, tab_id: String, password: 
         }
     }
 
-    touch_search_index_purge_tab(&tab_id);
+    app.state::<SearchIndex>().purge_tab(&tab_id);
 
     AppResult::ok(TabInfo {
         id: tab_id,
@@ -697,19 +699,6 @@ pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password:
         name: tab_name,
         locked: false,
     })
-}
-
-// ---------------------------------------------------------------------------
-// Search-index integration seam
-// ---------------------------------------------------------------------------
-
-/// Mirrors `commands/tree.rs`/`commands/editor.rs`'s own local `touch_search_index_*` stubs
-/// (`search-index/PLAN.md` not yet implemented) — confirmed applicable to this call site by
-/// `designer-lite` during this feature's implementation, since it is one in-memory index
-/// side-effect among `tab_lock`'s 12 steps, not a persisted invariant.
-fn touch_search_index_purge_tab(_tab_id: &str) {
-    // TODO(search-index): call `SearchIndex::purge_tab(tab_id)` once `search/index.rs` exists
-    // (`search-index/PLAN.md` §2, §4).
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,6 +1217,7 @@ fn apply_session_move_target(
 /// in) — no password prompt needed, session is already live").
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn move_cross_tab_plain_to_session(
+    source_tab_id: &str,
     source_folder: &Path,
     source_tab_name: &str,
     target_tab_id: &str,
@@ -1238,6 +1228,7 @@ pub(crate) fn move_cross_tab_plain_to_session(
     copy: bool,
     registry: &SelfWriteRegistry,
     sessions: &LockSessionStore,
+    search_index: &SearchIndex,
 ) -> AppResult<MemoMoveResult> {
     let mut source_loaded = tree::load_and_reconcile(source_folder);
     let mut nodes_to_move = Vec::new();
@@ -1287,6 +1278,12 @@ pub(crate) fn move_cross_tab_plain_to_session(
             tracing::error!(error = %err, "move_cross_tab_plain_to_session: failed to save source tab metadata");
             return AppResult::err_code(ErrorCode::Unknown, "failed to save source tab metadata");
         }
+        // The moved memo(s) left the plain source tab's index scope for good (not a copy) and
+        // never enter the locked target's (`search-index/PLAN.md` §1: unconditional exclusion, no
+        // session exception).
+        for name in &all_names {
+            search_index.remove(source_tab_id, name);
+        }
     }
 
     let target_snapshot = sessions.with_session(target_tab_id, session_tree_snapshot).unwrap_or_else(empty_locked_snapshot);
@@ -1308,6 +1305,7 @@ pub(crate) fn move_cross_tab_plain_to_session(
 pub(crate) fn move_cross_tab_session_to_plain(
     source_tab_id: &str,
     source_folder: &Path,
+    target_tab_id: &str,
     target_folder: &Path,
     target_tab_name: &str,
     paths: &[NodePath],
@@ -1316,6 +1314,7 @@ pub(crate) fn move_cross_tab_session_to_plain(
     copy: bool,
     registry: &SelfWriteRegistry,
     sessions: &LockSessionStore,
+    search_index: &SearchIndex,
 ) -> AppResult<MemoMoveResult> {
     let Some(gathered) = gather_session_move(sessions, source_tab_id, source_folder, paths) else {
         return AppResult::err_code(ErrorCode::TabLocked, "source tab session ended");
@@ -1347,6 +1346,11 @@ pub(crate) fn move_cross_tab_session_to_plain(
                 tracing::error!(error = %err, "move_cross_tab_session_to_plain: failed to write plaintext memo file");
                 return AppResult::err_code(ErrorCode::Unknown, "failed to move memo file into target tab");
             }
+            // The memo becomes indexable now that it lives in a plain (unlocked) tab, regardless
+            // of `copy` — the still-locked source stayed excluded either way, so there is nothing
+            // to remove there (`search-index/PLAN.md` §1).
+            let (decoded, _encoding) = decode_memo_body(plaintext);
+            search_index.upsert(target_tab_id, name, &decoded);
         }
     }
     for (i, node) in nodes_to_move.iter().enumerate() {
@@ -1686,14 +1690,22 @@ mod tests {
         assert!(tree::find_node(&snapshot.nodes, "Ideas").is_none(), "deleting a node deletes its whole subtree");
 
         // ---- cross-tab move: session -> plain, then plain -> a second locked session ----------
+        // Also exercises `search-index/PLAN.md` §1's rule via each function's own
+        // `search_index` parameter: content becomes indexable the moment it lands in a plain
+        // tab, and is removed the moment it leaves one for a locked session.
+        let search_index = SearchIndex::new();
         let plain_dir = tempdir();
-        let move_result = move_cross_tab_session_to_plain("tab-1", &dir, &plain_dir, "Plain Target", &["Shopping list".to_string()], None, 0, false, &registry, &sessions);
+        let move_result = move_cross_tab_session_to_plain("tab-1", &dir, "plain-tab", &plain_dir, "Plain Target", &["Shopping list".to_string()], None, 0, false, &registry, &sessions, &search_index);
         let AppResult::Ok(move_result) = move_result else { panic!("expected Ok") };
         assert!(tree::find_node(&move_result.source.nodes, "Shopping list").is_none());
         let target_snapshot = move_result.target.expect("target snapshot present");
         assert!(tree::find_node(&target_snapshot.nodes, "Shopping list").is_some());
         let plaintext_bytes = std::fs::read(plain_dir.join("Shopping list.md")).unwrap();
         assert_eq!(plaintext_bytes, b"milk\neggs\nbread");
+        assert!(
+            search_index.snapshot().iter().any(|e| e.tab_id == "plain-tab" && e.memo_name == "Shopping list" && e.plaintext.contains("milk")),
+            "moving out of a locked session into a plain tab must index the memo"
+        );
 
         // Second locked tab, its own independent session.
         let second_dir = tempdir();
@@ -1709,12 +1721,16 @@ mod tests {
                 key: second_key_bytes,
             },
         );
-        let move_back = move_cross_tab_plain_to_session(&plain_dir, "Plain Target", "tab-2", &second_dir, &["Shopping list".to_string()], None, 0, false, &registry, &sessions);
+        let move_back = move_cross_tab_plain_to_session("plain-tab", &plain_dir, "Plain Target", "tab-2", &second_dir, &["Shopping list".to_string()], None, 0, false, &registry, &sessions, &search_index);
         let AppResult::Ok(move_back) = move_back else { panic!("expected Ok") };
         assert!(tree::find_node(&move_back.source.nodes, "Shopping list").is_none());
         assert!(!plain_dir.join("Shopping list.md").exists());
         let second_snapshot = move_back.target.expect("target snapshot present");
         assert!(tree::find_node(&second_snapshot.nodes, "Shopping list").is_some());
+        assert!(
+            !search_index.snapshot().iter().any(|e| e.tab_id == "plain-tab"),
+            "moving out of a plain tab into a locked session must remove the memo from the index"
+        );
 
         // The moved memo is now encrypted under `tab-2`'s own key/token — decrypt it directly to
         // confirm content survived two round trips (session -> plaintext -> a different session).
