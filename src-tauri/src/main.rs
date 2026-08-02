@@ -5,22 +5,25 @@
 // session commands), the session-only window always-on-top toggle
 // (tab-management/PLAN.md §4.1), the tree/memo domain (memo-tree/PLAN.md,
 // including tab-lock/PLAN.md's locked-active-session branch),
-// `editor_load`/`editor_save` (editor-save/PLAN.md, ditto), and
-// window-operation/PLAN.md's app-shell integrations: second-instance
-// prevention (§5, `tauri_plugin_single_instance`, registered first),
-// auto-launch-to-tray (§4, `tauri_plugin_autostart` + `commands::autostart`),
-// and the tray icon (§4, built in `.setup()`). One foundational primitive
-// built here for a future feature to call — the folder watcher itself
-// (`watch::watcher`/`watch::conflict`, not yet instantiated for any tab
-// folder) — is intentionally not yet referenced; it is consumed once the
-// watcher is actually wired up (`persistence-fs/PLAN.md` §5, still
-// outstanding). Remove this allow once that call site exists.
+// `editor_load`/`editor_save` (editor-save/PLAN.md, ditto),
+// `search_query`/the cross-tab full-text index (search-index/PLAN.md, built
+// at startup below and patched incrementally by the tree/editor/tab-lock
+// commands), and window-operation/PLAN.md's app-shell integrations:
+// second-instance prevention (§5, `tauri_plugin_single_instance`, registered
+// first), auto-launch-to-tray (§4, `tauri_plugin_autostart` +
+// `commands::autostart`), and the tray icon (§4, built in `.setup()`). One
+// foundational primitive built here for a future feature to call — the
+// folder watcher itself (`watch::watcher`/`watch::conflict`, not yet
+// instantiated for any tab folder) — is intentionally not yet referenced; it
+// is consumed once the watcher is actually wired up (`persistence-fs/PLAN.md`
+// §5, still outstanding). Remove this allow once that call site exists.
 #![allow(dead_code)]
 
 mod commands;
 mod crypto;
 mod fs;
 mod model;
+mod search;
 mod settings;
 mod store;
 mod util;
@@ -31,6 +34,7 @@ use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 
 use fs::self_write_registry::SelfWriteRegistry;
+use search::index::SearchIndex;
 use settings::app_settings_store::AppSettingsStore;
 use store::lock_session_store::LockSessionStore;
 use watch::active_memo::ActiveMemoTracker;
@@ -74,7 +78,21 @@ fn main() {
         .manage(AppSettingsStore::new())
         .manage(ActiveMemoTracker::new())
         .manage(LockSessionStore::new())
+        .manage(SearchIndex::new())
         .setup(|app| {
+            // Cross-tab full-text search index build (`search-index/PLAN.md` §1 "Built at
+            // startup"): scans every registered, currently-unlocked tab's direct-child `.md`
+            // files once, up front. No unlock session can be active yet at this point in
+            // startup, so there is nothing to special-case for the locked-with-session
+            // exclusion rule here beyond the plain `locked` check `rebuild_all` already applies.
+            {
+                let store = app.state::<AppSettingsStore>();
+                let registry = app.state::<SelfWriteRegistry>();
+                let index = app.state::<SearchIndex>();
+                let (settings, _outcome) = store.get(&registry);
+                index.rebuild_all(&settings);
+            }
+
             // Tray icon: left-/double-click restores the window
             // (`docs/plans/window-operation/PLAN.md` §4), handled directly in Rust rather than a
             // round-trip event, per `project-architecture/PLAN.md` §5's "only add events actually
@@ -136,6 +154,8 @@ fn main() {
             commands::editor::editor_load,
             commands::editor::editor_save,
             commands::editor::editor_close,
+            commands::search::search_query,
+            commands::link::link_resolve,
             commands::link::link_open_external,
         ])
         .run(tauri::generate_context!())
