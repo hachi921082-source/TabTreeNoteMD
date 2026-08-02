@@ -20,6 +20,7 @@ use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::model::app_settings::EolPolicy;
 use crate::model::result::{AppResult, ErrorCode};
 use crate::model::tree::NodePath;
+use crate::search::index::SearchIndex;
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::LockSessionStore;
 use crate::store::memo_file_service::{decode_memo_body, detect_eol, encode_for_save, hash_bytes, normalize_to_lf, restore_eol, Encoding, Eol};
@@ -152,6 +153,7 @@ pub fn editor_save(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
 ) -> AppResult<SaveResult> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -221,9 +223,9 @@ pub fn editor_save(
         return AppResult::err_code(ErrorCode::Unknown, "failed to save memo file");
     }
 
-    // Step 6 (seam): patch the full-text index for this memo (`search-index/PLAN.md`, not yet
-    // implemented).
-    touch_search_index_upsert(&tab_id, &path, &restored);
+    // Step 6: patch the full-text index for this memo (`search-index/PLAN.md` §1's in-app update
+    // path) with the just-saved content.
+    search_index.upsert(&tab_id, &path, &restored);
 
     // Step 7: hash of the just-written bytes.
     let new_hash = hash_bytes(&bytes_to_write);
@@ -233,20 +235,6 @@ pub fn editor_save(
     // `resolve_tab_access`'s `TabAccess::Session` branch and `tab_lock::session_editor_save`.
 
     AppResult::ok(SaveResult { hash: new_hash })
-}
-
-// ---------------------------------------------------------------------------
-// Search-index integration seam (`editor-save/PLAN.md` §2 step 6)
-// ---------------------------------------------------------------------------
-
-/// Mirrors `commands/tree.rs`'s own local `touch_search_index_upsert`/`_remove` stub pair
-/// (kept local to each module rather than shared, matching this codebase's existing per-module
-/// seam convention) — `editor_save` is the one call site that always has the real saved
-/// plaintext on hand, so unlike `commands/tree.rs`'s `memo_rename`/`memo_move` call sites, no
-/// placeholder `""` is involved here.
-fn touch_search_index_upsert(_tab_id: &str, _memo_name: &str, _plaintext: &str) {
-    // TODO(search-index): call `SearchIndex::upsert(tab_id, memo_name, plaintext)` once
-    // `search/index.rs` exists (`search-index/PLAN.md` §2, §4).
 }
 
 #[cfg(test)]
