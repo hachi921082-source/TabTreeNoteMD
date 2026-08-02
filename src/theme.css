@@ -1,0 +1,121 @@
+/* Light/dark theme (`docs/plans/appearance-theme/PLAN.md` §1/§2, `docs/spec.md` §2.5): two CSS
+ * custom-property sets, one per `data-theme` value on the root `<html>` element. Every themeable
+ * chrome/editor color in this app is expressed as one of these variables so `App.tsx`'s theme
+ * switch is a single attribute toggle — no re-render/remount, no per-component work.
+ *
+ * The bare `:root { ... }` block below duplicates the light values as a safe default for the
+ * brief window before `state/useAppearance.ts` applies `AppSettings.theme` on first load (avoids
+ * a flash of unstyled/mismatched colors); `:root[data-theme="light"]` still restates them
+ * explicitly (rather than relying on the bare fallback alone) so the two themes read as a
+ * symmetric, self-contained pair per the plan.
+ *
+ * `--ui-font-scale` (`AppSettings.uiFontScale`, `[spec §3.4]`) and the `appearance.*`-backed
+ * overrides (`--ttn-accent`, `--ttn-ui-font-family`, `--ttn-tree-row-line-height`) are declared
+ * here with built-in defaults and reassigned inline on `document.documentElement.style` by
+ * `state/useAppearance.ts` — inline style wins the cascade over these bare `:root` declarations,
+ * so JS only ever needs to set the handful of properties the user actually customized. These are
+ * theme-independent (same across light/dark) since they are not part of the light/dark palette
+ * itself.
+ *
+ * Deliberately NOT here: the editor body's font size. That is driven independently by
+ * `editorDefaults.fontSize`/per-memo override through `editor/textCommands.ts`'s
+ * `EditorView.theme({ "&": { fontSize: ... } })`, a fixed-px CodeMirror theme extension with no
+ * custom-property indirection at all — structurally unable to be affected by `--ui-font-scale`
+ * even by accident (`docs/plans/appearance-theme/PLAN.md` §2's explicit structural-separation
+ * requirement).
+ */
+
+:root {
+  --ui-font-scale: 1;
+  --ttn-ui-font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  --ttn-tree-row-line-height: 1.3;
+
+  --ttn-bg: #ffffff;
+  --ttn-bg-chrome: #e8e8e8;
+  --ttn-bg-muted: #f5f5f5;
+  --ttn-bg-hover-chrome: #dcdcdc;
+  --ttn-bg-hover-surface: #f0f0f0;
+  --ttn-bg-selected: #dbe9fb;
+  --ttn-bg-code: #f0f0f0;
+
+  --ttn-fg: #1a1a1a;
+  --ttn-fg-muted: #666666;
+  --ttn-fg-subtle: #999999;
+  --ttn-fg-on-accent: #ffffff;
+
+  --ttn-border: #d0d0d0;
+  --ttn-border-strong: #b0b0b0;
+
+  --ttn-accent: #4a90d9;
+  --ttn-accent-bg: #cfe0f5;
+  --ttn-accent-bg-hover: #bcd3ee;
+
+  --ttn-danger: #c0392b;
+  --ttn-danger-bg: #fdecea;
+  --ttn-danger-border: #f5c6cb;
+
+  --ttn-overlay: rgba(0, 0, 0, 0.35);
+  --ttn-shadow: rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="light"] {
+  --ttn-bg: #ffffff;
+  --ttn-bg-chrome: #e8e8e8;
+  --ttn-bg-muted: #f5f5f5;
+  --ttn-bg-hover-chrome: #dcdcdc;
+  --ttn-bg-hover-surface: #f0f0f0;
+  --ttn-bg-selected: #dbe9fb;
+  --ttn-bg-code: #f0f0f0;
+
+  --ttn-fg: #1a1a1a;
+  --ttn-fg-muted: #666666;
+  --ttn-fg-subtle: #999999;
+  --ttn-fg-on-accent: #ffffff;
+
+  --ttn-border: #d0d0d0;
+  --ttn-border-strong: #b0b0b0;
+
+  --ttn-accent: #4a90d9;
+  --ttn-accent-bg: #cfe0f5;
+  --ttn-accent-bg-hover: #bcd3ee;
+
+  --ttn-danger: #c0392b;
+  --ttn-danger-bg: #fdecea;
+  --ttn-danger-border: #f5c6cb;
+
+  --ttn-overlay: rgba(0, 0, 0, 0.35);
+  --ttn-shadow: rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="dark"] {
+  --ttn-bg: #1e1e1e;
+  --ttn-bg-chrome: #2a2a2a;
+  --ttn-bg-muted: #262626;
+  --ttn-bg-hover-chrome: #3a3a3a;
+  --ttn-bg-hover-surface: #333333;
+  --ttn-bg-selected: #2c4a6e;
+  --ttn-bg-code: #2b2b2b;
+
+  --ttn-fg: #e4e4e4;
+  --ttn-fg-muted: #a8a8a8;
+  --ttn-fg-subtle: #808080;
+  --ttn-fg-on-accent: #ffffff;
+
+  --ttn-border: #444444;
+  --ttn-border-strong: #5a5a5a;
+
+  --ttn-accent: #4a90d9;
+  --ttn-accent-bg: #2c4a6e;
+  --ttn-accent-bg-hover: #35578a;
+
+  --ttn-danger: #e57373;
+  --ttn-danger-bg: #4a2c2c;
+  --ttn-danger-border: #6b3a3a;
+
+  --ttn-overlay: rgba(0, 0, 0, 0.55);
+  --ttn-shadow: rgba(0, 0, 0, 0.5);
+}
