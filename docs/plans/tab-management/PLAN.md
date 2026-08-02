@@ -1,12 +1,14 @@
 # PLAN: Tab Management
 
-> Status: implemented (backend commands + `TabBar` frontend), except the 📌 always-on-top toggle button
-> (spec resolved, see §4 below and "Open Items"; not yet implemented) and the "Lock tab" context-menu action (deferred to
-> `tab-lock/PLAN.md`'s own implementation pass). Depends on `project-architecture/PLAN.md` (naming
-> conventions) and `persistence-fs/PLAN.md` (atomic write, settings store, name validation). Tab Lock
-> operations (`tab_lock`/`tab_unlock`/`tab_end_session`) are specified separately in
+> Status: implemented (backend commands + `TabBar` frontend, including the 📌 always-on-top toggle
+> button — see §4 and "Open Items"). The "Lock tab"/"Unlock tab"
+> context-menu actions are now implemented too, by `tab-lock/PLAN.md`'s own implementation pass
+> (`TabBar.tsx`) — this file's own scope never included them. Depends on `project-architecture/PLAN.md`
+> (naming conventions) and `persistence-fs/PLAN.md` (atomic write, settings store, name validation). Tab
+> Lock operations (`tab_lock`/`tab_unlock`/`tab_end_session`) are specified separately in
 > `tab-lock/PLAN.md` — this file covers everything else in the tab domain and treats lock state as an
-> opaque flag it reads/displays.
+> opaque flag it reads/displays (except `tab_remove`, which `tab-lock/PLAN.md` §4 also had to touch for
+> its active-session deletion-restriction rule).
 
 Sources: `docs/spec.md` §2.1, §4.1 pt.7; `docs/detailed-spec.md` §4.1, §5.1.
 
@@ -149,11 +151,12 @@ file's commands, which trust the cache for listing purposes only.
     own HTML5 drag-and-drop API on Windows ("Disabling it is required to use HTML5 drag and drop on the
     frontend on Windows"). Implementing tab-bar reordering with pointer events instead of HTML5 DnD
     avoids this conflict entirely.
-  - **"Lock tab" context-menu action is NOT implemented in this file's scope** — it calls a
-    not-yet-implemented `tab_lock` command (`tab-lock/PLAN.md`), so is deferred to that feature's own
-    implementation pass rather than added here as a stub. Locked tabs currently only expose "Open tab
-    location" in the context menu; "Rename"/"Remove tab" are shown but disabled per §2's rejection
-    rules.
+  - **"Lock tab"/"Unlock tab" context-menu actions were NOT implemented in this file's own
+    implementation pass** — they call `tab_lock`/`tab_unlock` (`tab-lock/PLAN.md`), which didn't exist
+    yet at this pass's time, so were deferred rather than added as stubs. `tab-lock/PLAN.md`'s own
+    implementation pass subsequently added them to `components/TabBar/TabBar.tsx`'s context menu (see
+    that plan's status header); "Rename"/"Remove tab" remain shown but disabled for locked tabs per
+    §2's rejection rules.
   - **📌 "Always-on-top" toggle button** — a single global button (not one per tab), placed in the tab
     bar's toolbar area immediately to the left of the search button (button order left-to-right: pin,
     search, theme toggle — matching the legacy repo's `TabBar.tsx`). Clicking it toggles OS-level
@@ -184,9 +187,9 @@ file's commands, which trust the cache for listing purposes only.
 
 - **📌 "Always-on-top" toggle button** — implemented (see §4): `window_set_always_on_top` Tauri command
   + `TabBar.tsx` toolbar button, using `WebviewWindow::set_always_on_top(bool)` (Tauri v2.11.5).
-- **"Lock tab" context-menu action** — intentionally not added here; `tab-lock/PLAN.md`'s own
-  implementation pass should add it to `components/TabBar/TabBar.tsx`'s context-menu `items` array once
-  `tab_lock`/`tab_unlock` exist.
+- **"Lock tab"/"Unlock tab" context-menu actions** — not added by this file's own implementation pass
+  (intentionally deferred); subsequently added by `tab-lock/PLAN.md`'s own implementation pass to
+  `components/TabBar/TabBar.tsx`'s context-menu `items` array, once `tab_lock`/`tab_unlock` existed.
 - This implementation also introduced two shared, cross-feature UI primitives that did not exist yet at
   planning time but are referenced by `project-architecture/PLAN.md` §2's directory layout /
   `detailed-spec.md` §6.5 / `spec.md` §9.1: `components/dialogs/Dialog.tsx` (the shared non-blocking
