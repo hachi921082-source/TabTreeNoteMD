@@ -4,13 +4,17 @@
 > `markdownSpanParser.ts`, `markdownSanitize.ts`, `checkboxClick.ts`, `decorationCommands.ts`,
 > `toolbarSlots.ts`, `imagePaste.ts`, `links.ts`; `components/Editor/Toolbar/MarkdownToolbar.tsx`;
 > wired into `components/Editor/EditorPane.tsx`), except the parts this plan itself defers to
-> sibling plans that are not yet implemented: `image-handling/PLAN.md` (real image paste-save +
-> rendering — `imagePaste.ts` intercepts pasted images and `markdownDecorations.ts` renders a
-> placeholder widget instead of a broken `<img src>`, both clearly-labeled stubs), `link/PLAN.md`
-> (`memo:` resolution, email/file-path open special-casing), and `table-of-contents/PLAN.md`
-> (heading scan/TOC insert-replace — the toolbar's "Update" slot is a labeled no-op). Layered on
-> top of `editor-save/PLAN.md`'s plain-text editing surface. `eolKeeper.ts` (listed in §2 below) was
-> not created — see Implementation Notes.
+> sibling plans: `link/PLAN.md` (`memo:` resolution, email/file-path open special-casing) and
+> `table-of-contents/PLAN.md` (heading scan/TOC insert-replace — the toolbar's "Update" slot is a
+> labeled no-op) — both not yet implemented. `image-handling/PLAN.md` landed its backend command and
+> real paste-save + insertion-markup flow (`imagePaste.ts` now actually calls `image_save_pasted`
+> and inserts `![alt](path)`), but `markdownDecorations.ts`'s `ImagePlaceholderWidget` still renders
+> a placeholder rather than the real image — real `<img>` rendering and the resize-handle
+> interaction both need a new architectural decision (asset-protocol scope vs. a base64-read IPC
+> command) that spans this plan and `image-handling/PLAN.md` without either specifying it; see
+> `docs/QA.md`'s "Real `<img>` Rendering + Drag-Resize-Handle in Live View" entry. Layered on top of
+> `editor-save/PLAN.md`'s plain-text editing surface. `eolKeeper.ts` (listed in §2 below) was not
+> created — see Implementation Notes.
 
 Sources: `docs/spec.md` §2.8, §4.2, §8; `docs/detailed-spec.md` §4.3, §5.10; `docs/DECISIONS.md`
 "Editor Engine for Markdown Editing," "Markdown Toolbar: Finalized 16-Slot Fixed Grid Layout," "New
