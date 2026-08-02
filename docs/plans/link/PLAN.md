@@ -1,11 +1,59 @@
 # PLAN: Link Functionality
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md`. Rendering
-> of clickable link regions inside the editor is owned by `markdown-editing/PLAN.md`'s decoration
-> layer, which calls into the commands defined here for resolution/opening — this plan owns the
-> resolution logic and the external-open mechanism, not the in-editor click-detection rendering.
+> Status: implemented (`src-tauri/src/commands/link.rs`'s `link_resolve`/`link_open_external`;
+> frontend `src/editor/links.ts`, wired into `markdown-editing/PLAN.md`'s decoration layer
+> (`markdownDecorations.ts`'s `MarkdownDecorationConfig`) and `components/Editor/EditorPane.tsx`).
+> Rendering of clickable link regions inside the editor remains owned by `markdown-editing/PLAN.md`'s
+> decoration layer, which calls into the commands defined here for resolution/opening — this plan
+> owns the resolution logic and the external-open mechanism, not the in-editor click-detection
+> rendering. See "Implementation Notes" below for discretion-point resolutions.
 
 Sources: `docs/spec.md` §2.8, §4.1 pt.8, §4.2; `docs/detailed-spec.md` §4.6, §5.8.
+
+## Implementation Notes (resolutions of this plan's discretion points)
+
+- **`link_open_external`'s actual signature** is `(kind, value, currentTabId: Option<String>)` plus
+  the usual Tauri `State`/`AppHandle` injections — this plan's §2 pseudocode only listed
+  `(kind, value)`. `currentTabId` was added because §2's own next sentence ("relative paths are
+  resolved to absolute using the current tab's folder as base") is otherwise impossible for the
+  backend to do; this is the same category of omission as every command's pseudocode already
+  dropping `AppHandle`/`State` params, not a spec-level ambiguity. `currentTabId` is `Option<String>`
+  (not required) since it's only consulted for a relative `FilePath` — `Url`/`Email` callers (e.g.
+  the pre-existing "Search with Google" action) can omit it.
+- **URL/email normalization**: a bare `www.`-prefixed URL (no scheme) gets `https://` prepended
+  before calling the OS opener (which needs a real scheme); `http://`/`https://`/`ftp://`-prefixed
+  values pass through unchanged. Email targets are opened as `mailto:<value>` (prefixed only if not
+  already present). Exact heuristics, same "implementation discretion" latitude as §3's regexes.
+- **`link_open_external` opener API split**: `Url`/`Email` use `tauri_plugin_opener`'s `open_url`;
+  `FilePath` uses `open_path` — both call the same underlying `open::open` on desktop, but the split
+  keeps each kind's intent explicit or a future mobile-target divergence.
+- **`MarkdownDecorationConfig` (`markdown-editing/PLAN.md`'s decoration-layer config facet) was
+  extended**, not a new parallel config type: `currentTabId`, `confirmBeforeOpen`, `onOpenMemo`
+  (reuses the shared "open memo" path), and `requestExternalConfirm` (an injected async prompt,
+  since the click handler runs inside a CodeMirror `ViewPlugin`, not a React component) were added
+  alongside the pre-existing `openTrigger`/`readOnly`. `links.ts` imports `MarkdownDecorationConfig`
+  as a type-only import from `markdownDecorations.ts` (erased at compile time, so no runtime import
+  cycle despite `markdownDecorations.ts` importing values back from `links.ts`).
+- **Confirm-before-open dialog** reuses the existing shared `ConfirmDialog`/`Dialog` components
+  (already used by tab/memo delete confirmations) rather than a new dialog component — rendered by
+  `EditorPane.tsx`, which owns the Promise-resolver bridge (`requestExternalConfirm`) between the
+  CodeMirror click handler and the React dialog.
+- **`memo:` link "open memo" path**: `App.tsx` gained `openLinkTarget`/`pendingLinkFocus`, a
+  deliberately separate (not merged) copy of the existing `openSearchHit`/`pendingSearchFocus`
+  cross-tab-focus state machine (`search-index/PLAN.md` §5's own integration), since a resolved
+  link's `memoName` can be `null` for the `memo:TabName/` (tab-only) form — a tab switch with
+  nothing to focus, which `openSearchHit`'s non-nullable `memoName` doesn't need to handle.
+- **`link_resolve`'s locked-tab tab-name matching**: a locked tab with no active session is skipped
+  entirely when matching `TabName` by display name (its real name lives only in the encrypted lock
+  blob) — not just when looking up memos inside it — so it is unreachable by any `TabName/...` form,
+  matching `[spec §2.8]`'s "links to locked tabs are always unresolved without an active session."
+  A locked tab *with* a session matches by `LockSession.real_tab_name` instead of
+  `AppSettings.tabs[i].name` (which still holds the 🔒 placeholder while a session is active).
+- **Not committed this pass**: `src-tauri/src/main.rs`, `src-tauri/src/commands/mod.rs`,
+  `src/App.tsx`, and `src/shared/models.ts` each contain this feature's wiring interleaved with an
+  unrelated, already-in-progress `search-index/PLAN.md` session's own uncommitted edits to the same
+  files (present before this session started) — left uncommitted rather than folding the two
+  features' changes together into one commit; see the implementation report for the exact diffs.
 
 ---
 
