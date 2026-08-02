@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { TabInfo } from "../../shared/models";
+import type { AppSettings, AppSettingsPatch, TabInfo } from "../../shared/models";
 import type { UseTabsResult } from "../../state/useTabs";
 import type { UseTabLockResult } from "../../state/useTabLock";
 import { ContextMenu } from "../ContextMenu/ContextMenu";
@@ -42,6 +42,9 @@ export interface TabBarProps {
    * no-op for any other tab. Wired from `App.tsx` since it needs `EditorPane`'s imperative
    * `flushSaveNow` handle. */
   beforeLockTab: (tabId: string) => Promise<void>;
+  /** Needed for the tree-side flip button (`docs/plans/window-operation/PLAN.md` §2). */
+  settings: AppSettings | null;
+  patchSettings: (patch: AppSettingsPatch) => Promise<void>;
 }
 
 type PendingDialog =
@@ -61,7 +64,7 @@ function baseNameOf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-export function TabBar({ tabsState, tabLockState, beforeLockTab }: TabBarProps) {
+export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings }: TabBarProps) {
   const { tabs, activeTabId, selectTab, createTab, registerExistingTab, retryCreateWithName, renameTab, reorderTabs, removeTab, openTabLocation, lastErrorCode, clearLastError } =
     tabsState;
 
@@ -260,6 +263,20 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab }: TabBarProps) 
             onClick={() => void handleToggleAlwaysOnTop()}
           >
             📌
+          </button>
+          {/* Flips which side the tree pane renders on (`docs/plans/window-operation/PLAN.md` §2).
+              The hide/show toggle itself lives on the splitter between the two panes, not here. */}
+          <button
+            type="button"
+            className="ttn-toolbar-btn"
+            title="ツリーの位置を切り替え"
+            aria-label="ツリーの位置を切り替え"
+            onClick={() => {
+              const next = (settings?.window.treeSide ?? "left") === "left" ? "right" : "left";
+              void patchSettings({ window: { treeSide: next } });
+            }}
+          >
+            ⇄
           </button>
         </div>
 
