@@ -3,7 +3,9 @@
   height: 100%;
   overflow-y: auto;
   outline: none;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
+  color: var(--ttn-fg);
+  background: var(--ttn-bg);
   user-select: none;
   display: flex;
   flex-direction: column;
@@ -12,7 +14,7 @@
 .ttn-tree-message {
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: var(--ttn-fg-muted);
   text-align: center;
   padding: 16px;
 }
@@ -42,7 +44,10 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 26px;
+  /* `--ttn-tree-row-line-height` (`AppSettings.appearance.treeRowLineHeight`, default `1.3`) —
+     "basic customization of ... line spacing" (`docs/plans/appearance-theme/PLAN.md` §3). `20px`
+     is the base unit so the default `1.3` reproduces this app's original fixed `26px` row height. */
+  height: calc(20px * var(--ttn-tree-row-line-height));
   padding-right: 8px;
   cursor: pointer;
   border-left: 3px solid transparent;
@@ -50,11 +55,11 @@
 }
 
 .ttn-tree-row:hover {
-  background: #f2f2f2;
+  background: var(--ttn-bg-hover-surface);
 }
 
 .ttn-tree-row-selected {
-  background: #dbe9fb;
+  background: var(--ttn-bg-selected);
 }
 
 .ttn-tree-row-open {
@@ -62,16 +67,16 @@
 }
 
 .ttn-tree-row-drop-before {
-  box-shadow: inset 0 2px 0 0 #4a90d9;
+  box-shadow: inset 0 2px 0 0 var(--ttn-accent);
 }
 
 .ttn-tree-row-drop-after {
-  box-shadow: inset 0 -2px 0 0 #4a90d9;
+  box-shadow: inset 0 -2px 0 0 var(--ttn-accent);
 }
 
 .ttn-tree-row-drop-into {
-  border-left-color: #4a90d9;
-  background: #eaf3fd;
+  border-left-color: var(--ttn-accent);
+  background: var(--ttn-accent-bg);
 }
 
 .ttn-tree-toggle {
@@ -82,8 +87,8 @@
   height: 16px;
   padding: 0;
   cursor: pointer;
-  font-size: 10px;
-  color: #666;
+  font-size: calc(10px * var(--ui-font-scale));
+  color: var(--ttn-fg-muted);
 }
 
 .ttn-tree-toggle-spacer {
@@ -105,13 +110,16 @@
 
 .ttn-tree-edit-lock {
   margin-left: auto;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale));
 }
 
 .ttn-tree-rename-input {
   flex: 1;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   padding: 1px 4px;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
 }
 
 .ttn-tree-error {
@@ -121,10 +129,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  background: #fdecea;
-  color: #c0392b;
+  background: var(--ttn-danger-bg);
+  color: var(--ttn-danger);
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
 }
 
 .ttn-tree-error button {
@@ -143,7 +151,7 @@
 
 .ttn-properties-list dt {
   font-weight: 600;
-  color: #555;
+  color: var(--ttn-fg-muted);
 }
 
 .ttn-properties-list dd {
