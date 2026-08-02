@@ -1,7 +1,18 @@
 # PLAN: Persistence & Filesystem Infrastructure
 
-> Status: planning complete, not yet implemented. Foundational/cross-cutting plan: every other feature
-> plan (`tab-management`, `memo-tree`, `editor-save`, `tab-lock`, etc.) reads and writes through the
+> Status: implemented, except §5's folder watcher (`src-tauri/src/watch/watcher.rs`,
+> `watch/conflict.rs`) is built and unit-tested but not yet *instantiated* against any live,
+> currently-registered tab folder — no command anywhere starts one, so `evt:fs:external-change`/
+> `evt:editor:conflict` are never actually emitted yet (each depending feature's own frontend
+> listener exists as a harmless forward seam in the meantime). Everything else — atomic write
+> (§3), self-write registry (§4), corruption-recovery cascade (§6), OS trash (§9), retry policy
+> (§7), portable app-data layout (§2), name validation (§8) — is implemented and in active use by
+> every other feature plan. This status line was stale for some time after the above was already
+> built; corrected here (`tab-lock/PLAN.md`'s implementation pass, a heavy consumer of nearly all
+> of the above, per its own task's instruction to verify actual `src/` state rather than trust
+> this line) — see `docs/ISSUES.md` git history for the "Several `PLAN.md` `Status` lines say 'not
+> yet implemented'" entry this resolves. Foundational/cross-cutting plan: every other feature plan
+> (`tab-management`, `memo-tree`, `editor-save`, `tab-lock`, etc.) reads and writes through the
 > mechanisms defined here rather than re-deriving them. Read `project-architecture/PLAN.md` first for
 > module layout and naming conventions used below.
 
