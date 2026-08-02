@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { editorClose, editorLoad, editorSave } from "../ipc/editor";
 import type { AppSettings, MemoContent } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
+import { comboFromEvent, resolveShortcuts } from "../shared/shortcuts";
 
 /** `AppSettings.autosave.plainDebounceMs`'s factory default (`model/app_settings.rs`), used
  * until `appSettings` has loaded. */
@@ -165,11 +166,13 @@ export function useEditor(tabId: string | null, memoName: string | null, appSett
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, memoName]);
 
-  // Explicit Ctrl+S (`docs/plans/editor-save/PLAN.md` §6): global, immediate, regardless of
-  // debounce timer state.
+  // Explicit save shortcut, default Ctrl+S (`docs/plans/editor-save/PLAN.md` §6;
+  // `docs/plans/window-operation/PLAN.md` §3's rebindable-shortcut system, action id
+  // "editor.save"): global, immediate, regardless of debounce timer state.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.altKey && (e.key === "s" || e.key === "S")) {
+      const shortcuts = resolveShortcuts(appSettingsRef.current?.shortcuts);
+      if (comboFromEvent(e) === shortcuts["editor.save"]) {
         e.preventDefault();
         void flushSaveNow();
       }
