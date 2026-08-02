@@ -7,6 +7,7 @@ import { useTabs } from "./state/useTabs";
 import { useTree } from "./state/useTree";
 import { useSettings } from "./state/useSettings";
 import { useTabLock } from "./state/useTabLock";
+import { useWindowGeometry } from "./state/useWindowGeometry";
 import { TabBar } from "./components/TabBar/TabBar";
 import { EmptyState } from "./components/TabBar/EmptyState";
 import { TreeView } from "./components/Tree/TreeView";
@@ -20,6 +21,7 @@ function App() {
   const treeState = useTree(tabsState.activeTabId);
   const settingsState = useSettings();
   const tabLockState = useTabLock(tabsState.activeTabId, tabsState.refresh, treeState.refresh);
+  useWindowGeometry(settingsState.settings, settingsState.patch);
 
   const editorRef = useRef<EditorPaneHandle>(null);
 
