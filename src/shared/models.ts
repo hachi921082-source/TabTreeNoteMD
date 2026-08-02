@@ -18,6 +18,10 @@ export interface AppSettings {
   encoding: { defaultSave: "utf-8" };
   eol: { policy: "preserve" | "crlf" | "lf" | "cr" };
   shortcuts: Record<string, string>;
+  /** Additive field, `docs/plans/window-operation/PLAN.md` §4 — "auto-launch to tray on Windows
+   * login" setting. Actual OS registration happens via `ipc/autostart.ts`'s commands whenever
+   * this is toggled from the Settings screen. */
+  autostart: { enabled: boolean };
 }
 
 // `docs/plans/tab-management/PLAN.md` §2 `tab_list` — the tab-bar list
@@ -49,6 +53,9 @@ export interface WindowSettings {
   treeSide: "left" | "right";
   toolbarPosition: { x: number; y: number } | null;
   toolbarOrder: string[];
+  /** `docs/plans/window-operation/PLAN.md` §2's tree-hide toggle, persisted like `treeWidth`/
+   * `treeSide`. */
+  treeCollapsed: boolean;
 }
 
 export interface EditorDefaults {
@@ -78,6 +85,7 @@ export type AppSettingsPatch = {
   encoding?: Partial<{ defaultSave: "utf-8" }>;
   eol?: Partial<{ policy: "preserve" | "crlf" | "lf" | "cr" }>;
   shortcuts?: Record<string, string>;
+  autostart?: Partial<{ enabled: boolean }>;
 };
 
 // ---------------------------------------------------------------------------
