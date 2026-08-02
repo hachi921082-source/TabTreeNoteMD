@@ -3667,6 +3667,7 @@ dependencies = [
  "notify",
  "notify-debouncer-full",
  "rand",
+ "regex",
  "scrypt",
  "serde",
  "serde_json",
