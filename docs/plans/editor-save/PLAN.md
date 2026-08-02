@@ -2,16 +2,19 @@
 
 > Status: implemented (backend commands in `src-tauri/src/commands/editor.rs` +
 > `src-tauri/src/store/memo_file_service.rs`, frontend `components/Editor/`,
-> `components/Search/`, `state/useEditor.ts`, `state/useSearch.ts`, `editor/textCommands.ts`),
-> except the parts this file itself defers to plans that are not yet implemented: the actual
-> encrypt-on-save/decrypt-on-load path for a locked tab's active session (`tab-lock/PLAN.md`),
-> live full-text index patching on save (`search-index/PLAN.md`, currently a marked no-op seam),
-> and `evt:editor:conflict` is never actually emitted yet since `persistence-fs/PLAN.md`'s folder
-> watcher isn't wired up to a running tab folder (the frontend listener exists as a harmless
-> forward seam). The Markdown-specific rendering layer (live view, CodeMirror decoration
-> extension, toolbar, image resize markup) is a **separate** plan, `markdown-editing/PLAN.md`,
-> layered on top of the plain-text editing surface implemented here — not built by this pass.
-> Depends on `project-architecture/PLAN.md` and `persistence-fs/PLAN.md`.
+> `components/Search/`, `state/useEditor.ts`, `state/useSearch.ts`, `editor/textCommands.ts`).
+> The encrypt-on-save/decrypt-on-load path for a locked tab's active session
+> (`tab-lock/PLAN.md`) this file originally deferred is now implemented too — `editor_load`/
+> `editor_save` dispatch to `commands/tab_lock.rs`'s `session_editor_load`/`session_editor_save`
+> via `resolve_tab_access`'s `TabAccess::Session` branch before ever reaching this file's own
+> plain-file path below. Still deferred: live full-text index patching on save
+> (`search-index/PLAN.md`, currently a marked no-op seam), and `evt:editor:conflict` is never
+> actually emitted yet since `persistence-fs/PLAN.md`'s folder watcher isn't wired up to a running
+> tab folder (the frontend listener exists as a harmless forward seam). The Markdown-specific
+> rendering layer (live view, CodeMirror decoration extension, toolbar, image resize markup) is a
+> **separate** plan, `markdown-editing/PLAN.md`, layered on top of the plain-text editing surface
+> implemented here — not built by this pass. Depends on `project-architecture/PLAN.md` and
+> `persistence-fs/PLAN.md`.
 
 Sources: `docs/spec.md` §2.3, §2.6; `docs/detailed-spec.md` §4.3, §5.3, §5.6, §6.4, §7.
 
@@ -65,6 +68,12 @@ Sources: `docs/spec.md` §2.3, §2.6; `docs/detailed-spec.md` §4.3, §5.3, §5.
   commit message for the exact scenarios exercised): load/display, live status bar, debounced
   autosave, immediate Ctrl+S, a real save-time hash conflict correctly surfacing the Esc-disabled
   dialog, "keep mine" overwrite resolution, and per-memo history isolation across a memo switch.
+- Added post-review (found live by `reviewer-lite` while reviewing `tab-lock/PLAN.md`): a new
+  `editor_close(tab_id, path)` command, the missing counterpart to `editor_load`'s
+  `ActiveMemoTracker::set()` that this plan never added a caller for. `state/useEditor.ts` calls
+  it on every switch-away (its load effect's cleanup), so `tab_lock`'s defensive open-memo check
+  (`tab-lock/PLAN.md` §3 step 2) doesn't stay permanently tripped once a memo has ever been
+  opened in a tab.
 
 ---
 
