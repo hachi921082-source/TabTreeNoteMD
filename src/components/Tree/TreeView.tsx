@@ -14,15 +14,19 @@ import type { ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { Dialog } from "../dialogs/Dialog";
 import { PromptDialog } from "../dialogs/PromptDialog";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
+import { PasswordDialog } from "../dialogs/PasswordDialog";
+import { RecoveryDialog } from "../dialogs/RecoveryDialog";
 import { validateNameStrict } from "../../shared/nameSanitize";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { locateNode } from "../../shared/treeOps";
 import type { UseTreeResult } from "../../state/useTree";
-import type { LabelColor, MemoProperties } from "../../shared/models";
+import type { UseTabLockResult } from "../../state/useTabLock";
+import type { LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
 import "./Tree.css";
 
 export interface TreeViewProps {
   tree: UseTreeResult;
+  tabLock: UseTabLockResult;
 }
 
 type PendingDialog =
@@ -30,7 +34,11 @@ type PendingDialog =
   | { kind: "createChild"; parent: string }
   | { kind: "deleteConfirm"; paths: string[] }
   | { kind: "trashFailedConfirm"; paths: string[] }
-  | { kind: "properties"; path: string };
+  | { kind: "properties"; path: string }
+  | { kind: "unlock" }
+  /** Cross-tab drop onto a locked (no-session) tab (`docs/plans/tab-lock/PLAN.md` §5) — shown at
+   * the moment of drop, distinct from `unlock` (which unlocks the currently-displayed tab). */
+  | { kind: "unlockForDrop"; targetTabId: string; paths: string[]; copy: boolean };
 
 interface ContextMenuState {
   x: number;
@@ -55,7 +63,7 @@ const LABEL_CHOICES: { label: string; color: LabelColor }[] = [
   { label: "🟡 黄", color: "yellow" },
 ];
 
-export function TreeView({ tree }: TreeViewProps) {
+export function TreeView({ tree, tabLock }: TreeViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const hoveredTabElRef = useRef<HTMLElement | null>(null);
@@ -72,6 +80,7 @@ export function TreeView({ tree }: TreeViewProps) {
   const [pendingDialog, setPendingDialog] = useState<PendingDialog | null>(null);
   const [properties, setProperties] = useState<MemoProperties | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget>(null);
+  const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | null>(null);
 
   const updateDropTarget = useCallback((next: DropTarget) => {
     dropTargetRef.current = next;
@@ -79,6 +88,21 @@ export function TreeView({ tree }: TreeViewProps) {
   }, []);
 
   const { nodes, loading, locked, recoveryPending, selection, openMemoName, lastErrorCode, clearLastError, activeTabId } = tree;
+
+  // Crash-mid-lock recovery (`docs/plans/tab-lock/CRASH-RECOVERY.md` "Trigger Point"): the moment
+  // `tree_open` reports `recoveryPending: true` for this tab, fetch the per-entry classification
+  // so the recovery dialog can render its Finish/Restore choice.
+  useEffect(() => {
+    setRecoveryStatus(null);
+    if (!recoveryPending || !activeTabId) return;
+    let cancelled = false;
+    void tabLock.fetchRecoveryStatus(activeTabId).then((status) => {
+      if (!cancelled) setRecoveryStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [recoveryPending, activeTabId, tabLock]);
 
   // ---- selection auto-follow: scroll the open/selected row into view -----
   useEffect(() => {
@@ -268,7 +292,18 @@ export function TreeView({ tree }: TreeViewProps) {
           // with source === target, surfacing a meaningless NameDuplicate
           // error.
           if (target.tabId !== activeTabId) {
-            void tree.moveCrossTab(drag.paths, target.tabId, null, Number.MAX_SAFE_INTEGER, e.ctrlKey);
+            const targetTabId = target.tabId;
+            const paths = drag.paths;
+            const copy = e.ctrlKey;
+            void (async () => {
+              const outcome = await tree.moveCrossTab(paths, targetTabId, null, Number.MAX_SAFE_INTEGER, copy);
+              // Dropping onto a locked (no-session) tab (`docs/plans/tab-lock/PLAN.md` §5): show
+              // the password dialog at the moment of drop instead of surfacing the raw
+              // `TAB_LOCKED` error — the source memo is untouched (the move never ran).
+              if (!outcome.ok && outcome.code === "TAB_LOCKED") {
+                setPendingDialog({ kind: "unlockForDrop", targetTabId, paths, copy });
+              }
+            })();
           }
         } else {
           const loc = locateNode(nodes, target.path);
@@ -334,14 +369,57 @@ export function TreeView({ tree }: TreeViewProps) {
     return (
       <div className="ttn-tree ttn-tree-message" ref={containerRef}>
         <p>前回のロック操作が完了しませんでした。復旧処理が必要です。</p>
+        {recoveryStatus && (
+          <RecoveryDialog
+            status={recoveryStatus}
+            busy={tabLock.busy}
+            errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null}
+            onCancel={() => tabLock.clearLastError()}
+            onFinish={(password) => {
+              if (activeTabId) void tabLock.finishRecovery(activeTabId, password);
+            }}
+            onRestore={(password) => {
+              if (activeTabId) void tabLock.restoreRecovery(activeTabId, password);
+            }}
+          />
+        )}
       </div>
     );
   }
 
-  if (locked) {
+  // `docs/plans/tab-lock/PLAN.md` §3 `tab_unlock` step 7: `locked` intentionally stays `true`
+  // even once a session is active — the real (decrypted) tree/name arrive via `nodes`/`tabName`
+  // themselves (`tree_open`'s `session_tree_snapshot` branch, `commands/tab_lock.rs`), not via
+  // `locked` flipping to `false`. Only show the lock placeholder while there's genuinely no
+  // active session for this tab; once one exists, fall through to the normal tree render below.
+  const hasActiveSession = activeTabId ? tabLock.activeSessionRealNames.has(activeTabId) : false;
+
+  if (locked && !hasActiveSession) {
     return (
       <div className="ttn-tree ttn-tree-message" ref={containerRef}>
         <p>🔒 このタブはロックされています</p>
+        <button type="button" onClick={() => setPendingDialog({ kind: "unlock" })}>
+          🔓 ロック解除
+        </button>
+        {pendingDialog?.kind === "unlock" && (
+          <PasswordDialog
+            title="ロック解除"
+            mode="unlock"
+            busy={tabLock.busy}
+            errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null}
+            submitLabel="ロック解除"
+            onCancel={() => {
+              setPendingDialog(null);
+              tabLock.clearLastError();
+            }}
+            onSubmit={async (password) => {
+              tabLock.clearLastError();
+              if (!activeTabId) return;
+              const ok = await tabLock.unlockTab(activeTabId, password);
+              if (ok) setPendingDialog(null);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -499,6 +577,31 @@ export function TreeView({ tree }: TreeViewProps) {
             <p>読み込み中...</p>
           )}
         </Dialog>
+      )}
+
+      {pendingDialog?.kind === "unlockForDrop" && (
+        <PasswordDialog
+          title="ロックされたタブにドロップ"
+          mode="unlock"
+          busy={tabLock.busy}
+          errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null}
+          submitLabel="ロック解除して移動"
+          onCancel={() => {
+            // `docs/plans/tab-lock/PLAN.md` §5: "the drop is aborted — the source memo is
+            // untouched, no partial state" — closing this dialog without submitting leaves
+            // everything exactly as it was before the drop.
+            setPendingDialog(null);
+            tabLock.clearLastError();
+          }}
+          onSubmit={async (password) => {
+            tabLock.clearLastError();
+            const { targetTabId, paths, copy } = pendingDialog;
+            const unlocked = await tabLock.unlockTab(targetTabId, password);
+            if (!unlocked) return; // wrong password: dialog stays open, nothing touched
+            await tree.moveCrossTab(paths, targetTabId, null, Number.MAX_SAFE_INTEGER, copy);
+            setPendingDialog(null);
+          }}
+        />
       )}
     </div>
   );
