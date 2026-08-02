@@ -39,6 +39,9 @@ rand = "0.10.2"
 # Tab lock encryption (tab-lock/PLAN.md, detailed-spec.md §3.4)
 aes-gcm = "0.11.0"
 scrypt = "0.12.0"
+# Base64 encoding for tab-lock's on-disk JSON fields (saltB64/ivB64/tagB64/ciphertextB64,
+# tab-lock/PLAN.md §2)
+base64 = "0.22.1"
 # Shift_JIS fallback decoding for memo bodies (editor-save/PLAN.md)
 encoding_rs = "0.8.35"
 # OS folder-selection dialog for tab create/register-existing (spec.md §2.1,
