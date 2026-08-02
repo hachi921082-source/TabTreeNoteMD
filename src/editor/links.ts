@@ -37,7 +37,13 @@ export function looksLikeEmail(text: string): boolean {
 // Bare-token shapes `@lezer/markdown`'s GFM autolink extension does NOT recognize on its own —
 // `[detailed-spec §5.8]`: "exact regexes are an implementation detail, not a spec-level ambiguity".
 const BARE_MEMO_RE = /\bmemo:[^\s<>()[\]]*/g;
-const FILE_PATH_RE = /\b(?:[a-zA-Z]:[\\/]|\.{1,2}[\\/])[^\s<>()[\]]+/g;
+// The drive-letter branch keeps a `\b` boundary (so e.g. `abcC:\foo` doesn't match mid-word), but
+// the relative-path branch must NOT require one: a leading `.` is a non-word char, so `\b` would
+// only match when the dot is directly touching a preceding word char (no boundary exists after
+// whitespace, punctuation, or line-start) — which is how virtually every real relative path is
+// preceded. The `[\\/]` required immediately after the 1-2 leading dots already prevents this
+// branch from matching ordinary prose (e.g. a sentence-ending `.` followed by a word).
+const FILE_PATH_RE = /\b[a-zA-Z]:[\\/][^\s<>()[\]]+|\.{1,2}[\\/][^\s<>()[\]]+/g;
 
 /** Scans one line of plain text (with `lineFrom` its document offset) for bare `memo:...` tokens.
  * Callers (`markdownDecorations.ts`) are responsible for excluding fenced-code-block lines first
