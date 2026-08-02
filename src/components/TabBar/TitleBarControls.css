@@ -1,0 +1,29 @@
+.ttn-titlebar-controls {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  /* Sits outside the drag region's default behavior implicitly (buttons inside a
+     data-tauri-drag-region ancestor still receive clicks normally, same as the existing
+     "+"/pin buttons in this bar). */
+}
+
+.ttn-titlebar-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 44px;
+  height: 100%;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  color: #333;
+}
+
+.ttn-titlebar-btn:hover {
+  background: #dcdcdc;
+}
+
+.ttn-titlebar-btn-close:hover {
+  background: #e81123;
+  color: #fff;
+}
