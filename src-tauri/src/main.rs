@@ -1,21 +1,20 @@
 // Prevents an additional console window on Windows in release builds, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // This crate wires up `settings_get`/`settings_set` (persistence-fs/PLAN.md),
-// the tab domain (tab-management/PLAN.md, everything except lock
-// operations), the session-only window always-on-top toggle
-// (tab-management/PLAN.md §4.1), the tree/memo domain (memo-tree/PLAN.md),
-// and `editor_load`/`editor_save` (editor-save/PLAN.md). Several
-// foundational primitives built here for OTHER features to call — the
-// folder watcher itself (`watch::watcher`/`watch::conflict`, not yet
-// instantiated for any tab folder) and the `DecryptFailed` `ErrorCode`
-// variant — are intentionally not yet referenced; they are consumed once
+// the tab domain (tab-management/PLAN.md and tab-lock/PLAN.md's lock/unlock/
+// session commands), the session-only window always-on-top toggle
+// (tab-management/PLAN.md §4.1), the tree/memo domain (memo-tree/PLAN.md,
+// including tab-lock/PLAN.md's locked-active-session branch), and
+// `editor_load`/`editor_save` (editor-save/PLAN.md, ditto). One foundational
+// primitive built here for a future feature to call — the folder watcher
+// itself (`watch::watcher`/`watch::conflict`, not yet instantiated for any
+// tab folder) — is intentionally not yet referenced; it is consumed once
 // the watcher is actually wired up (`persistence-fs/PLAN.md` §5, still
-// outstanding) and `tab-lock/PLAN.md` is implemented on top of this
-// foundation (`docs/plans/persistence-fs/PLAN.md` §10 "Cross-References").
-// Remove this allow once those call sites exist.
+// outstanding). Remove this allow once that call site exists.
 #![allow(dead_code)]
 
 mod commands;
+mod crypto;
 mod fs;
 mod model;
 mod settings;
@@ -25,6 +24,7 @@ mod watch;
 
 use fs::self_write_registry::SelfWriteRegistry;
 use settings::app_settings_store::AppSettingsStore;
+use store::lock_session_store::LockSessionStore;
 use watch::active_memo::ActiveMemoTracker;
 
 fn main() {
@@ -49,6 +49,7 @@ fn main() {
         .manage(SelfWriteRegistry::new())
         .manage(AppSettingsStore::new())
         .manage(ActiveMemoTracker::new())
+        .manage(LockSessionStore::new())
         .invoke_handler(tauri::generate_handler![
             commands::settings::settings_get,
             commands::settings::settings_set,
@@ -59,6 +60,12 @@ fn main() {
             commands::tab::tab_reorder,
             commands::tab::tab_remove,
             commands::tab::tab_open_location,
+            commands::tab_lock::tab_lock,
+            commands::tab_lock::tab_unlock,
+            commands::tab_lock::tab_end_session,
+            commands::tab_lock::tab_lock_recovery_status,
+            commands::tab_lock::tab_lock_recovery_finish,
+            commands::tab_lock::tab_lock_recovery_restore,
             commands::window::window_set_always_on_top,
             commands::tree::tree_open,
             commands::tree::memo_create,
@@ -73,6 +80,7 @@ fn main() {
             commands::tree::memo_get_properties,
             commands::editor::editor_load,
             commands::editor::editor_save,
+            commands::editor::editor_close,
             commands::link::link_open_external,
         ])
         .run(tauri::generate_context!())
