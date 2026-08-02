@@ -31,6 +31,7 @@ import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize"
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { windowSetAlwaysOnTop } from "../../ipc/window";
+import { TitleBarControls } from "./TitleBarControls";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -261,6 +262,11 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab }: TabBarProps) 
             📌
           </button>
         </div>
+
+        {/* Custom minimize/maximize/close controls, replacing the native title bar removed by
+            `decorations: false` (`docs/plans/window-operation/PLAN.md` §1). Always the rightmost
+            group. */}
+        <TitleBarControls />
       </div>
 
       {lastErrorCode && (
