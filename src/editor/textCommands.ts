@@ -112,8 +112,50 @@ export function buildSettingsExtension(settings: ResolvedEditorSettings): Extens
   return exts;
 }
 
+/** Editor-pane background/foreground/accent/border/selection colors
+ * (`docs/plans/appearance-theme/PLAN.md` §1: "each pane" includes the editor surface), wired
+ * entirely through `src/theme.css`'s custom properties rather than any settings value passed in
+ * here — CodeMirror's injected stylesheet resolves `var(--ttn-*)` against the DOM cascade at paint
+ * time, so a `data-theme` attribute flip on `document.documentElement` (`state/useAppearance.ts`)
+ * re-colors the editor immediately with no `Compartment.reconfigure` needed, matching the same
+ * "toggle one attribute, no re-render" mechanism the rest of the app's chrome uses. Deliberately a
+ * fixed, always-included extension (not settings-driven, not compartmentalized) — this is a color
+ * palette, unrelated to `buildSettingsExtension`'s fixed-px `fontSize` theme extension below, which
+ * is the structurally-separate mechanism that keeps `--ui-font-scale` from ever reaching the editor
+ * body font. */
+function editorPaletteExtension(): Extension {
+  return EditorView.theme({
+    "&": {
+      backgroundColor: "var(--ttn-bg)",
+      color: "var(--ttn-fg)",
+    },
+    ".cm-content": {
+      caretColor: "var(--ttn-accent)",
+    },
+    ".cm-cursor, .cm-dropCursor": {
+      borderLeftColor: "var(--ttn-accent)",
+    },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+      backgroundColor: "var(--ttn-accent-bg) !important",
+    },
+    ".cm-gutters": {
+      backgroundColor: "var(--ttn-bg-muted)",
+      color: "var(--ttn-fg-muted)",
+      border: "none",
+      borderRight: "1px solid var(--ttn-border)",
+    },
+    ".cm-activeLine": {
+      backgroundColor: "var(--ttn-bg-hover-surface)",
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "var(--ttn-bg-hover-surface)",
+    },
+  });
+}
+
 export function buildPlainTextExtensions(opts: BuildExtensionsOptions): Extension[] {
   return [
+    editorPaletteExtension(),
     history(),
     highlightActiveLine(),
     highlightActiveLineGutter(),
