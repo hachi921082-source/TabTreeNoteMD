@@ -6,11 +6,13 @@ body,
 }
 
 body {
-  font-family:
-    "Segoe UI",
-    system-ui,
-    -apple-system,
-    sans-serif;
+  /* `--ttn-ui-font-family` (`docs/plans/appearance-theme/PLAN.md` §3's "UI font family"
+     customization, `state/useAppearance.ts`) — deliberately not applied inside the CodeMirror
+     editor surface, which sets its own font stack independent of UI chrome
+     (`editor/textCommands.ts`). */
+  font-family: var(--ttn-ui-font-family);
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
 }
 
 .app-shell {
