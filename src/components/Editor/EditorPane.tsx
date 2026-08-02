@@ -13,11 +13,12 @@ import { EditorView } from "@codemirror/view";
 import { useEditor } from "../../state/useEditor";
 import { useSearch } from "../../state/useSearch";
 import { memoGetProperties } from "../../ipc/tree";
-import type { AppSettings, AppSettingsPatch, EditorDefaults, MemoEditorSettings, MemoProperties } from "../../shared/models";
+import type { AppSettings, AppSettingsPatch, EditorDefaults, ExternalLinkKind, MemoEditorSettings, MemoProperties } from "../../shared/models";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { ContextMenu } from "../ContextMenu/ContextMenu";
 import type { ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { Dialog } from "../dialogs/Dialog";
+import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { SearchPanel } from "../Search/SearchPanel";
 import { ConflictDialog } from "./ConflictDialog";
 import { MarkdownToolbar } from "./Toolbar/MarkdownToolbar";
@@ -79,6 +80,10 @@ export interface EditorPaneProps {
   /** `state/useSettings.ts`'s generic patch — used by `MarkdownToolbar` to persist
    * `AppSettings.window.toolbarPosition`/`toolbarOrder` (`docs/plans/markdown-editing/PLAN.md` §4). */
   patchSettings: (patch: AppSettingsPatch) => Promise<void>;
+  /** `memo:` link click target (`docs/plans/link/PLAN.md` §5) — reuses `App.tsx`'s shared "open
+   * memo" path (same one `TabBar`'s cross-tab search-result click uses). `memoName: null` for the
+   * `memo:TabName/` (tab-only) resolved form. */
+  onOpenMemoLink: (tabId: string, memoName: string | null) => void;
 }
 
 /** Imperative handle so `App.tsx` can force-flush the currently-open memo's pending save and
@@ -91,7 +96,7 @@ export interface EditorPaneHandle {
 }
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
-  { tabId, memoName, appSettings, memoEditorOverride, setEditorOverride, patchSettings },
+  { tabId, memoName, appSettings, memoEditorOverride, setEditorOverride, patchSettings, onOpenMemoLink },
   ref,
 ) {
   const ed = useEditor(tabId, memoName, appSettings);
@@ -131,9 +136,35 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedViewMode]);
 
+  // External-link confirm dialog (`docs/plans/link/PLAN.md` §2, §4): gated by
+  // `AppSettings.links.confirmBeforeOpen`, shown only when a URL/email/file-path link is clicked
+  // while that setting is on. The click happens deep inside a CodeMirror `ViewPlugin`
+  // (`markdownDecorations.ts`), not a React event handler, so `requestExternalConfirm` bridges
+  // that with a Promise whose resolver is stashed until the dialog closes.
+  const [pendingExternalLink, setPendingExternalLink] = useState<{ kind: ExternalLinkKind; value: string } | null>(null);
+  const externalConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const requestExternalConfirm = useCallback((kind: ExternalLinkKind, value: string): Promise<boolean> => {
+    return new Promise<boolean>((resolve) => {
+      externalConfirmResolveRef.current = resolve;
+      setPendingExternalLink({ kind, value });
+    });
+  }, []);
+  const settleExternalConfirm = (confirmed: boolean) => {
+    externalConfirmResolveRef.current?.(confirmed);
+    externalConfirmResolveRef.current = null;
+    setPendingExternalLink(null);
+  };
+
   const markdownConfig = useMemo<MarkdownDecorationConfig>(
-    () => ({ openTrigger: appSettings?.links.openTrigger ?? "singleClick", readOnly }),
-    [appSettings, readOnly],
+    () => ({
+      openTrigger: appSettings?.links.openTrigger ?? "singleClick",
+      readOnly,
+      currentTabId: tabId,
+      confirmBeforeOpen: appSettings?.links.confirmBeforeOpen ?? false,
+      onOpenMemo: onOpenMemoLink,
+      requestExternalConfirm,
+    }),
+    [appSettings, readOnly, tabId, onOpenMemoLink, requestExternalConfirm],
   );
 
   // Refs so the debounced scroll listener / view-teardown flush always see the latest identity
@@ -427,6 +458,16 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           kind={ed.conflict}
           onKeepMine={() => void ed.resolveConflictKeepMine()}
           onReloadFromDisk={() => void ed.resolveConflictReloadFromDisk()}
+        />
+      )}
+
+      {pendingExternalLink && (
+        <ConfirmDialog
+          title="外部リンクを開く"
+          message={`次のリンクを開きます。よろしいですか？ — ${pendingExternalLink.value}`}
+          confirmLabel="開く"
+          onConfirm={() => settleExternalConfirm(true)}
+          onCancel={() => settleExternalConfirm(false)}
         />
       )}
 
