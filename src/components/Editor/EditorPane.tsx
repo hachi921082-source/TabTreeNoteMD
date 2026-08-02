@@ -7,7 +7,7 @@
 // (Convert/Check/Search-with-Google/Properties, shared component per `[spec §9.1 item 2]`), the
 // in-memo search panel, the conflict-resolution dialog, the floating Markdown toolbar
 // (`components/Editor/Toolbar/MarkdownToolbar.tsx`), and the live/source runtime toggle.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useEditor } from "../../state/useEditor";
@@ -81,8 +81,21 @@ export interface EditorPaneProps {
   patchSettings: (patch: AppSettingsPatch) => Promise<void>;
 }
 
-export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, setEditorOverride, patchSettings }: EditorPaneProps) {
+/** Imperative handle so `App.tsx` can force-flush the currently-open memo's pending save and
+ * await its completion before an operation that must not race with it — currently only
+ * `tab-lock/PLAN.md` §3 `tab_lock` step 2's "force a save-confirm (auto-save-and-close) before
+ * calling this command", when the tab being locked is the active tab with an open memo. Distinct
+ * from `useEditor`'s own switch-away flush (fire-and-forget, not awaitable from outside). */
+export interface EditorPaneHandle {
+  flushSaveNow: () => Promise<void>;
+}
+
+export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
+  { tabId, memoName, appSettings, memoEditorOverride, setEditorOverride, patchSettings },
+  ref,
+) {
   const ed = useEditor(tabId, memoName, appSettings);
+  useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow }));
   const search = useSearch();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -451,4 +464,4 @@ export function EditorPane({ tabId, memoName, appSettings, memoEditorOverride, s
       )}
     </div>
   );
-}
+});
