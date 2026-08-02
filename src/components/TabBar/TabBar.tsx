@@ -3,12 +3,12 @@
 // shared context menu, keyboard-shortcut tab switching, OS folder
 // drag-and-drop registration, and the "+" create-tab entry point.
 //
+// "Lock tab" / "Unlock tab" ARE implemented here (`docs/plans/tab-lock/PLAN.md` §3) — the
+// context-menu entry point `tab-management/PLAN.md` itself deferred to this plan.
+//
 // NOT implemented here (deliberately out of scope for this pass):
 // - Mouse-wheel tab switching — removed from v1 scope entirely
 //   (`docs/DECISIONS.md` "Mouse-Wheel Tab Switching: Removed from v1 Scope").
-// - "Lock tab" context-menu action — belongs to `tab-lock/PLAN.md`
-//   (out of scope for `tab-management/PLAN.md`), which owns adding it once
-//   `tab_lock`/`tab_unlock` exist.
 //
 // The 📌 "always-on-top" toggle button IS implemented here: a single global
 // button (not per-tab), leftmost in the tab bar's toolbar area (order:
@@ -22,9 +22,11 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { TabInfo } from "../../shared/models";
 import type { UseTabsResult } from "../../state/useTabs";
+import type { UseTabLockResult } from "../../state/useTabLock";
 import { ContextMenu } from "../ContextMenu/ContextMenu";
 import { PromptDialog } from "../dialogs/PromptDialog";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
+import { PasswordDialog } from "../dialogs/PasswordDialog";
 import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { errorMessageFor } from "../../shared/errorMessages";
@@ -33,12 +35,20 @@ import "./TabBar.css";
 
 export interface TabBarProps {
   tabsState: UseTabsResult;
+  tabLockState: UseTabLockResult;
+  /** Called before locking `tabId`, only when it's the currently-active tab with an open memo —
+   * flushes and closes that memo first (`docs/plans/tab-lock/PLAN.md` §3 `tab_lock` step 2). A
+   * no-op for any other tab. Wired from `App.tsx` since it needs `EditorPane`'s imperative
+   * `flushSaveNow` handle. */
+  beforeLockTab: (tabId: string) => Promise<void>;
 }
 
 type PendingDialog =
   | { kind: "rename"; tab: TabInfo }
   | { kind: "remove"; tab: TabInfo }
-  | { kind: "duplicateName"; path: string; suggestedName: string };
+  | { kind: "duplicateName"; path: string; suggestedName: string }
+  | { kind: "lockSetup"; tab: TabInfo }
+  | { kind: "unlock"; tab: TabInfo };
 
 interface ContextMenuState {
   tabId: string;
@@ -50,7 +60,7 @@ function baseNameOf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-export function TabBar({ tabsState }: TabBarProps) {
+export function TabBar({ tabsState, tabLockState, beforeLockTab }: TabBarProps) {
   const { tabs, activeTabId, selectTab, createTab, registerExistingTab, retryCreateWithName, renameTab, reorderTabs, removeTab, openTabLocation, lastErrorCode, clearLastError } =
     tabsState;
 
@@ -201,29 +211,37 @@ export function TabBar({ tabsState }: TabBarProps) {
         // Each tab's own onContextMenu stops propagation before this fires.
         onContextMenu={(e) => e.preventDefault()}
       >
-        {orderedTabs.map((tab) => (
-          <div
-            key={tab.id}
-            className={`ttn-tab${tab.id === activeTabId ? " ttn-tab-active" : ""}${tab.locked ? " ttn-tab-locked" : ""}`}
-            // Cross-tab memo DND drop-target identification
-            // (`docs/plans/memo-tree/PLAN.md` §4) — `components/Tree/TreeView.tsx`
-            // hit-tests for this attribute via `elementFromPoint`/`closest`
-            // rather than this component needing to know anything about the
-            // tree/DND itself.
-            data-ttn-tab-id={tab.id}
-            onMouseDown={handleMouseDownOnTab(tab.id)}
-            onMouseEnter={handleMouseEnterTab(tab.id)}
-            onClick={() => selectTab(tab.id)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
-            }}
-            title={tab.name}
-          >
-            <span className="ttn-tab-name">{tab.name}</span>
-          </div>
-        ))}
+        {orderedTabs.map((tab) => {
+          // While a `tab-lock/PLAN.md` unlock session is active for this tab, show its real name
+          // in place of the 🔒-placeholder cached in `AppSettings.tabs[i].name`
+          // (`docs/DECISIONS.md` "Tab-Lock Placeholder Display Name", `tab-lock/PLAN.md` §3
+          // `tab_unlock` step 7).
+          const sessionRealName = tabLockState.activeSessionRealNames.get(tab.id);
+          const displayName = sessionRealName ?? tab.name;
+          return (
+            <div
+              key={tab.id}
+              className={`ttn-tab${tab.id === activeTabId ? " ttn-tab-active" : ""}${tab.locked ? " ttn-tab-locked" : ""}`}
+              // Cross-tab memo DND drop-target identification
+              // (`docs/plans/memo-tree/PLAN.md` §4) — `components/Tree/TreeView.tsx`
+              // hit-tests for this attribute via `elementFromPoint`/`closest`
+              // rather than this component needing to know anything about the
+              // tree/DND itself.
+              data-ttn-tab-id={tab.id}
+              onMouseDown={handleMouseDownOnTab(tab.id)}
+              onMouseEnter={handleMouseEnterTab(tab.id)}
+              onClick={() => selectTab(tab.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
+              }}
+              title={displayName}
+            >
+              <span className="ttn-tab-name">{displayName}</span>
+            </div>
+          );
+        })}
         <button type="button" className="ttn-tab-create" title="新しいタブを作成" onClick={() => void handleCreateTab()}>
           ＋
         </button>
@@ -262,7 +280,22 @@ export function TabBar({ tabsState }: TabBarProps) {
           items={[
             { label: "名前を変更", disabled: contextTab.locked, onSelect: () => setPendingDialog({ kind: "rename", tab: contextTab }) },
             { label: "タブの場所を開く", onSelect: () => void openTabLocation(contextTab.id) },
-            { label: "タブを削除", disabled: contextTab.locked, danger: true, onSelect: () => setPendingDialog({ kind: "remove", tab: contextTab }) },
+            contextTab.locked
+              ? {
+                  label: "ロック解除",
+                  disabled: tabLockState.activeSessionRealNames.has(contextTab.id),
+                  onSelect: () => setPendingDialog({ kind: "unlock", tab: contextTab }),
+                }
+              : { label: "タブをロック", onSelect: () => setPendingDialog({ kind: "lockSetup", tab: contextTab }) },
+            {
+              label: "タブを削除",
+              // `docs/plans/tab-lock/PLAN.md` §4: locked-with-no-session rejects; an active
+              // session lifts the restriction (the backend re-checks this regardless; disabling
+              // it here is just the matching UI affordance).
+              disabled: contextTab.locked && !tabLockState.activeSessionRealNames.has(contextTab.id),
+              danger: true,
+              onSelect: () => setPendingDialog({ kind: "remove", tab: contextTab }),
+            },
           ]}
         />
       )}
@@ -307,6 +340,48 @@ export function TabBar({ tabsState }: TabBarProps) {
             else if (result.code === "NAME_DUPLICATE") {
               setPendingDialog({ kind: "duplicateName", path: result.path ?? pendingDialog.path, suggestedName: value });
             }
+          }}
+        />
+      )}
+
+      {pendingDialog?.kind === "lockSetup" && (
+        <PasswordDialog
+          title={`「${pendingDialog.tab.name}」をロック`}
+          mode="setup"
+          busy={tabLockState.busy}
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
+          submitLabel="ロック"
+          onCancel={() => {
+            setPendingDialog(null);
+            tabLockState.clearLastError();
+          }}
+          onSubmit={async (password, hint) => {
+            tabLockState.clearLastError();
+            const tabId = pendingDialog.tab.id;
+            // `docs/plans/tab-lock/PLAN.md` §3 `tab_lock` step 2: force-save-and-close this tab's
+            // open memo first, if it's the active tab. No-op for any other tab.
+            await beforeLockTab(tabId);
+            const ok = await tabLockState.lockTab(tabId, password, hint);
+            if (ok) setPendingDialog(null);
+          }}
+        />
+      )}
+
+      {pendingDialog?.kind === "unlock" && (
+        <PasswordDialog
+          title={`「${pendingDialog.tab.name}」のロック解除`}
+          mode="unlock"
+          busy={tabLockState.busy}
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
+          submitLabel="ロック解除"
+          onCancel={() => {
+            setPendingDialog(null);
+            tabLockState.clearLastError();
+          }}
+          onSubmit={async (password) => {
+            tabLockState.clearLastError();
+            const ok = await tabLockState.unlockTab(pendingDialog.tab.id, password);
+            if (ok) setPendingDialog(null);
           }}
         />
       )}
