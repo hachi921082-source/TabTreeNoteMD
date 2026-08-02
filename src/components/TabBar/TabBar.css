@@ -7,8 +7,8 @@
   display: flex;
   align-items: stretch;
   height: 36px;
-  background: #e8e8e8;
-  border-bottom: 1px solid #cfcfcf;
+  background: var(--ttn-bg-chrome);
+  border-bottom: 1px solid var(--ttn-border);
   overflow-x: auto;
   user-select: none;
 }
@@ -17,8 +17,8 @@
   display: flex;
   align-items: center;
   padding: 0 14px;
-  border-right: 1px solid #cfcfcf;
-  font-size: 13px;
+  border-right: 1px solid var(--ttn-border);
+  font-size: calc(13px * var(--ui-font-scale));
   white-space: nowrap;
   cursor: pointer;
   max-width: 220px;
@@ -32,11 +32,11 @@
 }
 
 .ttn-tab:hover {
-  background: #dcdcdc;
+  background: var(--ttn-bg-hover-chrome);
 }
 
 .ttn-tab-active {
-  background: #ffffff;
+  background: var(--ttn-bg);
   font-weight: 600;
 }
 
@@ -48,8 +48,8 @@
    `components/Tree/TreeView.tsx` while a tree-row drag is over this tab
    (`docs/plans/memo-tree/PLAN.md` §4). */
 .ttn-tab-drop-target {
-  background: #cfe0f5;
-  outline: 2px dashed #4a90d9;
+  background: var(--ttn-accent-bg);
+  outline: 2px dashed var(--ttn-accent);
   outline-offset: -2px;
 }
 
@@ -58,13 +58,13 @@
   border: none;
   background: transparent;
   width: 36px;
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-font-scale));
   cursor: pointer;
   flex: none;
 }
 
 .ttn-tab-create:hover {
-  background: #dcdcdc;
+  background: var(--ttn-bg-hover-chrome);
 }
 
 .ttn-tab-bar-toolbar {
@@ -80,30 +80,30 @@
   background: transparent;
   width: 36px;
   height: 100%;
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale));
   cursor: pointer;
   flex: none;
 }
 
 .ttn-toolbar-btn:hover {
-  background: #dcdcdc;
+  background: var(--ttn-bg-hover-chrome);
 }
 
 .ttn-toolbar-btn-active {
-  background: #cfe0f5;
+  background: var(--ttn-accent-bg);
 }
 
 .ttn-toolbar-btn-active:hover {
-  background: #bcd3ee;
+  background: var(--ttn-accent-bg-hover);
 }
 
 .ttn-tab-bar-error {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fdecea;
-  color: #611a15;
-  font-size: 12px;
+  background: var(--ttn-danger-bg);
+  color: var(--ttn-danger);
+  font-size: calc(12px * var(--ui-font-scale));
   padding: 4px 10px;
 }
 
@@ -112,5 +112,5 @@
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
 }
