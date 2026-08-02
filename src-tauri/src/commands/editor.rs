@@ -13,13 +13,15 @@
 use tauri::{AppHandle, State};
 
 use crate::commands::emit_settings_recovery_event;
-use crate::commands::tree::{find_node, load_and_reconcile, resolve_tab};
+use crate::commands::tab_lock::{self, TabAccess};
+use crate::commands::tree::{find_node, load_and_reconcile};
 use crate::fs::atomic_write::atomic_write;
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::model::app_settings::EolPolicy;
 use crate::model::result::{AppResult, ErrorCode};
 use crate::model::tree::NodePath;
 use crate::settings::app_settings_store::AppSettingsStore;
+use crate::store::lock_session_store::LockSessionStore;
 use crate::store::memo_file_service::{decode_memo_body, detect_eol, encode_for_save, hash_bytes, normalize_to_lf, restore_eol, Encoding, Eol};
 use crate::watch::active_memo::{ActiveMemoKey, ActiveMemoTracker};
 
@@ -61,12 +63,20 @@ pub fn editor_load(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     active_memo: State<ActiveMemoTracker>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<MemoContent> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
-    let (folder, _tab_name) = match resolve_tab(&settings, &tab_id) {
+
+    let access = match tab_lock::resolve_tab_access(&settings, &sessions, &tab_id) {
         Ok(v) => v,
         Err(e) => return AppResult::err(e),
+    };
+    let folder = match access {
+        TabAccess::Session { tab_id, folder } => {
+            return tab_lock::session_editor_load(&sessions, &active_memo, &folder, &tab_id, &path);
+        }
+        TabAccess::Plain { folder, .. } => folder,
     };
 
     let loaded = load_and_reconcile(&folder);
@@ -106,9 +116,32 @@ pub fn editor_load(
 }
 
 // ---------------------------------------------------------------------------
+// editor_close
+// ---------------------------------------------------------------------------
+
+/// Clears `watch::active_memo::ActiveMemoTracker`'s tracked slot for `(tab_id, path)`, if it's
+/// still the one currently tracked — the counterpart `editor_load` never had: without this,
+/// nothing ever calls `ActiveMemoTracker::clear()`, so `tab_lock`'s step-2 defensive check
+/// (`docs/plans/tab-lock/PLAN.md` §3, `commands/tab_lock.rs`) stays permanently tripped once any
+/// memo in a tab has ever been opened, even long after it was properly saved and closed. Called
+/// by the frontend on every real "memo closed" transition (`state/useEditor.ts`'s switch-away
+/// cleanup), and explicitly awaited by `App.tsx`'s `beforeLockTab` right before `tab_lock` is
+/// invoked so that call is guaranteed to see a cleared tracker rather than racing a React effect.
+/// No-op (not an error) if this tab is locked-with-session — the session path's own
+/// `session_editor_load` sets the tracker the same way, and closing that memo is just as real a
+/// transition, so this command intentionally doesn't need to resolve `TabAccess` at all: it only
+/// ever touches the tracker, never any file.
+#[tauri::command]
+pub fn editor_close(tab_id: String, path: NodePath, active_memo: State<ActiveMemoTracker>) -> AppResult<()> {
+    active_memo.clear_if(&tab_id, &path);
+    AppResult::ok(())
+}
+
+// ---------------------------------------------------------------------------
 // editor_save
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn editor_save(
     app: AppHandle,
@@ -118,12 +151,20 @@ pub fn editor_save(
     expected_hash: String,
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
 ) -> AppResult<SaveResult> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
-    let (folder, _tab_name) = match resolve_tab(&settings, &tab_id) {
+
+    let access = match tab_lock::resolve_tab_access(&settings, &sessions, &tab_id) {
         Ok(v) => v,
         Err(e) => return AppResult::err(e),
+    };
+    let folder = match access {
+        TabAccess::Session { tab_id, folder } => {
+            return tab_lock::session_editor_save(&sessions, &registry, &folder, &tab_id, &path, &text, &expected_hash, settings.eol.policy, &settings.encoding.default_save);
+        }
+        TabAccess::Plain { folder, .. } => folder,
     };
 
     let loaded = load_and_reconcile(&folder);
@@ -187,10 +228,9 @@ pub fn editor_save(
     // Step 7: hash of the just-written bytes.
     let new_hash = hash_bytes(&bytes_to_write);
 
-    // Step 8 (`tab-lock/PLAN.md`, not yet implemented): a locked tab's active-session
-    // encrypt-before-write path would branch here instead of steps 3-5's plain path.
-    // `resolve_tab` above already rejects every locked tab with `TabLocked` today (there is
-    // never an active session yet), so no separate branch is needed until that plan lands.
+    // Step 8 (`tab-lock/PLAN.md`): a locked tab's active-session encrypt-before-write path is
+    // handled entirely above, before this plain-file path is ever reached — see
+    // `resolve_tab_access`'s `TabAccess::Session` branch and `tab_lock::session_editor_save`.
 
     AppResult::ok(SaveResult { hash: new_hash })
 }
@@ -212,6 +252,7 @@ fn touch_search_index_upsert(_tab_id: &str, _memo_name: &str, _plaintext: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::tree::resolve_tab;
     use crate::fs::self_write_registry::SelfWriteRegistry;
     use crate::model::app_settings::{AppSettings, TabSettingsEntry};
     use crate::model::tree::{MemoEditorSettings, MetaTreeNode};
