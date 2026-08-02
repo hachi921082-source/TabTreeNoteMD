@@ -3620,6 +3620,7 @@ name = "tabtreenotemd"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "base64 0.22.1",
  "encoding_rs",
  "notify",
  "notify-debouncer-full",
