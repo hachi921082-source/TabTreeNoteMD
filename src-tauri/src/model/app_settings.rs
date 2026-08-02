@@ -17,6 +17,13 @@ pub struct AppSettings {
     pub window: WindowSettings,
     pub theme: Theme,
     pub ui_font_scale: f64,
+    /// Additive field, `docs/plans/appearance-theme/PLAN.md` §3: "basic customization of
+    /// colors/fonts/line spacing" layered on top of the active theme's CSS variables. Not
+    /// enumerated in `[spec §3.4]`'s schema example. `#[serde(default)]` so a settings.json
+    /// written before this field existed still parses cleanly instead of falling into the
+    /// corruption-recovery cascade (`settings::app_settings_store`'s `try_parse`).
+    #[serde(default)]
+    pub appearance: AppearanceSettings,
     pub last_opened: Option<LastOpened>,
     pub editor_defaults: EditorDefaults,
     pub autosave: AutosaveSettings,
@@ -93,6 +100,38 @@ pub struct ToolbarPosition {
 pub enum Theme {
     Light,
     Dark,
+}
+
+/// "Basic customization of colors/fonts/line spacing" layered on top of the active theme's CSS
+/// variables (`docs/plans/appearance-theme/PLAN.md` §2/§3) — not a full theme-authoring system,
+/// just a handful of concrete overridable values. `None` for the two optional fields means "use
+/// the active theme's default" (no override applied).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceSettings {
+    /// CSS color string (e.g. `"#4a90d9"`), overrides the theme's default accent/highlight color.
+    /// `None` = use the active theme's default accent.
+    #[serde(default)]
+    pub accent_color: Option<String>,
+    /// CSS `font-family` value for UI chrome text (tab bar, tree, menus, status bar, dialogs) —
+    /// same scope as `ui_font_scale`, not the editor body font. `None` = use the built-in default
+    /// UI font stack.
+    #[serde(default)]
+    pub ui_font_family: Option<String>,
+    /// Multiplier applied to the tree row's base line height (`docs/plans/appearance-theme/PLAN.md`
+    /// §2's "line spacing" customization point). `1.0` is a reasonably compact default; the app's
+    /// pre-existing fixed 26px row height corresponds to roughly `1.3`.
+    pub tree_row_line_height: f64,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        AppearanceSettings {
+            accent_color: None,
+            ui_font_family: None,
+            tree_row_line_height: 1.3,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,6 +237,7 @@ impl Default for AppSettings {
             },
             theme: Theme::Light,
             ui_font_scale: 1.0,
+            appearance: AppearanceSettings::default(),
             last_opened: None,
             editor_defaults: EditorDefaults {
                 wrap: WrapMode::Window,
