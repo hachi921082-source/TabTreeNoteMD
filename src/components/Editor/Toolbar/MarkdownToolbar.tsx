@@ -20,7 +20,6 @@ import {
   clearFontSizeSpan,
   codeBlockCommand,
   headingCommand,
-  imageInsertStub,
   italicCommand,
   linkCommand,
   listCommand,
@@ -28,9 +27,11 @@ import {
   strikethroughCommand,
   tableCommand,
 } from "../../../editor/decorationCommands";
+import { insertImageViaFilePicker } from "../../../editor/imagePaste";
 import { redoCommand, undoCommand } from "../../../editor/textCommands";
 import { tocUpdateCommand } from "../../../editor/tocGenerator";
 import type { AppSettings, AppSettingsPatch } from "../../../shared/models";
+import type { ErrorCode } from "../../../shared/result";
 import "./MarkdownToolbar.css";
 
 /** Toolbar's Color button — closed 5-choice enum, adopted verbatim from the legacy toolbar
@@ -70,6 +71,13 @@ export interface MarkdownToolbarProps {
   /** `true` while the memo is read-only (edit-locked, or a conflict dialog is open) — disables
    * every content-mutating slot except the rearrange toggle itself (`[spec §2.2]`). */
   readOnly: boolean;
+  /** Tab the currently-open memo belongs to — the "Image insert" slot's file-picker save target
+   * (`docs/plans/image-handling/PLAN.md` §6). `null` only when no tab is open at all. */
+  tabId: string | null;
+  /** Surfaces an `image_save_pasted` failure via the shared non-blocking error banner
+   * (`docs/plans/image-handling/PLAN.md` §6 step 4) — wired to `state/useEditor.ts`'s
+   * `reportError` by the caller. */
+  onImageError: (code: ErrorCode) => void;
 }
 
 /** Exposes the 16 grid actions for external (keyboard-shortcut) invocation
@@ -82,7 +90,7 @@ export interface MarkdownToolbarHandle {
 }
 
 export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbarProps>(function MarkdownToolbar(
-  { getView, appSettings, patchSettings, liveViewEnabled, onToggleLiveView, readOnly },
+  { getView, appSettings, patchSettings, liveViewEnabled, onToggleLiveView, readOnly, tabId, onImageError },
   ref,
 ) {
   const persistedOrderKey = JSON.stringify(appSettings?.window.toolbarOrder ?? null);
@@ -210,7 +218,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         runOnView(tableCommand);
         break;
       case "image":
-        runOnView(imageInsertStub);
+        runOnView((v) => insertImageViaFilePicker(v, tabId, onImageError));
         break;
     }
   };
