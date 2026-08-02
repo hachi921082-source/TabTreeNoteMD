@@ -1,9 +1,27 @@
 # PLAN: Search & Full-Text Index
 
-> Status: planning complete, not yet implemented. Depends on `project-architecture/PLAN.md` and
-> `persistence-fs/PLAN.md` (the watcher pipeline feeds this index's external-change update path).
-> In-memo search/replace is specified in `editor-save/PLAN.md` §5 (it's a frontend/CodeMirror concern
-> with no backend index involvement) — this file covers only the cross-tab full-text index.
+> Status: implemented, except the external-change update path (§1's "path 2"): `persistence-fs
+> /PLAN.md` §5's file-watcher pipeline is itself not yet instantiated for any live tab folder (see
+> that plan's own status line and `main.rs`'s note), so there is currently no call site that would
+> invoke `SearchIndex::upsert`/`remove` from a watcher-detected external change — that plan's own
+> text already describes the eventual integration as "calls the same patch function," so no
+> separate adapter is needed here once it exists. Everything else — startup build (§1 "path 1"'s
+> in-app triggers), the `IndexEntry`/`SearchIndex` data structure and patch operations (§2), the
+> fence-aware plaintext conversion (§3), `search_query` (§4), and the cross-tab search UI (§5) — is
+> implemented. Also wired beyond the plan's own explicit list: the three locked-session cross-tab
+> move combinations in `commands/tab_lock.rs` (`move_cross_tab_plain_to_session`/
+> `_session_to_plain`/`_session_to_session`), since those are part of `memo_move`'s full behavior
+> surface and directly implicate this plan's "locked tabs are unconditionally excluded" invariant.
+> Not wired: `tab_register_existing` (a newly-registered folder's pre-existing `.md` files aren't
+> indexed until the next app restart) and `tab_remove` (a removed tab's entries aren't purged from
+> memory, though `search_query` defensively filters them out of results either way) — neither
+> command is in this plan's own §1 trigger list or the implementing task's explicit scope; flagged
+> here for a future pass rather than decided unilaterally.
+>
+> Depends on `project-architecture/PLAN.md` and `persistence-fs/PLAN.md` (the watcher pipeline
+> feeds this index's external-change update path). In-memo search/replace is specified in
+> `editor-save/PLAN.md` §5 (it's a frontend/CodeMirror concern with no backend index involvement)
+> — this file covers only the cross-tab full-text index.
 
 Sources: `docs/spec.md` §2.4, §4.1 pt.6, §4.2, §6; `docs/detailed-spec.md` §4.4, §5.4.
 
