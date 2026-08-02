@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Deserializer};
 
 use super::app_settings::{
-    AppSettings, AutosaveSettings, AutostartSettings, EditorDefaults, EncodingSettings, EolPolicy, EolSettings,
-    LastOpened, LinkSettings, OpenTrigger, TabSettingsEntry, Theme, ToolbarPosition, TreeSide, ViewMode,
-    WindowSettings, WrapMode,
+    AppSettings, AppearanceSettings, AutosaveSettings, AutostartSettings, EditorDefaults, EncodingSettings,
+    EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, TabSettingsEntry, Theme, ToolbarPosition,
+    TreeSide, ViewMode, WindowSettings, WrapMode,
 };
 
 /// Distinguishes "field absent from patch" (outer `None`, leave unchanged)
@@ -41,6 +41,8 @@ pub struct AppSettingsPatch {
     pub theme: Option<Theme>,
     #[serde(default)]
     pub ui_font_scale: Option<f64>,
+    #[serde(default)]
+    pub appearance: Option<AppearanceSettingsPatch>,
     #[serde(default, deserialize_with = "double_option")]
     pub last_opened: Option<Option<LastOpened>>,
     #[serde(default)]
@@ -89,6 +91,19 @@ pub struct WindowSettingsPatch {
 pub struct AutostartSettingsPatch {
     #[serde(default)]
     pub enabled: Option<bool>,
+}
+
+/// `accent_color`/`ui_font_family` are nullable ("use theme default" vs "leave unchanged"), same
+/// `double_option` treatment as `last_opened`/`toolbar_position` above.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceSettingsPatch {
+    #[serde(default, deserialize_with = "double_option")]
+    pub accent_color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub ui_font_family: Option<Option<String>>,
+    #[serde(default)]
+    pub tree_row_line_height: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -161,6 +176,9 @@ impl AppSettingsPatch {
         if let Some(v) = self.ui_font_scale {
             current.ui_font_scale = v;
         }
+        if let Some(appearance_patch) = self.appearance {
+            appearance_patch.apply_to(&mut current.appearance);
+        }
         if let Some(v) = self.last_opened {
             current.last_opened = v;
         }
@@ -227,6 +245,20 @@ impl AutostartSettingsPatch {
     fn apply_to(self, current: &mut AutostartSettings) {
         if let Some(v) = self.enabled {
             current.enabled = v;
+        }
+    }
+}
+
+impl AppearanceSettingsPatch {
+    fn apply_to(self, current: &mut AppearanceSettings) {
+        if let Some(v) = self.accent_color {
+            current.accent_color = v;
+        }
+        if let Some(v) = self.ui_font_family {
+            current.ui_font_family = v;
+        }
+        if let Some(v) = self.tree_row_line_height {
+            current.tree_row_line_height = v;
         }
     }
 }
@@ -332,5 +364,37 @@ mod tests {
         let patch: AppSettingsPatch = serde_json::from_str(r#"{"lastOpened":null}"#).unwrap();
         patch.apply_to(&mut current);
         assert!(current.last_opened.is_none());
+    }
+
+    #[test]
+    fn appearance_patch_merges_per_field_and_null_clears_optional_overrides() {
+        let mut current = AppSettings::default();
+        current.appearance.accent_color = Some("#ff0000".into());
+        current.appearance.tree_row_line_height = 1.3;
+
+        // Setting `uiFontFamily` must not disturb the sibling `accentColor`/`treeRowLineHeight`.
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"appearance":{"uiFontFamily":"Meiryo"}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.appearance.accent_color.as_deref(), Some("#ff0000"));
+        assert_eq!(current.appearance.ui_font_family.as_deref(), Some("Meiryo"));
+        assert_eq!(current.appearance.tree_row_line_height, 1.3);
+
+        // Explicit null on `accentColor` clears the override back to "use theme default".
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"appearance":{"accentColor":null}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert!(current.appearance.accent_color.is_none());
+        assert_eq!(current.appearance.ui_font_family.as_deref(), Some("Meiryo"), "untouched sibling field must survive the merge");
+    }
+
+    #[test]
+    fn missing_appearance_field_in_a_pre_existing_settings_json_falls_back_to_defaults() {
+        // Simulates loading a `settings.json` written before `AppSettings.appearance` existed
+        // (`#[serde(default)]` on that field, `model/app_settings.rs`) — must parse cleanly rather
+        // than falling into `settings::app_settings_store`'s corruption-recovery cascade.
+        let json = serde_json::to_value(AppSettings::default()).unwrap();
+        let mut without_appearance = json.as_object().unwrap().clone();
+        without_appearance.remove("appearance");
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(without_appearance)).unwrap();
+        assert_eq!(parsed.appearance, AppearanceSettings::default());
     }
 }
