@@ -1,0 +1,128 @@
+/* Extra class-selector specificity (`.ttn-dialog.ttn-settings-dialog`) so this reliably overrides
+   `Dialog.css`'s `.ttn-dialog` min/max-width regardless of CSS module import order. */
+.ttn-dialog.ttn-settings-dialog {
+  min-width: 480px;
+  max-width: 640px;
+  width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ttn-settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #d8d8d8;
+  margin-bottom: 12px;
+}
+
+.ttn-settings-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.ttn-settings-tab:hover {
+  background: #f2f2f2;
+}
+
+.ttn-settings-tab-active {
+  border-bottom-color: #4a90d9;
+  font-weight: 600;
+}
+
+.ttn-settings-body {
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 4px;
+}
+
+.ttn-settings-section {
+  margin-bottom: 18px;
+}
+
+.ttn-settings-section h3 {
+  font-size: 13px;
+  margin: 0 0 8px 0;
+  color: #444;
+}
+
+.ttn-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.ttn-settings-row select,
+.ttn-settings-row input[type="number"] {
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.ttn-settings-row-checkbox {
+  justify-content: flex-start;
+}
+
+.ttn-settings-row-checkbox input {
+  margin: 0;
+}
+
+.ttn-settings-error {
+  color: #c0392b;
+  font-size: 12px;
+  margin: 4px 0 0 0;
+}
+
+.ttn-settings-shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ttn-settings-shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.ttn-settings-shortcut-label {
+  flex: 1;
+}
+
+.ttn-settings-shortcut-combo {
+  min-width: 140px;
+  text-align: center;
+  appearance: none;
+  border: 1px solid #d8d8d8;
+  border-radius: 4px;
+  background: #fafafa;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ttn-settings-shortcut-combo:hover {
+  background: #eef4fb;
+}
+
+.ttn-settings-shortcut-reset {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: #666;
+}
+
+.ttn-settings-shortcut-reset:hover {
+  color: #333;
+}
