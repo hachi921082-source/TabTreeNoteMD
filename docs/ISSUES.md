@@ -79,6 +79,18 @@
   DOMPurify wrapper was left unused in favor of the narrower parser-level filters (and remove the dead
   code if so).
 
+### Toolbar image-insert file input leaks on dialog cancel
+
+- **Found by**: `reviewer-lite`, reviewing `docs/plans/image-handling/PLAN.md`.
+- **Symptom**: `src/editor/imagePaste.ts`'s `insertImageViaFilePicker` creates a hidden
+  `<input type="file">` and only removes it (`document.body.removeChild(input)`) inside the `change`
+  event listener. If the user cancels the native file-picker dialog without choosing a file, `change`
+  never fires, so the element is never removed — permanently orphaned in the DOM.
+- No functional/visible impact; each cancelled toolbar "Image insert" click leaks one hidden node
+  (negligible memory footprint).
+- **Fix**: also remove the input on cancel (e.g. listen for the input's `cancel` event, or a
+  `window focus`/timeout fallback) so cancelling the dialog cleans it up like a successful pick does.
+
 ### Bare `memo:` false-positive auto-link match on ordinary prose
 
 - **Found by**: `reviewer-lite`, reviewing `docs/plans/link/PLAN.md`.
