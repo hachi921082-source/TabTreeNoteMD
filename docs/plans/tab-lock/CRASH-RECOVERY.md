@@ -1,6 +1,15 @@
 # PLAN: Tab Lock — Crash-Mid-Lock Recovery
 
-> Status: planning complete, not yet implemented. Companion to [`PLAN.md`](PLAN.md) (read that file
+> Status: implemented, together with [`PLAN.md`](PLAN.md) as a single unit of work (the marker
+> write/delete calls this file specifies are inline in `PLAN.md` §3's `tab_lock` steps 6-9).
+> Marker read/write/classify/auto-rollback: `src-tauri/src/commands/tab_lock.rs`'s
+> `LockInProgressMarker`/`load_marker`/`write_marker`/`delete_marker`/`classify_entry`/
+> `classify_marker`/`check_marker_on_tree_open`. Trigger point: wired into
+> `src-tauri/src/commands/tree.rs`'s `tree_open` step 0. Finish/Restore: `tab_lock_recovery_finish`/
+> `tab_lock_recovery_restore` commands in `commands/tab_lock.rs`, backed by the shared
+> `derive_and_verify_recovery_key` password-verification helper. Frontend recovery dialog:
+> `src/components/dialogs/RecoveryDialog.tsx`, shown by `src/components/Tree/TreeView.tsx` when
+> `tree_open` reports `recoveryPending: true`. Companion to [`PLAN.md`](PLAN.md) (read that file
 > first) — split into its own file because it is a large, self-contained sub-algorithm only relevant to
 > the crash-recovery path, not to `tab_lock`'s/`tab_unlock`'s ordinary happy-path flow. Elaborates
 > `[detailed-spec §5.9]`'s "Recovery on tab-folder access" subsection and `DECISIONS.md`'s Option-B
@@ -128,6 +137,17 @@ recovery on a later visit to that tab; this is acceptable since nothing is lost 
 deferring the choice, unlike the external-change-conflict dialog's Esc-disabled rationale (which
 protects against silently discarding a choice about live data).
 
+## Implementation Notes
+
+- The "zero entries `renamed`" automatic-rollback branch is folded directly into
+  `check_marker_on_tree_open` (called from `tree_open` step 0) rather than being a separate
+  command — it deletes the marker and returns a `NoMarker` sentinel so `tree_open` falls straight
+  through to its normal reconciliation flow in the same call, with no dialog round-trip.
+- `tab_lock_recovery_finish`/`tab_lock_recovery_restore` both first check whether
+  `.tabtreenote.json` already has a `lock` field (meaning `PLAN.md` §3 step 8 already succeeded
+  before the interruption) rather than trusting the per-entry `renamed`/`not_renamed` counts alone
+  to infer that — see `PLAN.md`'s own "Implementation Notes" for why that distinction matters.
+
 ## Open Items
 
-None. Fully specified and ready for implementation alongside `PLAN.md`.
+None. Fully specified and implemented alongside `PLAN.md`.
