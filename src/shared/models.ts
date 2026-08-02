@@ -250,3 +250,17 @@ export type ResolvedLink = { kind: "memo"; tabId: string; memoName: string | nul
 
 /** `link_open_external`'s `kind` discriminant (`docs/plans/link/PLAN.md` §2). */
 export type ExternalLinkKind = "url" | "email" | "filePath";
+
+// ---------------------------------------------------------------------------
+// Image domain (`docs/plans/image-handling/PLAN.md` §3; mirrors Rust `commands/image.rs`'s
+// command I/O types).
+// ---------------------------------------------------------------------------
+
+/** `image_save_pasted`'s return shape. */
+export interface SavedImage {
+  /** Filename only, relative to the tab folder — the Markdown body always references images
+   * relatively (`[spec §4.2]`). */
+  relativePath: string;
+  width: number;
+  height: number;
+}
