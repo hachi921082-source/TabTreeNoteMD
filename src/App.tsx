@@ -2,7 +2,7 @@
 // `docs/plans/memo-tree/PLAN.md`'s TreeView, `docs/plans/editor-save/PLAN.md`'s EditorPane, and
 // `docs/plans/tab-lock/PLAN.md`'s lock/unlock session state (see
 // docs/plans/project-architecture/PLAN.md).
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTabs } from "./state/useTabs";
 import { useTree } from "./state/useTree";
 import { useSettings } from "./state/useSettings";
@@ -55,6 +55,57 @@ function App() {
 
   const openMemoOverride = treeState.openMemoName ? locateNode(treeState.nodes, treeState.openMemoName)?.node.editor : undefined;
 
+  // Cross-tab search result -> "open memo" (`docs/plans/search-index/PLAN.md` §5): reuses
+  // `treeState.focusOnMemo`, the same "open memo" path a tree click uses. If the hit is in a
+  // different tab, switching tabs re-fetches that tab's tree asynchronously
+  // (`state/useTree.ts`'s own `tabId`-change effect), so `focusOnMemo` can't be called until that
+  // tree has loaded and the target memo actually appears in `flatOrder` — `pendingSearchFocus`
+  // below tracks that and applies it once the newly-active tab's tree catches up. Like
+  // `focusOnMemo` itself, this is a no-op if the memo never becomes visible (e.g. nested under a
+  // collapsed ancestor) — a pre-existing limitation of that shared mechanism, not something this
+  // feature introduces.
+  const [pendingSearchFocus, setPendingSearchFocus] = useState<{ tabId: string; memoName: string } | null>(null);
+  const openSearchHit = useCallback(
+    (tabId: string, memoName: string) => {
+      if (tabId === treeState.activeTabId) {
+        treeState.focusOnMemo(memoName);
+      } else {
+        tabsState.selectTab(tabId);
+        setPendingSearchFocus({ tabId, memoName });
+      }
+    },
+    [tabsState, treeState],
+  );
+  useEffect(() => {
+    if (!pendingSearchFocus || treeState.activeTabId !== pendingSearchFocus.tabId) return;
+    if (!treeState.flatOrder.includes(pendingSearchFocus.memoName)) return;
+    treeState.focusOnMemo(pendingSearchFocus.memoName);
+    setPendingSearchFocus(null);
+  }, [pendingSearchFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
+
+  // `memo:` link click -> "open memo" (`docs/plans/link/PLAN.md` §2, §5): same tab-switch +
+  // `focusOnMemo` mechanism as `openSearchHit` above, kept as its own independent state machine
+  // (not merged into `openSearchHit`) since a resolved link's `memoName` may be `null` for the
+  // `memo:TabName/` (tab-only, no memo selected) form — a tab switch with nothing to focus.
+  const [pendingLinkFocus, setPendingLinkFocus] = useState<{ tabId: string; memoName: string } | null>(null);
+  const openLinkTarget = useCallback(
+    (tabId: string, memoName: string | null) => {
+      if (tabId === treeState.activeTabId) {
+        if (memoName) treeState.focusOnMemo(memoName);
+        return;
+      }
+      tabsState.selectTab(tabId);
+      if (memoName) setPendingLinkFocus({ tabId, memoName });
+    },
+    [tabsState, treeState],
+  );
+  useEffect(() => {
+    if (!pendingLinkFocus || treeState.activeTabId !== pendingLinkFocus.tabId) return;
+    if (!treeState.flatOrder.includes(pendingLinkFocus.memoName)) return;
+    treeState.focusOnMemo(pendingLinkFocus.memoName);
+    setPendingLinkFocus(null);
+  }, [pendingLinkFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
+
   // Tree pane width/side/hide-toggle (`docs/plans/window-operation/PLAN.md` §2). `previewTreeWidth`
   // holds the live value while dragging the splitter; `settingsState.patch` is only called once, on
   // drag release — same "preview locally, persist on release" split already used elsewhere in this
@@ -104,6 +155,7 @@ function App() {
         settings={settingsState.settings}
         patchSettings={settingsState.patch}
         applyFetched={settingsState.applyFetched}
+        onOpenSearchHit={openSearchHit}
       />
       <div className="app-content">
         {!tabsState.loading && tabsState.tabs.length === 0 ? (
@@ -120,6 +172,7 @@ function App() {
               memoEditorOverride={openMemoOverride}
               setEditorOverride={treeState.setEditorOverride}
               patchSettings={settingsState.patch}
+              onOpenMemoLink={openLinkTarget}
             />
             {treeSide === "right" && splitter}
             {treeSide === "right" && treePane}
