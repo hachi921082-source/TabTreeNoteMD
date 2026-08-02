@@ -23,6 +23,15 @@ const PERSIST_DEBOUNCE_MS = 500;
  * (`docs/plans/window-operation/PLAN.md` §2's defensive clamp). */
 const MIN_VISIBLE_MARGIN = 80;
 
+/** Smallest size (physical px) that still keeps the three-pane layout (tree/editor/toolbar)
+ * usable — matches `tauri.conf.json`'s `minWidth`/`minHeight`, which stop the *live* window from
+ * ever being resized below this. This constant instead guards a *persisted* `settings.json` value
+ * that predates that constraint (or was otherwise corrupted) from restoring an unusable window at
+ * startup, with no in-app way to recover since this app's users aren't assumed to edit JSON by
+ * hand (`docs/spec.md`). */
+const MIN_WINDOW_WIDTH = 640;
+const MIN_WINDOW_HEIGHT = 480;
+
 interface Rect {
   x: number;
   y: number;
@@ -30,20 +39,24 @@ interface Rect {
   height: number;
 }
 
-/** Returns `rect`, clamped onto some monitor in `monitors` if it isn't already reachable there. */
+/** Returns `rect`, clamped onto some monitor in `monitors` if it isn't already reachable there,
+ * and with its size floored to `MIN_WINDOW_WIDTH`/`MIN_WINDOW_HEIGHT` (a persisted `settings.json`
+ * below that size — e.g. from before that minimum existed, or otherwise corrupted — would
+ * otherwise keep restoring an unusable window on every launch). */
 function clampToVisibleArea(rect: Rect, monitors: { position: { x: number; y: number }; size: { width: number; height: number } }[]): Rect {
-  if (monitors.length === 0) return rect;
+  const sized: Rect = { ...rect, width: Math.max(rect.width, MIN_WINDOW_WIDTH), height: Math.max(rect.height, MIN_WINDOW_HEIGHT) };
+  if (monitors.length === 0) return sized;
   const reachable = monitors.some((m) => {
-    const overlapLeft = Math.max(rect.x, m.position.x);
-    const overlapTop = Math.max(rect.y, m.position.y);
-    const overlapRight = Math.min(rect.x + rect.width, m.position.x + m.size.width);
-    const overlapBottom = Math.min(rect.y + rect.height, m.position.y + m.size.height);
+    const overlapLeft = Math.max(sized.x, m.position.x);
+    const overlapTop = Math.max(sized.y, m.position.y);
+    const overlapRight = Math.min(sized.x + sized.width, m.position.x + m.size.width);
+    const overlapBottom = Math.min(sized.y + sized.height, m.position.y + m.size.height);
     return overlapRight - overlapLeft >= MIN_VISIBLE_MARGIN && overlapBottom - overlapTop >= MIN_VISIBLE_MARGIN;
   });
-  if (reachable) return rect;
+  if (reachable) return sized;
   const m = monitors[0];
-  const width = Math.min(rect.width, m.size.width);
-  const height = Math.min(rect.height, m.size.height);
+  const width = Math.min(sized.width, m.size.width);
+  const height = Math.min(sized.height, m.size.height);
   return {
     x: m.position.x + Math.max(0, Math.round((m.size.width - width) / 2)),
     y: m.position.y + Math.max(0, Math.round((m.size.height - height) / 2)),
