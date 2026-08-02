@@ -11,6 +11,9 @@ export interface AppSettings {
   window: WindowSettings;
   theme: "light" | "dark";
   uiFontScale: number;
+  /** `docs/plans/appearance-theme/PLAN.md` §3 — "basic customization of colors/fonts/line
+   * spacing" layered on top of the active theme's CSS variables. */
+  appearance: AppearanceSettings;
   lastOpened: { tabId: string; memoName: string } | null;
   editorDefaults: EditorDefaults;
   autosave: { plainDebounceMs: number };
@@ -22,6 +25,17 @@ export interface AppSettings {
    * login" setting. Actual OS registration happens via `ipc/autostart.ts`'s commands whenever
    * this is toggled from the Settings screen. */
   autostart: { enabled: boolean };
+}
+
+/** "Basic customization" values layered on top of the active theme's CSS variables
+ * (`docs/plans/appearance-theme/PLAN.md` §2/§3) — not a full theme-authoring system. `null` for
+ * `accentColor`/`uiFontFamily` means "use the active theme's default". */
+export interface AppearanceSettings {
+  accentColor: string | null;
+  uiFontFamily: string | null;
+  /** Multiplier applied to the tree row's base line height; `1.3` matches the app's pre-existing
+   * fixed row height. */
+  treeRowLineHeight: number;
 }
 
 // `docs/plans/tab-management/PLAN.md` §2 `tab_list` — the tab-bar list
@@ -78,6 +92,7 @@ export type AppSettingsPatch = {
   window?: Partial<WindowSettings>;
   theme?: "light" | "dark";
   uiFontScale?: number;
+  appearance?: Partial<AppearanceSettings>;
   lastOpened?: { tabId: string; memoName: string } | null;
   editorDefaults?: Partial<EditorDefaults>;
   autosave?: Partial<{ plainDebounceMs: number }>;
