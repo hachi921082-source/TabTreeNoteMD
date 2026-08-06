@@ -1160,15 +1160,16 @@ fn cleanup_session_move_source(
 ) -> Result<(), AppErrorPayload> {
     let result = commit_session_mutation(sessions, registry, source_folder, source_tab_id, |_session, tree, file_map| {
         for name in all_names {
-            tree::remove_node(tree, name);
-            file_map.retain(|e| &e.memo_name != name);
             if let Some(token) = tokens.get(name) {
                 let token_path = source_folder.join(token);
                 registry.register(&token_path);
                 if let Err(err) = with_retry(|| std::fs::remove_file(&token_path)) {
                     tracing::error!(error = %err, "cross-tab move: failed to remove obfuscated source file after move");
+                    return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to remove one or more source memo files"));
                 }
             }
+            tree::remove_node(tree, name);
+            file_map.retain(|e| &e.memo_name != name);
         }
         Ok(())
     });
@@ -1657,6 +1658,56 @@ mod tests {
         // accepted pre-existing limitation this issue explicitly scopes out (only the in-memory
         // tree/file_map and the final lock-blob save need to roll back).
         assert!(!dir.join(&token).exists(), "the physical delete is not expected to be rolled back");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// GH #18: `cleanup_session_move_source` (the "not copy" cross-tab-move cleanup) must, like
+    /// `session_delete_memo` above, delete the physical obfuscated file *before* mutating
+    /// `tree`/`file_map`, and abort (propagating `Err`) without mutating them if that delete
+    /// fails — otherwise a failed delete leaves an orphaned encrypted file on disk that's no
+    /// longer referenced by the tab's tree/fileMap while the move still reports success. The
+    /// token path is made a directory instead of a file so `std::fs::remove_file` deterministically
+    /// fails on it (also within `with_retry`'s retry loop).
+    #[test]
+    fn cleanup_session_move_source_aborts_without_mutating_session_state_when_file_delete_fails() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let token = "tok-diary".to_string();
+        std::fs::create_dir(dir.join(&token)).unwrap();
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: "Private".to_string(),
+                tree: vec![MetaTreeNode::default_for_new_file("Diary".to_string())],
+                file_map: vec![FileMapEntry {
+                    memo_name: "Diary".to_string(),
+                    token: token.clone(),
+                }],
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: [7u8; 32],
+            },
+        );
+
+        let before_tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
+        let before_file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
+
+        let all_names = vec!["Diary".to_string()];
+        let mut tokens = HashMap::new();
+        tokens.insert("Diary".to_string(), token.clone());
+
+        match cleanup_session_move_source(&sessions, &registry, &dir, "tab-1", &all_names, &tokens) {
+            Err(err) => assert_eq!(err.code, ErrorCode::Unknown),
+            Ok(_) => panic!("expected the forced remove_file failure to surface as an error"),
+        }
+
+        let after_tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
+        let after_file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
+        assert_eq!(before_tree, after_tree, "session.tree must be left unchanged when the physical delete fails");
+        assert_eq!(before_file_map, after_file_map, "session.file_map must be left unchanged when the physical delete fails");
+        assert!(dir.join(&token).is_dir(), "the un-deletable token path must still be present");
 
         std::fs::remove_dir_all(&dir).ok();
     }
