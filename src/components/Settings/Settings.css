@@ -9,6 +9,34 @@
   flex-direction: column;
 }
 
+/* Completes the flex-scroll chain for the Shortcuts-heavy General tab (GitHub issue #5):
+   `Dialog.tsx` always wraps `children` in a plain block-level `.ttn-dialog-body` (`Dialog.css`),
+   which sits between this dialog's flex column (`.ttn-dialog.ttn-settings-dialog` above) and
+   `.ttn-settings-body`'s own `flex: 1; overflow-y: auto` below. A block-level parent breaks that
+   chain — `.ttn-settings-body`'s flex sizing has no effect against it, so content just grows past
+   `max-height: 80vh` instead of scrolling. Scoped here (not in the shared `Dialog.css`) rather
+   than making `.ttn-dialog-body` a flex container for every dialog: other dialogs
+   (`ConfirmDialog`, `ConflictDialog`, ...) render plain `<p>` children whose vertical spacing
+   depends on ordinary margin collapsing, which flex items never get — making this the default
+   would visibly widen the gaps between those paragraphs. This selector's 3-class specificity
+   already outweighs `Dialog.css`'s single-class `.ttn-dialog-body` rule regardless of import
+   order, so only `display`/`flex`/`min-height` are overridden here; `margin-bottom: 16px` from
+   `Dialog.css` still applies underneath.
+   `min-height: 0` is the actual fix: without it, a flex item's automatic minimum height is its
+   content's size, so this `flex: 1` item would refuse to shrink below the Shortcuts list's full
+   height even while `.ttn-dialog.ttn-settings-dialog`'s `max-height: 80vh` caps the dialog itself
+   — `min-height: 0` lets it shrink to the space actually left over (title + tabs consumed their
+   natural height), which is what then makes `.ttn-settings-body`'s `overflow-y: auto` kick in
+   instead of the whole dialog just overflowing the window. (`.ttn-settings-body` itself doesn't
+   need its own `min-height: 0` — a flex item with `overflow-y: auto` other than `visible` already
+   gets an automatic minimum size of 0 per the flexbox spec.) */
+.ttn-dialog.ttn-settings-dialog .ttn-dialog-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .ttn-settings-tabs {
   display: flex;
   gap: 4px;
