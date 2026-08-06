@@ -15,3 +15,4 @@
 - #11 `markdown-editing/PLAN.md` described the toolbar's "Update" slot as calling a removed stub — corrected to describe the real `tocGenerator.ts` wiring (PR #33)
 - #14 `Cargo.toml`'s `tauri-plugin-autostart` comment described the abandoned Startup-folder approach — corrected to describe the shipped Registry `HKCU\...\Run` key (PR #34)
 - #16 Toolbar image-insert file input leaked on dialog cancel — `insertImageViaFilePicker` now cleans up on `cancel`/`focus` fallback, not just `change` (PR #35)
+- #19 Bare `memo:` with nothing after the colon matched as a link — `BARE_MEMO_RE` now requires at least one non-whitespace target char (PR #36)
