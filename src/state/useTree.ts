@@ -48,13 +48,20 @@ export interface UseTreeResult {
   /** The memo currently shown in the editor pane, or `null` if none. Tree selection highlight
    * and scroll position auto-follow this (`[spec §2.2]`). */
   openMemoName: string | null;
+  /** One-shot "should the editor pane auto-focus" signal, bumped only by an explicit open (row
+   * click, `focusOnMemo`) and left untouched by arrow-key navigation (`[spec §2.2]`: "After
+   * clicking a row, editor auto-focuses" / "arrow key navigation does not steal editor focus").
+   * `components/Editor/EditorPane.tsx` compares this against the token it last consumed when its
+   * view-(re)creation effect fires, same one-shot-signal pattern as `ed.content.scrollPosition`. */
+  focusEditorToken: number;
 
   handleRowClick: (memoName: string, modifiers: ClickModifiers) => void;
   handleEmptyAreaClick: () => void;
   selectOnly: (memoName: string) => void;
   handleArrowNav: (direction: "up" | "down") => void;
-  /** Programmatically opens a memo (e.g. future `memo:` link navigation) and moves the tree
-   * selection/anchor to follow it. No-op if the memo isn't currently visible in the tree. */
+  /** Programmatically opens a memo (e.g. `memo:` link navigation, cross-tab search result) and
+   * moves the tree selection/anchor to follow it. No-op if the memo isn't currently visible in the
+   * tree. Bumps `focusEditorToken` — it's a deliberate navigation action equivalent to a click. */
   focusOnMemo: (memoName: string) => void;
   /** Closes the currently-open memo without opening another one (`openMemoName` -> `null`).
    * `components/Editor/EditorPane.tsx`'s load effect flushes the outgoing memo's pending save as
@@ -86,6 +93,7 @@ export function useTree(tabId: string | null): UseTreeResult {
   const [lastErrorCode, setLastErrorCode] = useState<ErrorCode | null>(null);
   const [selection, setSelection] = useState<SelectionState>(clearSelection());
   const [openMemoName, setOpenMemoName] = useState<string | null>(null);
+  const [focusEditorToken, setFocusEditorToken] = useState(0);
 
   const flatOrder = useMemo(() => flattenVisible(nodes), [nodes]);
 
@@ -139,7 +147,11 @@ export function useTree(tabId: string | null): UseTreeResult {
       setSelection((current) => applyClick(current, flatOrder, memoName, modifiers));
       // Plain click = single-select + open memo; Ctrl/Shift-click manage a
       // multi-select without changing what's open (`[spec §2.2]`).
-      if (!modifiers.ctrlKey && !modifiers.shiftKey) setOpenMemoName(memoName);
+      if (!modifiers.ctrlKey && !modifiers.shiftKey) {
+        setOpenMemoName(memoName);
+        // Click-open auto-focuses the editor (`[spec §2.2]`, `[spec §9.1 item 3]`).
+        setFocusEditorToken((t) => t + 1);
+      }
     },
     [flatOrder],
   );
@@ -160,6 +172,8 @@ export function useTree(tabId: string | null): UseTreeResult {
       const next = moveSelection(flatOrder, selection.anchor, direction);
       if (next === null) return;
       setSelection({ selected: new Set([next]), anchor: next });
+      // Intentionally does NOT bump `focusEditorToken` — arrow-key nav must not steal focus into
+      // the editor (`[spec §2.2]`).
       setOpenMemoName(next);
     },
     [flatOrder, selection.anchor],
@@ -170,6 +184,7 @@ export function useTree(tabId: string | null): UseTreeResult {
       if (!flatOrder.includes(memoName)) return;
       setSelection({ selected: new Set([memoName]), anchor: memoName });
       setOpenMemoName(memoName);
+      setFocusEditorToken((t) => t + 1);
     },
     [flatOrder],
   );
@@ -332,6 +347,7 @@ export function useTree(tabId: string | null): UseTreeResult {
     flatOrder,
     selection,
     openMemoName,
+    focusEditorToken,
     handleRowClick,
     handleEmptyAreaClick,
     selectOnly,

@@ -170,6 +170,7 @@ function App() {
               ref={editorRef}
               tabId={treeState.activeTabId}
               memoName={treeState.openMemoName}
+              focusEditorToken={treeState.focusEditorToken}
               appSettings={settingsState.settings}
               memoEditorOverride={openMemoOverride}
               setEditorOverride={treeState.setEditorOverride}
