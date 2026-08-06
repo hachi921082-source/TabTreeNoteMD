@@ -298,6 +298,17 @@ replacement and to hidden-syntax-marker/visible-text length mismatches — this 
 of the same defect zone, not a separate open design question, but is still worth the explicit
 regression check in item 5 above.
 
+**Item 4, re-verified (GitHub issue #22)**: an earlier review pass couldn't re-confirm this scenario
+because the CDP port was broken at the time (GitHub issue #21) and the OS-level input-simulation
+fallback used for that pass was unreliable for Shift-modifier combos — an inconclusive result, not a
+found defect. Once issue #21 fixed the CDP port, this was re-verified with real CDP-driven interaction:
+a selection spanning a `**bold**` decoration's boundary, read via CodeMirror's own
+`state.selection`/`.cm-selectionBackground` rendering (not native `window.getSelection()`, which
+doesn't reflect CodeMirror's internal selection while the editor is unfocused — an early false-negative
+in the process, corrected by switching to the right signal), survived 6 rapid live/source toggles
+unchanged, including landing mid-cycle in source view where the decoration DOM is actually torn down.
+Document content was byte-identical throughout.
+
 ## Open Items
 
 None. Engine choice, sanitization allowlist, and toggle behavior are all confirmed in `spec.md`/
