@@ -42,19 +42,6 @@ use watch::active_memo::ActiveMemoTracker;
 fn main() {
     tracing_subscriber::fmt::init();
 
-    // `docs/plans/project-architecture/PLAN.md` §7: expose WebView2 remote
-    // debugging in debug builds so reviewer-lite can drive the app via CDP.
-    // Not a product feature; has no effect in release builds.
-    #[cfg(debug_assertions)]
-    {
-        // SAFETY: called once, single-threaded, before any other thread is
-        // spawned (Tauri's async runtime/webview creation happens later in
-        // `tauri::Builder::default().run(...)` below).
-        unsafe {
-            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--remote-debugging-port=9222");
-        }
-    }
-
     tauri::Builder::default()
         // Must be the first plugin registered (`docs/plans/window-operation/PLAN.md` §5): when a
         // second instance is launched, this callback runs inside the FIRST (already-running)
@@ -80,6 +67,43 @@ fn main() {
         .manage(LockSessionStore::new())
         .manage(SearchIndex::new())
         .setup(|app| {
+            // Main window: created here programmatically rather than via `tauri.conf.json`'s
+            // declarative `app.windows` array (which sets `"create": false` on the "main" entry
+            // for exactly this reason), so debug builds can attach
+            // `--remote-debugging-port=9222` via `WebviewWindowBuilder::additional_browser_args`
+            // (`docs/plans/project-architecture/PLAN.md` §7: exposes WebView2's CDP port so
+            // reviewer-lite can drive the app). Not a product feature; has no effect in release
+            // builds. The previous approach — setting the
+            // `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` env var before `tauri::Builder` — never
+            // worked: wry always passes an explicit, non-null `additional_browser_arguments`
+            // string to `CoreWebView2EnvironmentOptions`, and WebView2 ignores the env var
+            // whenever that's non-null (see `wry::webview2::create_environment`, wry 0.55.1).
+            // `WebviewWindowBuilder::from_config` reads every other property (title, size,
+            // decorations, starting hidden, ...) straight from that same `tauri.conf.json`
+            // config, so it stays the single source of truth for the window's static shape in
+            // both debug and release builds; only the CDP arg differs between the two.
+            {
+                let window_config = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|w| w.label == "main")
+                    .expect("tauri.conf.json must declare a \"main\" window")
+                    .clone();
+                let builder = tauri::WebviewWindowBuilder::from_config(app, &window_config)?;
+                // Setting `additional_browser_args` at all replaces wry's own default
+                // `additional_browser_arguments` outright (it does not merge), so this
+                // reproduces that default verbatim and only appends the new CDP arg, to avoid
+                // silently losing the mini-menu/PDF-OOUI/SmartScreen suppression and autoplay
+                // policy debug builds would otherwise still get from wry's default.
+                #[cfg(debug_assertions)]
+                let builder = builder.additional_browser_args(
+                    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222",
+                );
+                builder.build()?;
+            }
+
             // Cross-tab full-text search index build (`search-index/PLAN.md` §1 "Built at
             // startup"): scans every registered, currently-unlocked tab's direct-child `.md`
             // files once, up front. No unlock session can be active yet at this point in
