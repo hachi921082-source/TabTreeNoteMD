@@ -126,10 +126,8 @@ must hold for arbitrarily frequent toggling within one editing session (`[detail
 - `toolbarSlots.ts` — the 16-slot action registry (id, Lucide icon, handler) and rearrange-mode state
   machine (see §4).
 - `tocGenerator.ts` — heading scan, slugification, marker detection, insert-or-replace transaction
-  (see §9). **Not created by this pass** — §8 below assigns full ownership of TOC generation to
-  `table-of-contents/PLAN.md`, so building a same-named file here first would just be overwritten;
-  the toolbar's "Update" slot calls a small labeled no-op in `decorationCommands.ts`
-  (`tocUpdateStub`) instead, pending that plan.
+  (see §9). Owned by `table-of-contents/PLAN.md`; the toolbar's "Update" slot in
+  `MarkdownToolbar.tsx` calls this module's `tocUpdateCommand` directly.
 - `imagePaste.ts` — clipboard paste handler; delegates the actual file write to
   `image-handling/PLAN.md`'s `image_save_pasted` command, then inserts the resulting Markdown/HTML at
   the cursor.
