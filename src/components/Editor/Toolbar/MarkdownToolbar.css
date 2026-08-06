@@ -41,6 +41,40 @@
   cursor: pointer;
 }
 
+/* Minimize/restore toggle (GitHub issue #26) — sits right after the view toggle; the view toggle's
+ * own `margin-left: auto` already pushes both of them flush to the header's right edge. */
+.ttn-md-toolbar-minimize-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ttn-fg);
+  cursor: pointer;
+}
+
+.ttn-md-toolbar-minimize-btn:hover:not(:disabled) {
+  background: var(--ttn-bg-chrome);
+  border-color: var(--ttn-border);
+}
+
+.ttn-md-toolbar-minimize-btn:disabled {
+  color: var(--ttn-fg-subtle);
+  cursor: default;
+}
+
+/* Minimized state: only the header renders (the grid isn't in the DOM at all — see
+ * `MarkdownToolbar.tsx`), so the header's own bottom border would otherwise look like a stray line
+ * under nothing. */
+.ttn-md-toolbar-minimized .ttn-md-toolbar-header {
+  border-bottom: none;
+}
+
 .ttn-md-toolbar-grid {
   display: grid;
   grid-template-columns: repeat(8, 1fr);

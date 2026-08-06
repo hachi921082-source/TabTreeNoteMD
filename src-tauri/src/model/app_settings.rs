@@ -70,6 +70,11 @@ pub struct WindowSettings {
     /// same class of window-layout preference.
     #[serde(default)]
     pub tree_collapsed: bool,
+    /// Additive field, GitHub issue #26: whether the floating Markdown toolbar is collapsed to
+    /// header-only (grid hidden, panel snapped to the editor pane's bottom-right corner). Same
+    /// persistence treatment as `tree_collapsed` above.
+    #[serde(default)]
+    pub toolbar_minimized: bool,
 }
 
 /// `docs/plans/window-operation/PLAN.md` §4: launch-to-tray-on-Windows-login setting. The actual
@@ -234,6 +239,7 @@ impl Default for AppSettings {
                 toolbar_position: None,
                 toolbar_order: default_toolbar_order(),
                 tree_collapsed: false,
+                toolbar_minimized: false,
             },
             theme: Theme::Light,
             ui_font_scale: 1.0,

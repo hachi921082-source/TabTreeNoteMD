@@ -70,6 +70,10 @@ export interface WindowSettings {
   /** `docs/plans/window-operation/PLAN.md` §2's tree-hide toggle, persisted like `treeWidth`/
    * `treeSide`. */
   treeCollapsed: boolean;
+  /** GitHub issue #26 — whether the floating Markdown toolbar is collapsed to header-only (grid
+   * hidden, panel snapped to the editor pane's bottom-right corner). Same persistence treatment
+   * as `treeCollapsed` above. */
+  toolbarMinimized: boolean;
 }
 
 export interface EditorDefaults {
