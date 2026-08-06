@@ -14,3 +14,4 @@
 - #20 Bare file-path auto-link click-to-open has no `..`-traversal guard (security-relevant) — `resolve_file_path` now rejects relative targets with a `..` segment or a rooted-but-not-absolute path (e.g. `\Windows\System32\cmd.exe`), mirroring `markdownSanitize.ts`'s `isSafeRelativeImageSrc` (PR #32)
 - #11 `markdown-editing/PLAN.md` described the toolbar's "Update" slot as calling a removed stub — corrected to describe the real `tocGenerator.ts` wiring (PR #33)
 - #14 `Cargo.toml`'s `tauri-plugin-autostart` comment described the abandoned Startup-folder approach — corrected to describe the shipped Registry `HKCU\...\Run` key (PR #34)
+- #16 Toolbar image-insert file input leaked on dialog cancel — `insertImageViaFilePicker` now cleans up on `cancel`/`focus` fallback, not just `change` (PR #35)
