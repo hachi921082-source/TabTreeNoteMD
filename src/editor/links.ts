@@ -36,7 +36,7 @@ export function looksLikeEmail(text: string): boolean {
 
 // Bare-token shapes `@lezer/markdown`'s GFM autolink extension does NOT recognize on its own —
 // `[detailed-spec §5.8]`: "exact regexes are an implementation detail, not a spec-level ambiguity".
-const BARE_MEMO_RE = /\bmemo:[^\s<>()[\]]*/g;
+const BARE_MEMO_RE = /\bmemo:[^\s<>()[\]]+/g;
 // The drive-letter branch keeps a `\b` boundary (so e.g. `abcC:\foo` doesn't match mid-word), but
 // the relative-path branch must NOT require one: a leading `.` is a non-word char, so `\b` would
 // only match when the dot is directly touching a preceding word char (no boundary exists after
