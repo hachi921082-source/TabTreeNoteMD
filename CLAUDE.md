@@ -16,6 +16,12 @@
 
 Operated using a three-agent system: designer-lite → developer-lite → reviewer-lite (even if the user does not explicitly name the agent, work is always conducted through the corresponding agent). For details (rationale for adoption, documentation structure, escalation procedure), see [.claude/agents/README.md](.claude/agents/README.md).
 
+## GitHub Issue Workflow
+
+For each GitHub issue (repo `hachi921082-source/TabTreeNoteMD`): cut a branch named `fix/<short-slug>` (e.g. `fix/path-traversal-guard`) → fix on that branch (designer-lite/developer-lite/reviewer-lite flow above still applies) → Review → once the issue is resolved, open a PR and merge.
+
+After merge, close the GitHub issue (not delete — GitHub keeps the full history), and add a short summary entry (issue number, title, PR link) to [docs/RESOLVED-ISSUES.md](docs/RESOLVED-ISSUES.md).
+
 ## Commit Convention
 
 Commit one file per commit, with a message stating that file's role/purpose (not just what changed).
