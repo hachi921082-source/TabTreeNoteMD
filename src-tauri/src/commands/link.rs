@@ -21,7 +21,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::commands::tree::load_and_reconcile;
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::model::app_settings::AppSettings;
-use crate::model::result::{AppResult, ErrorCode};
+use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::model::tree::MetaTreeNode;
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::LockSessionStore;
@@ -142,7 +142,13 @@ pub enum ExternalLinkKind {
 ///   `current_tab_id`'s folder as base first (`[spec §2.8]`). If `current_tab_id` is absent or
 ///   doesn't resolve to a known tab, the relative value is passed through unresolved rather than
 ///   failing the whole command — the OS opener will simply fail to find it, same end result as
-///   any other "file not found" case.
+///   any other "file not found" case. A relative value containing a `..` path segment, or one that
+///   is "rooted" without being absolute (e.g. a leading `\` or `/` with no drive prefix, such as
+///   `\Windows\System32\cmd.exe`), is rejected outright (`ErrorCode::NameInvalid`) rather than
+///   resolved, since joining either against the tab's folder could otherwise escape that folder —
+///   the same class of path-traversal problem `markdownSanitize.ts`'s `isSafeRelativeImageSrc`
+///   already guards against for `<img src>` (`docs/DECISIONS.md`: "Image `src` Allowlist: Reject
+///   `..` Path-Traversal Segments").
 #[tauri::command]
 pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<()> {
     let opener = app.opener();
@@ -151,7 +157,13 @@ pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String,
         ExternalLinkKind::Email => opener.open_url(normalize_mailto(&value), None::<String>),
         ExternalLinkKind::FilePath => {
             let (settings, _outcome) = store.get(&registry);
-            let resolved = resolve_file_path(&value, current_tab_id.as_deref(), &settings);
+            let resolved = match resolve_file_path(&value, current_tab_id.as_deref(), &settings) {
+                Ok(resolved) => resolved,
+                Err(err) => {
+                    tracing::warn!(value, "link_open_external: rejected a file path as a path-traversal attempt ('..' segment or a rooted-but-not-absolute path)");
+                    return AppResult::err(err);
+                }
+            };
             opener.open_path(resolved, None::<String>)
         }
     };
@@ -181,16 +193,43 @@ fn normalize_mailto(value: &str) -> String {
     }
 }
 
-fn resolve_file_path(value: &str, current_tab_id: Option<&str>, settings: &AppSettings) -> String {
+/// Resolves a `FilePath` link target to the string handed to the OS opener. An absolute `value`
+/// is returned as-is. A relative `value` is rejected (`Err`) if it contains any `..` path
+/// segment — the same check as `markdownSanitize.ts`'s `isSafeRelativeImageSrc`, applied here so
+/// `folder.join(path)` below can never escape `current_tab_id`'s own folder. A relative `value`
+/// that is "rooted" (`Path::has_root()` true) but not `is_absolute()` — e.g. a leading `\` or `/`
+/// with no drive-letter prefix, such as `\Windows\System32\cmd.exe` or `/etc/passwd` — is rejected
+/// too: `has_root()` without `is_absolute()` means the value has no `..` segment yet is *not*
+/// actually relative to the base folder, since `PathBuf::join`'s Windows semantics replace the
+/// base's root entirely (keeping only its drive prefix) when joining a rooted-but-not-absolute
+/// path, letting it escape `current_tab_id`'s folder just like a `..` segment would. Again, this
+/// mirrors `isSafeRelativeImageSrc`, which rejects a value starting with `\` or `//` as
+/// absolute-like for the same reason. Otherwise `value` is joined onto that tab's folder (or
+/// passed through unresolved if there is no known base — see this function's caller's doc
+/// comment).
+fn resolve_file_path(value: &str, current_tab_id: Option<&str>, settings: &AppSettings) -> Result<String, AppErrorPayload> {
     let path = Path::new(value);
     if path.is_absolute() {
-        return value.to_string();
+        return Ok(value.to_string());
+    }
+    if has_parent_dir_segment(path) {
+        return Err(AppErrorPayload::new(ErrorCode::NameInvalid, "file path contains a '..' segment and was rejected"));
+    }
+    if path.has_root() {
+        return Err(AppErrorPayload::new(ErrorCode::NameInvalid, "file path is rooted without a drive prefix and was rejected"));
     }
     let base = current_tab_id.and_then(|id| settings.tabs.iter().find(|t| t.id == id)).map(|t| PathBuf::from(&t.folder_path));
-    match base {
+    Ok(match base {
         Some(folder) => folder.join(path).to_string_lossy().into_owned(),
         None => value.to_string(),
-    }
+    })
+}
+
+/// `true` if any component of `path` is a `..` parent-directory segment (`std::path::Component::
+/// ParentDir` — parses both `/` and `\` separators on Windows, matching
+/// `isSafeRelativeImageSrc`'s `[\\/]`-split segment check).
+fn has_parent_dir_segment(path: &Path) -> bool {
+    path.components().any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 #[cfg(test)]
@@ -304,14 +343,14 @@ mod tests {
     #[test]
     fn resolve_file_path_leaves_absolute_paths_untouched() {
         let settings = settings_with(vec![tab_entry("t1", "Personal", Path::new("C:\\ignored"), false)]);
-        assert_eq!(resolve_file_path("C:\\already\\absolute.txt", Some("t1"), &settings), "C:\\already\\absolute.txt");
+        assert_eq!(resolve_file_path("C:\\already\\absolute.txt", Some("t1"), &settings).unwrap(), "C:\\already\\absolute.txt");
     }
 
     #[test]
     fn resolve_file_path_joins_relative_paths_against_the_current_tab_folder() {
         let dir = tempdir();
         let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
-        let resolved = resolve_file_path("notes.txt", Some("t1"), &settings);
+        let resolved = resolve_file_path("notes.txt", Some("t1"), &settings).unwrap();
         assert_eq!(resolved, dir.join("notes.txt").to_string_lossy().into_owned());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -319,6 +358,56 @@ mod tests {
     #[test]
     fn resolve_file_path_passes_through_relative_paths_with_no_known_base() {
         let settings = AppSettings::default();
-        assert_eq!(resolve_file_path("notes.txt", None, &settings), "notes.txt");
+        assert_eq!(resolve_file_path("notes.txt", None, &settings).unwrap(), "notes.txt");
+    }
+
+    #[test]
+    fn resolve_file_path_rejects_relative_paths_containing_a_parent_dir_segment() {
+        let dir = tempdir();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+
+        let err = resolve_file_path("../secrets.txt", Some("t1"), &settings).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NameInvalid);
+
+        let err = resolve_file_path("sub\\..\\..\\secrets.txt", Some("t1"), &settings).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NameInvalid);
+
+        // No known base — must still be rejected rather than passed through, since a resolved
+        // relative `..` value would otherwise be handed to the opener unresolved-but-unsafe.
+        let err = resolve_file_path("../secrets.txt", None, &settings).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NameInvalid);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_file_path_rejects_rooted_but_not_absolute_paths() {
+        let dir = tempdir();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+
+        // Leading `\` with no drive-letter prefix: `has_root()` true, `is_absolute()` false on
+        // Windows — `folder.join(path)` would otherwise replace the base's root entirely and
+        // escape the tab folder (`PathBuf::join`'s Windows semantics).
+        let err = resolve_file_path("\\Windows\\System32\\cmd.exe", Some("t1"), &settings).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NameInvalid);
+
+        // POSIX-style rooted path — same "rooted but not absolute" shape on Windows.
+        let err = resolve_file_path("/etc/passwd", Some("t1"), &settings).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NameInvalid);
+
+        // No known base — must still be rejected rather than passed through unresolved-but-unsafe.
+        let err = resolve_file_path("\\Windows\\System32\\cmd.exe", None, &settings).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NameInvalid);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_file_path_accepts_relative_paths_with_subdirectories_that_are_not_parent_dir_segments() {
+        let dir = tempdir();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+        let resolved = resolve_file_path("sub\\notes.txt", Some("t1"), &settings).unwrap();
+        assert_eq!(resolved, dir.join("sub").join("notes.txt").to_string_lossy().into_owned());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
