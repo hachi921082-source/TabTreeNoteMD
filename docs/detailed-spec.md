@@ -692,10 +692,10 @@ delete normally (delete is then equivalent to deleting any other tab's registrat
   including many times per editing session.
 - **Which mode a memo opens in**: governed by `AppSettings.editorDefaults.viewMode` (global default,
   `'live'` factory default) with an optional per-memo override in `MemoEditorSettings.viewMode`
-  (`[spec §3.4]`, §3.3 above). This initial-mode setting is independent of the always-available
-  runtime toggle described above — the runtime toggle changes the *current* session's display only and
-  does not, by itself, change either setting value (persisting a toggle as the new per-memo/global
-  default, if ever desired, would be a separate feature not currently in scope).
+  (`[spec §3.4]`, §3.3 above). The runtime toggle described above writes its new value into the
+  currently-open memo's `MemoEditorSettings.viewMode` override (never the global default), so
+  reopening a memo — or restarting the app — resumes in that memo's last-toggled mode; a memo with
+  no override yet still falls back to the global default (GitHub issue #31).
 - **Toolbar — finalized 16-slot layout** (`DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed
   Grid Layout"): a floating, freely repositionable (drag anywhere within the window) panel, fixed
   **8 columns × 2 rows = 16 slots, no blanks**:
