@@ -724,17 +724,57 @@ fn empty_locked_snapshot() -> TreeSnapshot {
     }
 }
 
-/// Re-encrypts and atomically re-saves the lock blob from a session's current in-memory state —
-/// called after every structure-changing session mutation (`PLAN.md` §3).
-fn save_lock_blob(folder: &Path, session: &LockSession, registry: &SelfWriteRegistry) -> std::io::Result<()> {
+/// Re-encrypts and atomically re-saves the lock blob for `session`'s static fields
+/// (key/kdf/hint/realTabName) combined with an explicit `tree`/`file_map` — called after every
+/// structure-changing session mutation (`PLAN.md` §3). `tree`/`file_map` are taken as separate
+/// parameters (rather than read from `session` itself) so callers can save a not-yet-committed
+/// draft and only write it into `session` once this succeeds (`commit_session_mutation`, GH #17).
+fn save_lock_blob(folder: &Path, session: &LockSession, tree: &[MetaTreeNode], file_map: &[FileMapEntry], registry: &SelfWriteRegistry) -> std::io::Result<()> {
     let key = LockKey::new(&session.key);
     let payload = LockPayload {
         real_tab_name: session.real_tab_name.clone(),
-        tree: session.tree.clone(),
-        file_map: session.file_map.clone(),
+        tree: tree.to_vec(),
+        file_map: file_map.to_vec(),
     };
     let field = lock_blob::encrypt_lock_field(&key, session.kdf.clone(), session.hint.clone(), &payload).map_err(|_| std::io::Error::other("failed to encrypt lock blob"))?;
     write_lock_field(folder, &field, registry)
+}
+
+/// Shared "build locally, then commit" pattern for every session structure mutation
+/// (`session_create_memo`, `session_rename_memo`, `session_delete_memo`, `session_move_within`,
+/// `session_mutate_node_field`, `apply_session_move_target`, `cleanup_session_move_source`) —
+/// fixes GH #17: previously each of these mutated `session.tree`/`session.file_map` directly and
+/// only called `save_lock_blob` as a last step, so a save failure (e.g. a transient Windows
+/// AV/indexer lock hitting `atomic_write`'s rename) left the in-memory session mutated even though
+/// the command reported failure.
+///
+/// `mutate` receives read-only access to `session` (for its key/kdf/hint/realTabName) plus mutable
+/// access to *clones* of `session.tree`/`session.file_map`; it may also perform physical
+/// obfuscated-file I/O as a side effect (writing/deleting token files). That physical I/O is
+/// intentionally **not** rolled back if a later step fails — an accepted pre-existing limitation
+/// this issue explicitly scopes out (only the in-memory `tree`/`file_map` and the final lock-blob
+/// save need to roll back). Only after `mutate` succeeds AND the resulting lock blob save succeeds
+/// are the computed `tree`/`file_map` written back into `session`; on any error, `session.tree`/
+/// `session.file_map` are left exactly as they were before this call.
+fn commit_session_mutation(
+    sessions: &LockSessionStore,
+    registry: &SelfWriteRegistry,
+    folder: &Path,
+    tab_id: &str,
+    mutate: impl FnOnce(&LockSession, &mut Vec<MetaTreeNode>, &mut Vec<FileMapEntry>) -> Result<(), AppErrorPayload>,
+) -> Option<Result<(), AppErrorPayload>> {
+    sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
+        let mut tree = session.tree.clone();
+        let mut file_map = session.file_map.clone();
+        mutate(session, &mut tree, &mut file_map)?;
+        save_lock_blob(folder, session, &tree, &file_map, registry).map_err(|err| {
+            tracing::error!(error = %err, tab_id, "session mutation: failed to save lock blob; in-memory session left unchanged");
+            AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
+        })?;
+        session.tree = tree;
+        session.file_map = file_map;
+        Ok(())
+    })
 }
 
 pub(crate) fn session_create_memo(
@@ -745,12 +785,12 @@ pub(crate) fn session_create_memo(
     name: &str,
     parent: Option<&str>,
 ) -> AppResult<TreeSnapshot> {
-    let result = sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
-        if tree::contains_name(&session.tree, name) {
+    let result = commit_session_mutation(sessions, registry, folder, tab_id, |session, tree, file_map| {
+        if tree::contains_name(tree, name) {
             return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "a memo with this name already exists in this tab"));
         }
         if let Some(p) = parent {
-            if tree::find_node(&session.tree, p).is_none() {
+            if tree::find_node(tree, p).is_none() {
                 return Err(AppErrorPayload::new(ErrorCode::NotFound, "parent memo not found"));
             }
         }
@@ -762,15 +802,12 @@ pub(crate) fn session_create_memo(
             return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to create memo file"));
         }
         let node = MetaTreeNode::default_for_new_file(name.to_string());
-        tree::insert_node_at_end(&mut session.tree, parent, node).map_err(|code| AppErrorPayload::new(code, "failed to insert memo into tree"))?;
-        session.file_map.push(FileMapEntry {
+        tree::insert_node_at_end(tree, parent, node).map_err(|code| AppErrorPayload::new(code, "failed to insert memo into tree"))?;
+        file_map.push(FileMapEntry {
             memo_name: name.to_string(),
             token,
         });
-        save_lock_blob(folder, session, registry).map_err(|err| {
-            tracing::error!(error = %err, "session_create_memo: failed to save lock blob");
-            AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
-        })
+        Ok(())
     });
     finish_session_mutation(sessions, tab_id, result)
 }
@@ -783,24 +820,21 @@ pub(crate) fn session_rename_memo(
     path: &str,
     new_name: &str,
 ) -> AppResult<TreeSnapshot> {
-    let result = sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
-        if tree::find_node(&session.tree, path).is_none() {
+    let result = commit_session_mutation(sessions, registry, folder, tab_id, |_session, tree, file_map| {
+        if tree::find_node(tree, path).is_none() {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
         }
-        if !path.eq_ignore_ascii_case(new_name) && tree::contains_name(&session.tree, new_name) {
+        if !path.eq_ignore_ascii_case(new_name) && tree::contains_name(tree, new_name) {
             return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "a memo with this name already exists in this tab"));
         }
         // No file rename is needed — the obfuscated token filename never reflects `memoName`.
-        if let Some(node) = tree::find_node_mut(&mut session.tree, path) {
+        if let Some(node) = tree::find_node_mut(tree, path) {
             node.memo_name = new_name.to_string();
         }
-        if let Some(entry) = session.file_map.iter_mut().find(|e| e.memo_name == path) {
+        if let Some(entry) = file_map.iter_mut().find(|e| e.memo_name == path) {
             entry.memo_name = new_name.to_string();
         }
-        save_lock_blob(folder, session, registry).map_err(|err| {
-            tracing::error!(error = %err, "session_rename_memo: failed to save lock blob");
-            AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
-        })
+        Ok(())
     });
     finish_session_mutation(sessions, tab_id, result)
 }
@@ -812,10 +846,10 @@ pub(crate) fn session_delete_memo(
     tab_id: &str,
     paths: &[NodePath],
 ) -> AppResult<TreeSnapshot> {
-    let result = sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
+    let result = commit_session_mutation(sessions, registry, folder, tab_id, |_session, tree, file_map| {
         let mut all_names: Vec<String> = Vec::new();
         for p in paths {
-            if let Some(node) = tree::find_node(&session.tree, p) {
+            if let Some(node) = tree::find_node(tree, p) {
                 let mut names = Vec::new();
                 tree::collect_names(node, &mut names);
                 for n in names {
@@ -834,7 +868,7 @@ pub(crate) fn session_delete_memo(
         // there is no plaintext name to show them in an OS trash UI either way, so trash offers
         // no benefit here unlike the plain-tab case.
         for name in &all_names {
-            let Some(entry) = session.file_map.iter().find(|e| &e.memo_name == name) else {
+            let Some(entry) = file_map.iter().find(|e| &e.memo_name == name) else {
                 continue;
             };
             let token_path = folder.join(&entry.token);
@@ -849,14 +883,11 @@ pub(crate) fn session_delete_memo(
         }
 
         for name in &all_names {
-            tree::remove_node(&mut session.tree, name);
-            session.file_map.retain(|e| &e.memo_name != name);
+            tree::remove_node(tree, name);
+            file_map.retain(|e| &e.memo_name != name);
         }
 
-        save_lock_blob(folder, session, registry).map_err(|err| {
-            tracing::error!(error = %err, "session_delete_memo: failed to save lock blob");
-            AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
-        })
+        Ok(())
     });
     finish_session_mutation(sessions, tab_id, result)
 }
@@ -870,10 +901,10 @@ pub(crate) fn session_move_within(
     new_parent: Option<&str>,
     index: usize,
 ) -> AppResult<TreeSnapshot> {
-    let result = sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
+    let result = commit_session_mutation(sessions, registry, folder, tab_id, |_session, tree, _file_map| {
         let mut removed = Vec::new();
         for p in paths {
-            if let Some(node) = tree::remove_node(&mut session.tree, p) {
+            if let Some(node) = tree::remove_node(tree, p) {
                 removed.push(node);
             }
         }
@@ -881,17 +912,14 @@ pub(crate) fn session_move_within(
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "no matching memo to move"));
         }
         if let Some(p) = new_parent {
-            if tree::find_node(&session.tree, p).is_none() {
+            if tree::find_node(tree, p).is_none() {
                 return Err(AppErrorPayload::new(ErrorCode::NotFound, "target parent memo not found"));
             }
         }
         for (i, node) in removed.into_iter().enumerate() {
-            tree::insert_node_at(&mut session.tree, new_parent, index + i, node).map_err(|code| AppErrorPayload::new(code, "failed to move memo"))?;
+            tree::insert_node_at(tree, new_parent, index + i, node).map_err(|code| AppErrorPayload::new(code, "failed to move memo"))?;
         }
-        save_lock_blob(folder, session, registry).map_err(|err| {
-            tracing::error!(error = %err, "session_move_within: failed to save lock blob");
-            AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
-        })
+        Ok(())
     });
     finish_session_mutation(sessions, tab_id, result)
 }
@@ -904,15 +932,11 @@ pub(crate) fn session_mutate_node_field(
     path: &str,
     f: impl FnOnce(&mut MetaTreeNode) -> Result<(), ErrorCode>,
 ) -> AppResult<TreeSnapshot> {
-    let result = sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
-        let Some(node) = tree::find_node_mut(&mut session.tree, path) else {
+    let result = commit_session_mutation(sessions, registry, folder, tab_id, |_session, tree, _file_map| {
+        let Some(node) = tree::find_node_mut(tree, path) else {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
         };
-        f(node).map_err(|code| AppErrorPayload::new(code, "failed to update memo"))?;
-        save_lock_blob(folder, session, registry).map_err(|err| {
-            tracing::error!(error = %err, "session_mutate_node_field: failed to save lock blob");
-            AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
-        })
+        f(node).map_err(|code| AppErrorPayload::new(code, "failed to update memo"))
     });
     finish_session_mutation(sessions, tab_id, result)
 }
@@ -1134,10 +1158,10 @@ fn cleanup_session_move_source(
     all_names: &[String],
     tokens: &HashMap<String, String>,
 ) -> Result<(), AppErrorPayload> {
-    let result = sessions.with_session_mut(source_tab_id, |session| -> Result<(), AppErrorPayload> {
+    let result = commit_session_mutation(sessions, registry, source_folder, source_tab_id, |_session, tree, file_map| {
         for name in all_names {
-            tree::remove_node(&mut session.tree, name);
-            session.file_map.retain(|e| &e.memo_name != name);
+            tree::remove_node(tree, name);
+            file_map.retain(|e| &e.memo_name != name);
             if let Some(token) = tokens.get(name) {
                 let token_path = source_folder.join(token);
                 registry.register(&token_path);
@@ -1146,10 +1170,7 @@ fn cleanup_session_move_source(
                 }
             }
         }
-        save_lock_blob(source_folder, session, registry).map_err(|err| {
-            tracing::error!(error = %err, "cross-tab move: failed to save source lock blob");
-            AppErrorPayload::new(ErrorCode::Unknown, "failed to save source tab metadata")
-        })
+        Ok(())
     });
     match result {
         Some(r) => r,
@@ -1173,14 +1194,14 @@ fn apply_session_move_target(
     new_parent: Option<&str>,
     index: usize,
 ) -> Result<(), AppErrorPayload> {
-    let result = sessions.with_session_mut(target_tab_id, |session| -> Result<(), AppErrorPayload> {
+    let result = commit_session_mutation(sessions, registry, target_folder, target_tab_id, |session, tree, file_map| {
         if let Some(p) = new_parent {
-            if tree::find_node(&session.tree, p).is_none() {
+            if tree::find_node(tree, p).is_none() {
                 return Err(AppErrorPayload::new(ErrorCode::NotFound, "target parent memo not found"));
             }
         }
         for name in all_names {
-            if tree::contains_name(&session.tree, name) {
+            if tree::contains_name(tree, name) {
                 return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "a memo with this name already exists in the target tab"));
             }
         }
@@ -1193,18 +1214,15 @@ fn apply_session_move_target(
                 tracing::error!(error = %err, "cross-tab move: failed to write obfuscated memo file");
                 return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to move memo file into locked tab"));
             }
-            session.file_map.push(FileMapEntry {
+            file_map.push(FileMapEntry {
                 memo_name: name.clone(),
                 token,
             });
         }
         for (i, node) in nodes_to_move.iter().enumerate() {
-            let _ = tree::insert_node_at(&mut session.tree, new_parent, index + i, node.clone());
+            let _ = tree::insert_node_at(tree, new_parent, index + i, node.clone());
         }
-        save_lock_blob(target_folder, session, registry).map_err(|err| {
-            tracing::error!(error = %err, "cross-tab move: failed to save target lock blob");
-            AppErrorPayload::new(ErrorCode::Unknown, "failed to save target tab metadata")
-        })
+        Ok(())
     });
     match result {
         Some(r) => r,
@@ -1544,6 +1562,101 @@ mod tests {
         let bytes = std::fs::read(dir.join("tok123")).unwrap();
         let plaintext = lock_blob::decrypt_memo_body(&key, &bytes).unwrap();
         assert_eq!(plaintext, b"secret content");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// GH #17: forces `save_lock_blob`'s `atomic_write` call to fail deterministically by
+    /// pre-creating the lock-blob target file and turning its `.bak` sibling into a directory —
+    /// `atomic_write`'s "rotate previous target into `.bak`" step then hits `fs::rename`'s
+    /// documented "to is a directory" error (`fs/atomic_write.rs`), the same shape of transient
+    /// failure the issue describes for a real AV/indexer lock. Verifies `session_create_memo`
+    /// leaves `session.tree`/`session.file_map` completely unchanged when this happens, even
+    /// though the new memo's obfuscated body file was already written to disk beforehand (an
+    /// accepted pre-existing limitation this issue explicitly scopes out).
+    #[test]
+    fn session_create_memo_rolls_back_session_state_when_save_lock_blob_fails() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: "Private".to_string(),
+                tree: vec![MetaTreeNode::default_for_new_file("Diary".to_string())],
+                file_map: vec![FileMapEntry {
+                    memo_name: "Diary".to_string(),
+                    token: "tok-diary".to_string(),
+                }],
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: [7u8; 32],
+            },
+        );
+        std::fs::write(dir.join(TAB_META_FILE_NAME), b"placeholder").unwrap();
+        std::fs::create_dir(dir.join(format!("{TAB_META_FILE_NAME}.bak"))).unwrap();
+
+        let before_tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
+        let before_file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
+
+        match session_create_memo(&sessions, &registry, &dir, "tab-1", "Notes", None) {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::Unknown),
+            AppResult::Ok(_) => panic!("expected the forced save_lock_blob failure to surface as an error"),
+        }
+
+        let after_tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
+        let after_file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
+        assert_eq!(before_tree, after_tree, "session.tree must be rolled back when save_lock_blob fails");
+        assert_eq!(before_file_map, after_file_map, "session.file_map must be rolled back when save_lock_blob fails");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// GH #17, same failure-injection technique as the create-memo test above, applied to
+    /// `session_delete_memo`: even though the obfuscated body file for "Diary" is already
+    /// permanently deleted from disk before the (forced-to-fail) lock blob save runs, `session.
+    /// tree`/`session.file_map` must still show "Diary" as present afterward — the in-memory
+    /// mutation must not be committed when the save fails.
+    #[test]
+    fn session_delete_memo_rolls_back_session_state_when_save_lock_blob_fails() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let token = "tok-diary".to_string();
+        std::fs::write(dir.join(&token), b"encrypted-placeholder").unwrap();
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: "Private".to_string(),
+                tree: vec![MetaTreeNode::default_for_new_file("Diary".to_string())],
+                file_map: vec![FileMapEntry {
+                    memo_name: "Diary".to_string(),
+                    token: token.clone(),
+                }],
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: [7u8; 32],
+            },
+        );
+        std::fs::write(dir.join(TAB_META_FILE_NAME), b"placeholder").unwrap();
+        std::fs::create_dir(dir.join(format!("{TAB_META_FILE_NAME}.bak"))).unwrap();
+
+        let before_tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
+        let before_file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
+
+        match session_delete_memo(&sessions, &registry, &dir, "tab-1", &["Diary".to_string()]) {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::Unknown),
+            AppResult::Ok(_) => panic!("expected the forced save_lock_blob failure to surface as an error"),
+        }
+
+        let after_tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
+        let after_file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
+        assert_eq!(before_tree, after_tree, "session.tree must be rolled back when save_lock_blob fails");
+        assert_eq!(before_file_map, after_file_map, "session.file_map must be rolled back when save_lock_blob fails");
+        // The physical obfuscated-file delete already happened before the failed save — an
+        // accepted pre-existing limitation this issue explicitly scopes out (only the in-memory
+        // tree/file_map and the final lock-blob save need to roll back).
+        assert!(!dir.join(&token).exists(), "the physical delete is not expected to be rolled back");
 
         std::fs::remove_dir_all(&dir).ok();
     }
