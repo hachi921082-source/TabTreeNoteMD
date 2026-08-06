@@ -9,6 +9,7 @@
 // contents are fixed by spec and don't include it.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import type { EditorView } from "@codemirror/view";
 import { DEFAULT_TOOLBAR_ORDER, TOOLBAR_ACTIONS, normalizeToolbarOrder } from "../../../editor/toolbarSlots";
 import type { ToolbarActionId } from "../../../editor/toolbarSlots";
@@ -53,13 +54,6 @@ const FONT_SIZE_CHOICES: { label: string; px: string }[] = [
 
 const DEFAULT_POSITION = { x: 24, y: 24 };
 
-function moveItem<T>(arr: T[], from: number, to: number): T[] {
-  const copy = [...arr];
-  const [item] = copy.splice(from, 1);
-  copy.splice(to, 0, item);
-  return copy;
-}
-
 export interface MarkdownToolbarProps {
   /** Reads the currently-mounted `EditorView` at call time (not a stored ref), so this component
    * doesn't need re-rendering when the view itself is recreated on memo switch. */
@@ -102,7 +96,13 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
 
   const [rearranging, setRearranging] = useState(false);
   const [openPopover, setOpenPopover] = useState<"color" | "fontSize" | null>(null);
-  const dragIndexRef = useRef<number | null>(null);
+  // Slot reorder drag state, keyed by `ToolbarActionId` rather than array index (mirrors
+  // `TabBar.tsx`'s `draggingIdRef`) so a mid-drag reorder never invalidates a stale index. Uses
+  // plain pointer/mouse events, not HTML5 Drag-and-Drop — Tauri's native drag-drop
+  // (`tauri.conf.json`'s `dragDropEnabled`, default `true`) conflicts with the browser's own HTML5
+  // DnD events on Windows (see `TabBar.tsx`'s own comment on this), so this component follows
+  // `TabBar.tsx`'s tab-reorder pattern instead (GitHub issue #25).
+  const draggingIdRef = useRef<ToolbarActionId | null>(null);
 
   const position = appSettings?.window.toolbarPosition ?? DEFAULT_POSITION;
   const dragOriginRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
@@ -110,6 +110,13 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
   const panelRef = useRef<HTMLDivElement>(null);
 
   const exitRearrangeMode = () => {
+    // Clear the drag ref here (not just via the window `mouseup` listener below) because
+    // `exitRearrangeMode` can run mid-drag (e.g. Esc pressed while the mouse button is still
+    // held down). In that case the `mouseup` listener effect's cleanup fires immediately as
+    // `rearranging` flips to false, removing the listener *before* the button is ever released
+    // — leaving `draggingIdRef.current` stuck on the stale slot id and causing a later mere
+    // hover (`onMouseEnter`, no fresh `mousedown`) to be misread as an in-progress drag.
+    draggingIdRef.current = null;
     setRearranging(false);
     void patchSettings({ window: { toolbarOrder: order } });
   };
@@ -124,6 +131,20 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     return () => window.removeEventListener("keydown", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rearranging, order]);
+
+  // Ends a slot-reorder drag gesture on mouseup anywhere in the window (mirrors `TabBar.tsx`'s
+  // window-level `mouseup` listener). Unlike `TabBar.tsx`, this component doesn't persist here —
+  // rearrange mode has no per-drag "commit" of its own; the order is only written out once, on
+  // `exitRearrangeMode` (Esc or re-toggling the slot), so mouseup just clears the drag ref and
+  // leaves the already-live `order` state as-is.
+  useEffect(() => {
+    if (!rearranging) return;
+    const handler = () => {
+      draggingIdRef.current = null;
+    };
+    window.addEventListener("mouseup", handler);
+    return () => window.removeEventListener("mouseup", handler);
+  }, [rearranging]);
 
   // Close an open color/font-size popover on outside click.
   useEffect(() => {
@@ -246,7 +267,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
       </div>
 
       <div className="ttn-md-toolbar-grid">
-        {order.map((id, index) => {
+        {order.map((id) => {
           const action = TOOLBAR_ACTIONS[id];
           const Icon = action.icon;
           const disabled = readOnly && id !== "rearrangeToggle";
@@ -257,19 +278,24 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               className="ttn-md-toolbar-btn"
               title={action.label}
               aria-label={action.label}
-              draggable={rearranging}
               disabled={disabled}
-              onDragStart={() => {
-                dragIndexRef.current = index;
+              onMouseDown={(e: ReactMouseEvent) => {
+                if (!rearranging || e.button !== 0) return;
+                draggingIdRef.current = id;
               }}
-              onDragOver={(e) => {
-                if (rearranging) e.preventDefault();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (!rearranging || dragIndexRef.current === null) return;
-                setOrder((current) => moveItem(current, dragIndexRef.current as number, index));
-                dragIndexRef.current = null;
+              onMouseEnter={() => {
+                if (!rearranging) return;
+                const draggingId = draggingIdRef.current;
+                if (!draggingId || draggingId === id) return;
+                setOrder((current) => {
+                  const from = current.indexOf(draggingId);
+                  const to = current.indexOf(id);
+                  if (from === -1 || to === -1) return current;
+                  const next = current.slice();
+                  next.splice(from, 1);
+                  next.splice(to, 0, draggingId);
+                  return next;
+                });
               }}
               onClick={() => invokeAction(id)}
             >
