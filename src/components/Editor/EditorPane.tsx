@@ -124,19 +124,29 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const resolvedSettings = useMemo(() => resolveEditorSettings(memoEditorOverride, editorDefaults), [memoEditorOverride, editorDefaults]);
   const readOnly = Boolean(ed.content?.editLocked) || ed.conflict !== null;
 
-  // Live/source view mode (`docs/plans/markdown-editing/PLAN.md` §3). `resolvedViewMode` is the
-  // *governed* setting a memo opens with (per-memo override, falling back to the global default);
-  // `liveViewOverride` is the current session's runtime toggle only — `null` until the user toggles
-  // at least once for the currently-open memo, reset to `null` on every memo switch (a fresh load
-  // always starts at the governed setting, `[detailed-spec §5.10]`: the toggle "does not, by
-  // itself, change either setting value").
+  // Live/source view mode (`docs/plans/markdown-editing/PLAN.md` §3; persistence added for
+  // GitHub issue #31 "Persist the Markdown toolbar's source/live view toggle per memo").
+  // `resolvedViewMode` is the *governed* setting a memo opens with (per-memo override, falling
+  // back to the global default); `liveViewOverride` is the current session's instant-feedback
+  // local state — `null` until the user toggles at least once for the currently-open memo, reset
+  // to `null` on every memo switch (a fresh load always starts from the governed setting, which by
+  // now reflects any previously-persisted toggle). Toggling both flips this local state (so the UI
+  // updates immediately, without waiting on the async `setEditorOverride` IPC round-trip) and
+  // persists the new value into the memo's per-memo override — same per-memo-only write pattern as
+  // `persistScrollPosition` below (never the global `editorDefaults.viewMode`), so the choice
+  // survives reopening the memo or restarting the app (`docs/detailed-spec.md` §5.10).
   const resolvedViewMode = memoEditorOverride?.viewMode ?? editorDefaults.viewMode;
   const [liveViewOverride, setLiveViewOverride] = useState<"live" | "source" | null>(null);
   const liveViewEnabled = (liveViewOverride ?? resolvedViewMode) === "live";
   const onToggleLiveView = useCallback(() => {
     setLiveViewOverride((current) => {
       const currentlyLive = current !== null ? current === "live" : resolvedViewMode === "live";
-      return currentlyLive ? "source" : "live";
+      const next: "live" | "source" = currentlyLive ? "source" : "live";
+      const name = memoNameRef.current;
+      if (name) {
+        void setEditorOverrideRef.current(name, { ...overrideRef.current, viewMode: next });
+      }
+      return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedViewMode]);
