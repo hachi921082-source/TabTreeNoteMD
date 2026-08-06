@@ -7,7 +7,7 @@
 // The live/source view-mode runtime toggle (`docs/plans/markdown-editing/PLAN.md` §3) is NOT one
 // of the 16 grid slots — it's a separate control in this panel's header, since the 16-slot grid's
 // contents are fixed by spec and don't include it.
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { EditorView } from "@codemirror/view";
@@ -53,6 +53,53 @@ const FONT_SIZE_CHOICES: { label: string; px: string }[] = [
 ];
 
 const DEFAULT_POSITION = { x: 24, y: 24 };
+
+/** Debounce for persisting the toolbar's clamped position specifically during window *resize*
+ * (as opposed to the mount/read and drag-end persist points below, which are each a single
+ * one-shot event and so persist immediately). `resize` fires on every tick of an interactive
+ * window-drag-resize, so persisting on every tick would mean a synchronous full-settings
+ * `atomic_write` per animation frame (`src-tauri/src/settings/app_settings_store.rs`'s
+ * `AppSettingsStore::patch`) — the same rapid-write concern `useWindowGeometry.ts`'s own
+ * `PERSIST_DEBOUNCE_MS` already guards against for window geometry itself
+ * (`docs/plans/persistence-fs/PLAN.md` §6.2), so this mirrors that value for consistency. The
+ * *visual* clamp (`setBasePosition`) still applies immediately on every rAF-coalesced resize tick
+ * — only the settings write is debounced. */
+const RESIZE_PERSIST_DEBOUNCE_MS = 500;
+
+type Size = { width: number; height: number };
+type Position = { x: number; y: number };
+
+/** Reserved vertical space (px) below the toolbar body for the color/font-size popover
+ * (`.ttn-md-toolbar-popover`, `MarkdownToolbar.css`), so a toolbar snapped flush to the pane's
+ * bottom edge still leaves room for the popover to render without overflowing (GitHub issue #24).
+ * Derived from the popover's own CSS box: `margin-top` 2px + top/bottom `border` 1px×2 + top/bottom
+ * `padding` 6px×2 (12px) + its tallest row content (~20px — either a `.ttn-md-toolbar-swatch`'s
+ * fixed 20px circle, or a `.ttn-md-toolbar-popover-item`/`-clear` button's text+padding+border at
+ * the default `--ui-font-scale`) = 2 + 2 + 12 + 20 = 38px. `SettingsDialog.tsx`'s `uiFontScale`
+ * slider actually goes up to 150% (not 200% as first assumed here), which can inflate the
+ * text-based rows to ~26-28px, pushing the true requirement to ~43px — rounded up further to 50px
+ * as a simple constant with comfortable headroom rather than a precise dynamic measurement. The
+ * popover's width (`left: 4px` within the toolbar, content ~144-192px wide) stays comfortably
+ * inside the toolbar's own ~246px grid width, so only the bottom bound needs this reservation — the
+ * right bound doesn't. */
+const POPOVER_RESERVED_HEIGHT = 50;
+
+/** Clamps `pos` (the toolbar's top-left, `left`/`top` in `.ttn-editor-pane` content-box
+ * coordinates) so the toolbar's full `toolbarSize` box — plus `POPOVER_RESERVED_HEIGHT` of extra
+ * bottom margin for the popover — never leaves `paneSize` (GitHub issue #24). Per-axis independent
+ * clamping: this is both the mathematically nearest in-bounds point to any given `pos`, and — for
+ * the specific case of dragging the toolbar out past the pane's bottom-right corner (the common
+ * drag-out gesture) — it naturally snaps to that bottom-right corner, matching the issue's stated
+ * preference, without needing to special-case "always jump to the corner" for a single-axis
+ * overshoot (which would make sliding along one edge during a drag feel broken). */
+function clampToolbarPosition(pos: Position, toolbarSize: Size, paneSize: Size): Position {
+  const maxX = Math.max(0, paneSize.width - toolbarSize.width);
+  const maxY = Math.max(0, paneSize.height - toolbarSize.height - POPOVER_RESERVED_HEIGHT);
+  return {
+    x: Math.min(Math.max(pos.x, 0), maxX),
+    y: Math.min(Math.max(pos.y, 0), maxY),
+  };
+}
 
 export interface MarkdownToolbarProps {
   /** Reads the currently-mounted `EditorView` at call time (not a stored ref), so this component
@@ -104,10 +151,91 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
   // `TabBar.tsx`'s tab-reorder pattern instead (GitHub issue #25).
   const draggingIdRef = useRef<ToolbarActionId | null>(null);
 
-  const position = appSettings?.window.toolbarPosition ?? DEFAULT_POSITION;
-  const dragOriginRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
-  const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null);
+  // `basePosition` is the clamped resting (non-drag) position actually rendered — kept in local
+  // state (rather than reading `appSettings?.window.toolbarPosition` directly, as before) because
+  // it must reflect the toolbar's/pane's actual measured DOM size, which the persisted value alone
+  // doesn't know about (GitHub issue #24). Synced from the persisted value below whenever that
+  // value changes externally (settings load, or an update from elsewhere), same pattern as `order`/
+  // `persistedOrderKey` above.
+  const persistedPositionKey = JSON.stringify(appSettings?.window.toolbarPosition ?? null);
+  const [basePosition, setBasePosition] = useState<Position>(() => appSettings?.window.toolbarPosition ?? DEFAULT_POSITION);
+  const basePositionRef = useRef(basePosition);
+  basePositionRef.current = basePosition;
+  const dragOriginRef = useRef<{ startX: number; startY: number; originX: number; originY: number; toolbarSize: Size; paneSize: Size } | null>(
+    null,
+  );
+  const [dragPosition, setDragPosition] = useState<Position | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const resizePersistTimerRef = useRef<number | null>(null);
+
+  /** Re-clamps `raw` against the toolbar's/pane's current measured size and applies it as the new
+   * `basePosition` (always immediate — the visual position must never lag). If the clamp actually
+   * moved the value, also writes the clamped position back to settings so it stays put on next
+   * launch rather than drifting back toward a stale pre-clamp value once the window grows again,
+   * per `persist`:
+   * - `"immediate"`: writes right away — for the mount/read and drag-end call sites, each a single
+   *   one-shot event.
+   * - `"debounced"`: writes after `RESIZE_PERSIST_DEBOUNCE_MS` of inactivity (clearing/resetting any
+   *   pending write on each call) — for the resize call site, which fires on every tick of an
+   *   interactive window-drag-resize and would otherwise trigger a synchronous full-settings
+   *   `atomic_write` per animation frame.
+   * Falls back to rendering `raw` unclamped only if the panel/pane aren't measurable yet (e.g. not
+   * yet mounted) — best-effort, corrected on the very next measurable run. */
+  const clampAndApply = (raw: Position, persist: "immediate" | "debounced") => {
+    const panel = panelRef.current;
+    const pane = panel?.offsetParent as HTMLElement | null;
+    if (!panel || !pane) {
+      setBasePosition(raw);
+      return;
+    }
+    const clamped = clampToolbarPosition(raw, { width: panel.offsetWidth, height: panel.offsetHeight }, { width: pane.clientWidth, height: pane.clientHeight });
+    setBasePosition(clamped);
+    if (clamped.x === raw.x && clamped.y === raw.y) return;
+    if (persist === "immediate") {
+      void patchSettings({ window: { toolbarPosition: clamped } });
+      return;
+    }
+    if (resizePersistTimerRef.current !== null) window.clearTimeout(resizePersistTimerRef.current);
+    resizePersistTimerRef.current = window.setTimeout(() => {
+      resizePersistTimerRef.current = null;
+      void patchSettings({ window: { toolbarPosition: clamped } });
+    }, RESIZE_PERSIST_DEBOUNCE_MS);
+  };
+
+  // Mount/read clamp (GitHub issue #24): re-clamps whenever the persisted position changes
+  // externally (initial settings load, or a change from elsewhere). `useLayoutEffect` so an
+  // out-of-bounds persisted value (e.g. from a smaller window in a prior session) is corrected
+  // before the first paint, not visible-then-corrected. Persists the correction immediately — see
+  // `clampAndApply`'s doc comment.
+  useLayoutEffect(() => {
+    clampAndApply(appSettings?.window.toolbarPosition ?? DEFAULT_POSITION, "immediate");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedPositionKey]);
+
+  // Window-resize clamp (GitHub issue #24): shrinking the window can leave a previously-in-bounds
+  // toolbar stranded outside the (now smaller) pane; growing the window intentionally leaves the
+  // toolbar's position untouched (`clampAndApply` only moves it when the clamp actually changes the
+  // value). `requestAnimationFrame`-coalesced since `resize` fires on every tick of an interactive
+  // window-drag-resize, not just once at the end — the visual clamp (`setBasePosition`, inside
+  // `clampAndApply`) still applies on every coalesced tick, but the settings write itself is
+  // additionally debounced (`"debounced"`) since even rAF-coalescing alone (~60/s) is far more
+  // frequent than this app's settings-write budget tolerates (see `clampAndApply`'s doc comment).
+  useEffect(() => {
+    let raf = 0;
+    const handleResize = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        clampAndApply(basePositionRef.current, "debounced");
+      });
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      if (raf) window.cancelAnimationFrame(raf);
+      if (resizePersistTimerRef.current !== null) window.clearTimeout(resizePersistTimerRef.current);
+    };
+  }, []);
 
   const exitRearrangeMode = () => {
     // Clear the drag ref here (not just via the window `mouseup` listener below) because
@@ -163,24 +291,40 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
 
   const handleHeaderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest("button")) return; // buttons (the view toggle) handle their own click
-    dragOriginRef.current = { startX: e.clientX, startY: e.clientY, originX: position.x, originY: position.y };
+    const panel = panelRef.current;
+    const pane = panel?.offsetParent as HTMLElement | null;
+    dragOriginRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: basePosition.x,
+      originY: basePosition.y,
+      // Measured once at drag start (not re-measured per move) — the toolbar's own size can't
+      // change mid-drag, and the pane's size changing mid-drag (a concurrent window resize while
+      // dragging) is an edge case the resize listener's own re-clamp already handles separately.
+      toolbarSize: panel ? { width: panel.offsetWidth, height: panel.offsetHeight } : { width: 0, height: 0 },
+      paneSize: pane ? { width: pane.clientWidth, height: pane.clientHeight } : { width: 0, height: 0 },
+    };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
   const handleHeaderPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragOriginRef.current) return;
-    const { startX, startY, originX, originY } = dragOriginRef.current;
-    setDragPosition({ x: originX + (e.clientX - startX), y: originY + (e.clientY - startY) });
+    const origin = dragOriginRef.current;
+    if (!origin) return;
+    const raw = { x: origin.originX + (e.clientX - origin.startX), y: origin.originY + (e.clientY - origin.startY) };
+    setDragPosition(clampToolbarPosition(raw, origin.toolbarSize, origin.paneSize));
   };
   const handleHeaderPointerUp = () => {
     if (!dragOriginRef.current) return;
     dragOriginRef.current = null;
     setDragPosition((current) => {
-      if (current) void patchSettings({ window: { toolbarPosition: current } });
+      if (current) {
+        setBasePosition(current);
+        void patchSettings({ window: { toolbarPosition: current } });
+      }
       return null;
     });
   };
 
-  const effectivePosition = dragPosition ?? position;
+  const effectivePosition = dragPosition ?? basePosition;
 
   const invokeAction = (id: ToolbarActionId) => {
     if (id === "rearrangeToggle") {
