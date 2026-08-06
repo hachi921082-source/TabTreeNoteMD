@@ -16,3 +16,4 @@
 - #14 `Cargo.toml`'s `tauri-plugin-autostart` comment described the abandoned Startup-folder approach — corrected to describe the shipped Registry `HKCU\...\Run` key (PR #34)
 - #16 Toolbar image-insert file input leaked on dialog cancel — `insertImageViaFilePicker` now cleans up on `cancel`/`focus` fallback, not just `change` (PR #35)
 - #19 Bare `memo:` with nothing after the colon matched as a link — `BARE_MEMO_RE` now requires at least one non-whitespace target char (PR #36)
+- #17 Tab Lock session mutations weren't rolled back if the final lock-blob save failed — all 7 session mutators now route through a build-then-commit `commit_session_mutation` helper that only applies the in-memory `tree`/`file_map` change after `save_lock_blob` succeeds (PR #37)
