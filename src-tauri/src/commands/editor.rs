@@ -41,6 +41,12 @@ pub struct MemoContent {
     /// `MemoEditorSettings.scrollPosition` — 1-indexed top-visible document line number, `None`
     /// if never recorded (open at the top).
     pub scroll_position: Option<u32>,
+    /// `MemoEditorSettings.cursorAnchor` — character offset into the document, `None` if never
+    /// recorded (opens with the cursor at position 0). GitHub issue #28.
+    pub cursor_anchor: Option<u32>,
+    /// `MemoEditorSettings.cursorHead` — character offset into the document, `None` if never
+    /// recorded. See `cursor_anchor`.
+    pub cursor_head: Option<u32>,
 }
 
 /// Return type of `editor_save` (`docs/plans/editor-save/PLAN.md` §2).
@@ -86,6 +92,8 @@ pub fn editor_load(
     };
     let edit_locked = node.locked.unwrap_or(false);
     let scroll_position = node.editor.as_ref().and_then(|e| e.scroll_position);
+    let cursor_anchor = node.editor.as_ref().and_then(|e| e.cursor_anchor);
+    let cursor_head = node.editor.as_ref().and_then(|e| e.cursor_head);
 
     let file_path = folder.join(format!("{path}.md"));
     let bytes = match std::fs::read(&file_path) {
@@ -113,6 +121,8 @@ pub fn editor_load(
         hash,
         edit_locked,
         scroll_position,
+        cursor_anchor,
+        cursor_head,
     })
 }
 
@@ -266,6 +276,8 @@ mod tests {
         node.locked = Some(false);
         node.editor = Some(MemoEditorSettings {
             scroll_position: Some(3),
+            cursor_anchor: Some(5),
+            cursor_head: Some(9),
             ..Default::default()
         });
         let meta = crate::model::tab_meta::TabMetaFile {
@@ -289,6 +301,8 @@ mod tests {
         let node = find_node(&loaded.tree, "Shopping list").unwrap();
         assert_eq!(node.locked, Some(false));
         assert_eq!(node.editor.as_ref().and_then(|e| e.scroll_position), Some(3));
+        assert_eq!(node.editor.as_ref().and_then(|e| e.cursor_anchor), Some(5));
+        assert_eq!(node.editor.as_ref().and_then(|e| e.cursor_head), Some(9));
 
         let bytes = std::fs::read(folder.join("Shopping list.md")).unwrap();
         let (decoded, encoding) = decode_memo_body(&bytes);

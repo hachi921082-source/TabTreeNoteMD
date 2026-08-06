@@ -74,6 +74,15 @@ Sources: `docs/spec.md` §2.3, §2.6; `docs/detailed-spec.md` §4.3, §5.3, §5.
   it on every switch-away (its load effect's cleanup), so `tab_lock`'s defensive open-memo check
   (`tab-lock/PLAN.md` §3 step 2) doesn't stay permanently tripped once a memo has ever been
   opened in a tab.
+- Added for GitHub issue #28 ("Reopening a memo restores scroll position but not cursor
+  position"): `MemoEditorSettings.cursorAnchor`/`cursorHead` (character offsets, mirroring
+  CodeMirror's `EditorSelection.main.anchor`/`.head`), persisted through `MemoContent` in both
+  `editor.rs`'s plain-tab path and `tab_lock.rs`'s session path. Written at the same trigger
+  points and on the same debounce timer as `scrollPosition` (memo switch, debounced scroll,
+  unmount) — grabbed together from the `EditorView` in one combined `memo_set_editor_override`
+  call. Restored via `EditorState.create`'s `selection` option (not a post-mount dispatch, since
+  scroll restoration needs the view's first layout pass but selection does not), clamped to the
+  loaded document's length in case the file changed externally since the value was saved.
 
 ---
 
