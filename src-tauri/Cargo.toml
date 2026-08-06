@@ -56,9 +56,11 @@ tauri-plugin-opener = "2.5.4"
 # exits the new process immediately, rather than opening a second window or racing two processes
 # on settings.json (window-operation/PLAN.md §5).
 tauri-plugin-single-instance = "2.4.3"
-# Windows-Startup-folder auto-launch-to-tray setting (window-operation/PLAN.md §4). Chosen over a
-# hand-rolled registry Run-key per that plan's reasoning: keeps user data/settings entirely out of
-# the registry, preserving the portability principle (spec.md §2.6).
+# Auto-launch-to-tray-on-Windows-login setting (window-operation/PLAN.md §4). Registers a
+# `HKCU\...\Run` registry entry pointing at the exe with a `--tray` argument; no
+# Startup-folder-shortcut Tauri plugin was found, so this registry Run-key approach is used as the
+# plan's own pre-approved fallback (detailed-spec.md §5.7) rather than hand-rolling the registry
+# write. See commands/autostart.rs for the wrapper and settings.json handling.
 tauri-plugin-autostart = "2.5.1"
 # Cross-tab full-text search's optional `regex: true` query mode (search-index/PLAN.md §4) — the
 # exact `SearchOptions` set is implementation discretion, and this well-established crate is a
