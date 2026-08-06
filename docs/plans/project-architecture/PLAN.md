@@ -267,12 +267,27 @@ calling `state/use*.ts` hook or component.
 
 `DECISIONS.md`'s Tauri-adoption rationale explicitly relies on "automatic testing via CDP/WebDriver"
 as the safety net (the user cannot read code). For `reviewer-lite` to actually drive the app, the dev
-build should be launched in a mode that exposes WebView2 remote debugging (e.g. setting the
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`/`--remote-debugging-port` environment variable Tauri passes
-through to WebView2) or via `tauri-driver` (WebDriver protocol). This is not a product feature and has
-no `PLAN.md` of its own; `developer-lite` should make one of these paths work early (e.g. alongside
-the first implemented feature) rather than leaving it until the end, since every subsequent feature's
-functional verification depends on it.
+build should be launched in a mode that exposes WebView2 remote debugging, or via `tauri-driver`
+(WebDriver protocol). This is not a product feature and has no `PLAN.md` of its own.
+
+The CDP port is opened via `WebviewWindowBuilder`'s own `.additional_browser_args()` builder method,
+called in `main.rs`'s `.setup()` under `#[cfg(debug_assertions)]` — **not** by setting the
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` env var before `tauri::Builder`, which does not work: `wry`
+always passes an explicit, non-null `additional_browser_arguments` string to
+`CoreWebView2EnvironmentOptions`, and WebView2 ignores the env var whenever that string is non-null
+(confirmed empirically and by reading `wry`'s source; see issue #21). Because `WebviewWindowBuilder`
+can only attach that arg at window-creation time, and Tauri otherwise creates the declaratively
+configured `"main"` window automatically before `.setup()` runs, `tauri.conf.json`'s `"main"` window
+entry sets `"create": false` and `main.rs`'s `.setup()` creates it itself via
+`WebviewWindowBuilder::from_config(app, &window_config)`, reading every other property (title, size,
+decorations, starting hidden, ...) from that same config so it remains the single source of truth;
+only the CDP arg differs between debug and release builds.
+
+Live-verified (not just reasoned through — issue #21 exists precisely because the prior approach's
+"should work" claim went unverified for a long time): `curl http://127.0.0.1:9222/json` against a
+freshly-launched `npx tauri dev` build returns a real target list with a `webSocketDebuggerUrl`;
+connecting to it and issuing CDP commands (`Runtime.evaluate`, `Page.captureScreenshot`) confirmed the
+page had actually rendered the app's real UI, not just an empty/blank WebView2 shell.
 
 ## 8. Cargo Dependencies (starting list, to be refined at `Cargo.toml` creation time)
 
