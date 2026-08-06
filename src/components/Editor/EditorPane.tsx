@@ -74,6 +74,11 @@ const SCROLL_PERSIST_DEBOUNCE_MS = 500;
 export interface EditorPaneProps {
   tabId: string | null;
   memoName: string | null;
+  /** `state/useTree.ts`'s one-shot "should the editor auto-focus" signal — bumped only by an
+   * explicit open (row click, `focusOnMemo`), left untouched by arrow-key nav (`[spec §2.2]`).
+   * Compared against the last-consumed token inside the view-(re)creation effect below, same
+   * one-shot-signal pattern as `ed.content.scrollPosition`. */
+  focusEditorToken: number;
   appSettings: AppSettings | null;
   memoEditorOverride: MemoEditorSettings | undefined;
   setEditorOverride: (path: string, editor: MemoEditorSettings | null) => Promise<void>;
@@ -96,7 +101,7 @@ export interface EditorPaneHandle {
 }
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
-  { tabId, memoName, appSettings, memoEditorOverride, setEditorOverride, patchSettings, onOpenMemoLink },
+  { tabId, memoName, focusEditorToken, appSettings, memoEditorOverride, setEditorOverride, patchSettings, onOpenMemoLink },
   ref,
 ) {
   const ed = useEditor(tabId, memoName, appSettings);
@@ -173,6 +178,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   memoNameRef.current = memoName;
   const overrideRef = useRef(memoEditorOverride);
   overrideRef.current = memoEditorOverride;
+  // One-shot auto-focus signal (`useTree.ts`'s `focusEditorToken`): `focusEditorTokenRef` always
+  // holds the latest value; `consumedFocusTokenRef` records which value the view-(re)creation
+  // effect below has already acted on, so a click-open focuses exactly once per open and an
+  // arrow-nav-open (which never changes the token) never does.
+  const focusEditorTokenRef = useRef(focusEditorToken);
+  focusEditorTokenRef.current = focusEditorToken;
+  const consumedFocusTokenRef = useRef<number | null>(null);
   const setEditorOverrideRef = useRef(setEditorOverride);
   setEditorOverrideRef.current = setEditorOverride;
   const scrollDebounceRef = useRef<number | null>(null);
@@ -232,6 +244,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     const view = new EditorView({ state, parent: containerRef.current });
     viewRef.current = view;
     setRenderTick((n) => n + 1);
+    // Click-open (and equivalent explicit-navigation opens like `memo:` link clicks) auto-focuses
+    // the editor; arrow-key tree nav does not (`[spec §2.2]`, `[spec §9.1 item 3]`). The token only
+    // changes for the former, so this fires at most once per distinct open.
+    if (focusEditorTokenRef.current !== consumedFocusTokenRef.current) {
+      consumedFocusTokenRef.current = focusEditorTokenRef.current;
+      view.focus();
+    }
     // Reset the session-only toggle for the newly-opened memo (harmless if `liveViewEnabled`
     // already equalled `initialLiveView` — the reconfigure effect below just re-dispatches the
     // same extension content in that case).
