@@ -11,6 +11,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { EditorView } from "@codemirror/view";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { DEFAULT_TOOLBAR_ORDER, TOOLBAR_ACTIONS, normalizeToolbarOrder } from "../../../editor/toolbarSlots";
 import type { ToolbarActionId } from "../../../editor/toolbarSlots";
 import {
@@ -168,6 +169,52 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
   const panelRef = useRef<HTMLDivElement>(null);
   const resizePersistTimerRef = useRef<number | null>(null);
 
+  // Minimize-to-header toggle (GitHub issue #26) — collapses the grid and snaps the panel to the
+  // editor pane's bottom-right corner, reusing `clampToolbarPosition`'s bottom-right-snapping
+  // behavior (GitHub issue #24) rather than a separate positioning path.
+  //
+  // Unlike `order`/`basePosition` above, `minimized` is NOT mirrored into local state via a passive
+  // `useEffect` — it's read directly from `appSettings` on every render. That mirroring pattern has
+  // a one-render lag baked in (a prop change doesn't retroactively update state a passive effect
+  // hasn't run for yet), which is harmless for `order`/`basePosition` but actively corrupts data
+  // here: `appSettings` starts out `null` on mount and only becomes the loaded value on a LATER
+  // render (`App.tsx` doesn't gate this component's mount on the settings load), and the mount/read
+  // position-clamp effect below is a `useLayoutEffect` — it runs within THAT SAME render's commit,
+  // before any passive effect gets a chance to sync a lagging local `minimized` copy. For a
+  // returning user with `toolbarMinimized: true` persisted, that means the position-clamp effect
+  // would measure the panel while it's still rendered as the FULL grid (stale `minimized === false`
+  // from the mount render), clamp the correctly-saved header-only position against that wrong box,
+  // and immediately persist the wrong result — corrupting the saved position on every single launch.
+  // Reading `appSettings` directly instead makes `minimized` update in the exact same render as
+  // `persistedPositionKey`, so the position-clamp effect always measures a DOM whose grid-visibility
+  // already agrees with the position it's about to clamp.
+  //
+  // `optimisticMinimized` is a separate, purely-local override used only so clicking the
+  // minimize/restore button (`toggleMinimized`) hides/shows the grid immediately, without waiting on
+  // the async `patchSettings` round-trip. It's cleared as soon as `appSettings` itself catches up to
+  // the same value, at which point `appSettings` becomes authoritative again (and continues to be, if
+  // e.g. settings later get reloaded from elsewhere).
+  const settingsMinimized = appSettings?.window.toolbarMinimized ?? false;
+  const [optimisticMinimized, setOptimisticMinimized] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (optimisticMinimized !== null && optimisticMinimized === settingsMinimized) setOptimisticMinimized(null);
+  }, [settingsMinimized, optimisticMinimized]);
+  const minimized = optimisticMinimized ?? settingsMinimized;
+  // Snapshot of `basePosition` taken immediately before minimizing, so un-minimizing restores the
+  // panel to where the user actually left it rather than to some recomputed default. Deliberately
+  // a ref, not a persisted setting: only this in-memory session needs it, and losing it across an
+  // app restart (falling back to `DEFAULT_POSITION` — see the layout effect below) is an acceptable
+  // edge case for something this minor.
+  const preMinimizePositionRef = useRef<Position | null>(null);
+  // Set right before `setOptimisticMinimized` in `toggleMinimized` below, so the layout effect that
+  // reacts to `minimized` changing can tell "the user just clicked the toggle" (snap/restore the
+  // position) apart from "`minimized` changed because settings were reloaded from elsewhere" (in
+  // which case the persisted `toolbarPosition` — already correct from when it was last snapped — is
+  // restored by the existing mount/read effect above instead; recomputing via `clampAndApply` here
+  // too would just be redundant and would trigger an extra unnecessary settings write on every
+  // launch).
+  const pendingMinimizeToggleRef = useRef(false);
+
   /** Re-clamps `raw` against the toolbar's/pane's current measured size and applies it as the new
    * `basePosition` (always immediate — the visual position must never lag). If the clamp actually
    * moved the value, also writes the clamped position back to settings so it stays put on next
@@ -236,6 +283,38 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
       if (resizePersistTimerRef.current !== null) window.clearTimeout(resizePersistTimerRef.current);
     };
   }, []);
+
+  // Minimize/restore snap (GitHub issue #26): re-clamps only when `minimized` changed because of
+  // `toggleMinimized` itself (see `pendingMinimizeToggleRef`'s doc comment above), after the grid's
+  // conditional render has already committed — so `panelRef.current.offsetHeight` correctly
+  // reflects the header-only box on minimize, or the full grid box again on restore, without a
+  // separate DOM measurement pass. `useLayoutEffect` so the snap/restore happens before paint, same
+  // as the mount/read and resize clamps.
+  useLayoutEffect(() => {
+    if (!pendingMinimizeToggleRef.current) return;
+    pendingMinimizeToggleRef.current = false;
+    if (minimized) {
+      // Any point past the pane's bottom-right corner resolves, via `clampToolbarPosition`'s
+      // per-axis clamp, to the true bottom-right corner for the current (now header-only) size.
+      clampAndApply({ x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY }, "immediate");
+    } else {
+      const restoreTo = preMinimizePositionRef.current ?? DEFAULT_POSITION;
+      preMinimizePositionRef.current = null;
+      clampAndApply(restoreTo, "immediate");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minimized]);
+
+  const toggleMinimized = () => {
+    if (rearranging) return; // see item 5 of the GitHub issue #26 write-up: keep this simple by
+    // disabling the toggle entirely while a slot reorder is in progress, rather than deciding how a
+    // hidden-mid-drag grid should behave.
+    const next = !minimized;
+    if (next) preMinimizePositionRef.current = basePositionRef.current;
+    pendingMinimizeToggleRef.current = true;
+    setOptimisticMinimized(next);
+    void patchSettings({ window: { toolbarMinimized: next } });
+  };
 
   const exitRearrangeMode = () => {
     // Clear the drag ref here (not just via the window `mouseup` listener below) because
@@ -328,6 +407,13 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
 
   const invokeAction = (id: ToolbarActionId) => {
     if (id === "rearrangeToggle") {
+      // Rearrange mode reorders the grid's own slots by drag, so it can't be *entered* while the
+      // grid is hidden (GitHub issue #26, item 5) — this can only be reached via this action's
+      // keyboard shortcut while minimized, since the grid button that normally invokes it isn't
+      // rendered in that state. Exiting is still allowed unconditionally (defensive; in practice
+      // `rearranging` can't be true while `minimized` is, since `toggleMinimized` itself refuses to
+      // minimize while rearranging).
+      if (minimized && !rearranging) return;
       if (rearranging) exitRearrangeMode();
       else setRearranging(true);
       return;
@@ -347,9 +433,15 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         runOnView(redoCommand);
         break;
       case "color":
+        // Their trigger buttons live in the grid, so they can't normally be reached while
+        // minimized — but this keyboard-shortcut path bypasses the button entirely, so it's
+        // re-checked here too, to avoid opening a popover with no visible anchor button
+        // (GitHub issue #26 follow-up review).
+        if (minimized) return;
         setOpenPopover((v) => (v === "color" ? null : "color"));
         break;
       case "fontSize":
+        if (minimized) return;
         setOpenPopover((v) => (v === "fontSize" ? null : "fontSize"));
         break;
       case "heading":
@@ -393,7 +485,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
   return (
     <div
       ref={panelRef}
-      className={`ttn-md-toolbar${rearranging ? " ttn-md-toolbar-rearranging" : ""}`}
+      className={`ttn-md-toolbar${rearranging ? " ttn-md-toolbar-rearranging" : ""}${minimized ? " ttn-md-toolbar-minimized" : ""}`}
       style={{ left: effectivePosition.x, top: effectivePosition.y }}
     >
       <div
@@ -408,8 +500,19 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         <button type="button" className="ttn-md-toolbar-view-toggle" onClick={onToggleLiveView}>
           {liveViewEnabled ? "ライブ表示" : "ソース表示"}
         </button>
+        <button
+          type="button"
+          className="ttn-md-toolbar-minimize-btn"
+          title={minimized ? "ツールバーを元に戻す" : "ツールバーを最小化"}
+          aria-label={minimized ? "ツールバーを元に戻す" : "ツールバーを最小化"}
+          disabled={rearranging}
+          onClick={toggleMinimized}
+        >
+          {minimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
+        </button>
       </div>
 
+      {!minimized && (
       <div className="ttn-md-toolbar-grid">
         {order.map((id) => {
           const action = TOOLBAR_ACTIONS[id];
@@ -448,6 +551,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           );
         })}
       </div>
+      )}
 
       {openPopover === "color" && (
         <div className="ttn-md-toolbar-popover" role="menu">

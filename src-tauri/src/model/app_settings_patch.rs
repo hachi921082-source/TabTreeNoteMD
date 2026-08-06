@@ -84,6 +84,8 @@ pub struct WindowSettingsPatch {
     pub toolbar_order: Option<Vec<String>>,
     #[serde(default)]
     pub tree_collapsed: Option<bool>,
+    #[serde(default)]
+    pub toolbar_minimized: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -237,6 +239,9 @@ impl WindowSettingsPatch {
         }
         if let Some(v) = self.tree_collapsed {
             current.tree_collapsed = v;
+        }
+        if let Some(v) = self.toolbar_minimized {
+            current.toolbar_minimized = v;
         }
     }
 }
