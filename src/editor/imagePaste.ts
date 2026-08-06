@@ -101,12 +101,37 @@ export function insertImageViaFilePicker(view: EditorView, tabId: string | null,
   input.accept = "image/png,image/jpeg,image/gif,image/webp,image/bmp";
   input.style.display = "none";
   const insertPos = view.state.selection.main.from;
+  // Guards against the hidden <input> being permanently orphaned in the DOM when the user
+  // dismisses the native file dialog without picking a file — `change` never fires in that case
+  // (GitHub issue #16). `cancel` is the modern, direct signal for this (fired by
+  // Chromium/WebView2 when the dialog closes with no selection); the `window focus` listener is a
+  // belt-and-suspenders fallback for environments where `cancel` isn't reliably fired, since focus
+  // always returns to the window once the native dialog closes, selection or not. `cleaned` makes
+  // teardown idempotent so whichever fires first (change/cancel/focus) does the removal and the
+  // others become no-ops.
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    window.removeEventListener("focus", onFocus);
+    input.removeEventListener("cancel", onCancel);
+    if (input.parentNode) input.parentNode.removeChild(input);
+  };
+  const onFocus = () => {
+    // Deferred: if a file was actually picked, `change` fires essentially immediately once focus
+    // returns to the window, so it wins the race and calls `cleanup()` first (a no-op here since
+    // `cleaned` is already true by the time this timeout runs).
+    window.setTimeout(cleanup, 0);
+  };
+  const onCancel = () => cleanup();
   input.addEventListener("change", () => {
     const file = input.files?.[0];
-    document.body.removeChild(input);
+    cleanup();
     if (!file) return;
     void readFileBytes(file).then((bytes) => saveAndInsertImage(view, tabId, insertPos, bytes, file.type || null, onError));
   });
+  input.addEventListener("cancel", onCancel);
+  window.addEventListener("focus", onFocus);
   document.body.appendChild(input);
   input.click();
 }
