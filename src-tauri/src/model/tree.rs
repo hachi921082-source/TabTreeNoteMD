@@ -118,6 +118,15 @@ pub struct MemoEditorSettings {
     /// (`[detailed-spec §5.3]`, "Document-Position-Based Anchor, Not Raw Pixel Offset").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll_position: Option<u32>,
+    /// CodeMirror `EditorSelection.main.anchor` — character offset into the document, at save
+    /// time (GitHub issue #28, "Reopening a memo restores scroll position but not cursor
+    /// position"). Paired with `cursor_head` below so a real (non-collapsed) selection round-trips
+    /// too, not just a collapsed cursor (`anchor === head`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_anchor: Option<u32>,
+    /// CodeMirror `EditorSelection.main.head` — character offset into the document, at save time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_head: Option<u32>,
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@
 // in-memo search panel, the conflict-resolution dialog, the floating Markdown toolbar
 // (`components/Editor/Toolbar/MarkdownToolbar.tsx`), and the live/source runtime toggle.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useEditor } from "../../state/useEditor";
 import { useSearch } from "../../state/useSearch";
@@ -133,7 +133,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // now reflects any previously-persisted toggle). Toggling both flips this local state (so the UI
   // updates immediately, without waiting on the async `setEditorOverride` IPC round-trip) and
   // persists the new value into the memo's per-memo override — same per-memo-only write pattern as
-  // `persistScrollPosition` below (never the global `editorDefaults.viewMode`), so the choice
+  // `persistEditorViewState` below (never the global `editorDefaults.viewMode`), so the choice
   // survives reopening the memo or restarting the app (`docs/detailed-spec.md` §5.10).
   const resolvedViewMode = memoEditorOverride?.viewMode ?? editorDefaults.viewMode;
   const [liveViewOverride, setLiveViewOverride] = useState<"live" | "source" | null>(null);
@@ -198,11 +198,33 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const setEditorOverrideRef = useRef(setEditorOverride);
   setEditorOverrideRef.current = setEditorOverride;
   const scrollDebounceRef = useRef<number | null>(null);
+  // Which memo `viewRef.current` actually belongs to (and that memo's override snapshot at the
+  // time its view was created) — set ONLY inside the view-(re)creation effect below, once a view
+  // has actually been (re)created for a given `ed.loadGeneration`. Unlike `memoNameRef`/
+  // `overrideRef` above (which track the live `memoName`/`memoEditorOverride` props and can flip
+  // to the NEXT memo before this effect's next run, since `useTree.ts`'s `setOpenMemoName` is
+  // synchronous while the load itself is async), these two stay pinned to the OUTGOING memo until
+  // the next effect run overwrites them for the memo it just loaded. This is what lets the
+  // outgoing-flush at the top of that next run target the correct (previous) memo instead of
+  // whatever the props have already drifted to (GitHub issue #28 follow-up review finding).
+  const loadedMemoNameRef = useRef<string | null>(null);
+  const loadedOverrideRef = useRef<MemoEditorSettings | undefined>(undefined);
 
-  const persistScrollPosition = (line: number) => {
-    const name = memoNameRef.current;
+  // Persists both the scroll position and the cursor/selection for `name` — grabbed together from
+  // `view` since both are read at the same trigger points (switching memos, debounced scroll,
+  // unmount), so one combined write avoids a second `memo_set_editor_override` round-trip per
+  // trigger. `name`/`override` are passed explicitly (rather than read from the live
+  // `memoNameRef`/`overrideRef` internally) because the outgoing-view-flush call site needs the
+  // PREVIOUS memo's identity, which the live refs no longer hold by the time this fires.
+  const persistEditorViewState = (view: EditorView, name: string | null, override: MemoEditorSettings | undefined) => {
     if (!name) return;
-    void setEditorOverrideRef.current(name, { ...overrideRef.current, scrollPosition: line });
+    const { anchor, head } = view.state.selection.main;
+    void setEditorOverrideRef.current(name, {
+      ...override,
+      scrollPosition: computeTopVisibleLine(view),
+      cursorAnchor: anchor,
+      cursorHead: head,
+    });
   };
 
   // Fresh EditorState/history per memo (`editor-save/PLAN.md` §1: "no cross-memo undo") —
@@ -212,19 +234,30 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     if (!containerRef.current) return;
 
     // Flush this memo's scroll position immediately when switching away, same trigger point as
-    // the autosave flush (`editor-save/PLAN.md` §2 "Scroll Position Write Path").
+    // the autosave flush (`editor-save/PLAN.md` §2 "Scroll Position Write Path"). Targets
+    // `loadedMemoNameRef`/`loadedOverrideRef` (the memo `outgoingView` actually belongs to), NOT
+    // the live `memoName`/`memoEditorOverride` props — those already point at the memo being
+    // switched TO by the time this effect runs (see the refs' declaration comment above).
     const outgoingView = viewRef.current;
     if (outgoingView) {
       if (scrollDebounceRef.current !== null) window.clearTimeout(scrollDebounceRef.current);
-      persistScrollPosition(computeTopVisibleLine(outgoingView));
+      persistEditorViewState(outgoingView, loadedMemoNameRef.current, loadedOverrideRef.current);
       outgoingView.destroy();
       viewRef.current = null;
     }
 
     if (!ed.content) {
+      loadedMemoNameRef.current = null;
+      loadedOverrideRef.current = undefined;
       setRenderTick((n) => n + 1);
       return;
     }
+    // From here on `memoName`/`memoEditorOverride` (the props captured by this effect's closure,
+    // from the same render that bumped `ed.loadGeneration`) correctly identify the memo this view
+    // is being built for — snapshot them now so the NEXT effect run's outgoing-flush (above) reads
+    // the right memo once the props have moved on again.
+    loadedMemoNameRef.current = memoName;
+    loadedOverrideRef.current = memoEditorOverride;
 
     // A fresh load always starts at the *governed* view mode (per-memo override falling back to
     // the global default) — any prior session's runtime toggle never carries over to a newly
@@ -233,8 +266,21 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // `liveViewOverride` left over from the memo just switched away from.
     const initialLiveView = resolvedViewMode === "live";
 
+    // Restored cursor/selection (GitHub issue #28) — set at state-creation time (not a later
+    // dispatch, unlike scroll position below which needs the view's first layout/measure pass)
+    // since an initial `EditorState.selection` avoids an extra transaction/history entry.
+    // Clamped to the just-loaded document's length in case the file was edited externally between
+    // saves and the persisted offsets are now stale/out of range.
+    const docLength = ed.content.text.length;
+    const clamp = (value: number) => Math.min(Math.max(value, 0), docLength);
+    const savedAnchor = ed.content.cursorAnchor;
+    const savedHead = ed.content.cursorHead;
+    const initialSelection =
+      savedAnchor != null && savedHead != null ? EditorSelection.single(clamp(savedAnchor), clamp(savedHead)) : undefined;
+
     const state = EditorState.create({
       doc: ed.content.text,
+      selection: initialSelection,
       extensions: [
         buildPlainTextExtensions({
           settings: resolvedSettings,
@@ -273,8 +319,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     }
     const scrollHandler = () => {
       if (scrollDebounceRef.current !== null) window.clearTimeout(scrollDebounceRef.current);
+      // Safe to read the live `memoNameRef`/`overrideRef` here (not the `loaded*` snapshots):
+      // if the user switches memos before this fires, the next effect run's outgoing-flush
+      // clears this very timeout (the `window.clearTimeout` at the top of the effect, before
+      // `outgoingView.destroy()`) before it ever gets a chance to run, so by construction this
+      // callback only ever fires while `view` is still the live, currently-open view.
       scrollDebounceRef.current = window.setTimeout(() => {
-        persistScrollPosition(computeTopVisibleLine(view));
+        persistEditorViewState(view, memoNameRef.current, overrideRef.current);
       }, SCROLL_PERSIST_DEBOUNCE_MS);
     };
     view.scrollDOM.addEventListener("scroll", scrollHandler);
@@ -316,7 +367,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       const view = viewRef.current;
       if (view) {
         if (scrollDebounceRef.current !== null) window.clearTimeout(scrollDebounceRef.current);
-        persistScrollPosition(computeTopVisibleLine(view));
+        // Whole-component unmount: only one memo is ever open at this point, so the live
+        // `memoNameRef`/`overrideRef` necessarily still refer to it.
+        persistEditorViewState(view, memoNameRef.current, overrideRef.current);
         view.destroy();
         viewRef.current = null;
       }

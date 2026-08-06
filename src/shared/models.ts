@@ -131,6 +131,13 @@ export interface MemoEditorSettings {
   viewMode?: "live" | "source" | null;
   /** 1-indexed document line number visible at the top of the viewport at save time. */
   scrollPosition?: number | null;
+  /** CodeMirror `EditorSelection.main.anchor` — character offset into the document, at save
+   * time (GitHub issue #28, "Reopening a memo restores scroll position but not cursor
+   * position"). Paired with `cursorHead` below so a real (non-collapsed) selection round-trips
+   * too, not just a collapsed cursor (`anchor === head`). */
+  cursorAnchor?: number | null;
+  /** CodeMirror `EditorSelection.main.head` — character offset into the document, at save time. */
+  cursorHead?: number | null;
 }
 
 /** Runtime/UI-only reconciled tree element, returned by `tree_open`
@@ -203,6 +210,12 @@ export interface MemoContent {
   /** `MemoEditorSettings.scrollPosition` — 1-indexed top-visible document line number, `null` if
    * never recorded (open at the top). */
   scrollPosition: number | null;
+  /** `MemoEditorSettings.cursorAnchor` — character offset into the document, `null` if never
+   * recorded (opens with the cursor at position 0). GitHub issue #28. */
+  cursorAnchor: number | null;
+  /** `MemoEditorSettings.cursorHead` — character offset into the document, `null` if never
+   * recorded. See `cursorAnchor`. */
+  cursorHead: number | null;
 }
 
 /** Return type of `editor_save`. */

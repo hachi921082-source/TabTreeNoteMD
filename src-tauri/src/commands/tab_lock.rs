@@ -994,6 +994,8 @@ pub(crate) fn session_editor_load(
         };
         let edit_locked = node.locked.unwrap_or(false);
         let scroll_position = node.editor.as_ref().and_then(|e| e.scroll_position);
+        let cursor_anchor = node.editor.as_ref().and_then(|e| e.cursor_anchor);
+        let cursor_head = node.editor.as_ref().and_then(|e| e.cursor_head);
 
         let Some(entry) = session.file_map.iter().find(|e| e.memo_name == path) else {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
@@ -1020,6 +1022,8 @@ pub(crate) fn session_editor_load(
             hash,
             edit_locked,
             scroll_position,
+            cursor_anchor,
+            cursor_head,
         })
     });
 
