@@ -104,7 +104,14 @@ function toggleLinePrefix(view: EditorView, re: RegExp, makePrefix: (indent: str
     const indent = /^(\s*)/.exec(l.text)?.[1] ?? "";
     return { from: l.from, to: l.from + indent.length, insert: makePrefix(indent) };
   });
-  view.dispatch({ changes });
+  // Map the pre-edit selection through the changes explicitly (assoc = 1, i.e. "stick to the
+  // right") instead of relying on CodeMirror's default dispatch-time mapping (assoc = -1, "stick
+  // to the left"). Without this, a collapsed cursor sitting exactly at a line's start — the common
+  // case, e.g. clicking Quote/List on an empty or just-typed line — maps to *before* the inserted
+  // "> "/"- " prefix rather than after it, leaving the cursor in the wrong place to keep typing.
+  const changeSet = view.state.changes(changes);
+  const selection = view.state.selection.map(changeSet, 1);
+  view.dispatch({ changes: changeSet, selection });
   view.focus();
   return true;
 }
