@@ -64,6 +64,7 @@ type PendingDialog =
   | { kind: "rename"; tab: TabInfo }
   | { kind: "remove"; tab: TabInfo }
   | { kind: "duplicateName"; path: string; suggestedName: string }
+  | { kind: "createNew"; suggestedName?: string }
   | { kind: "lockSetup"; tab: TabInfo }
   | { kind: "unlock"; tab: TabInfo };
 
@@ -78,8 +79,21 @@ function baseNameOf(path: string): string {
 }
 
 export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched, onOpenSearchHit }: TabBarProps) {
-  const { tabs, activeTabId, selectTab, createTab, registerExistingTab, retryCreateWithName, renameTab, reorderTabs, removeTab, openTabLocation, lastErrorCode, clearLastError } =
-    tabsState;
+  const {
+    tabs,
+    activeTabId,
+    selectTab,
+    createTab,
+    registerExistingTab,
+    createNewTab,
+    retryCreateWithName,
+    renameTab,
+    reorderTabs,
+    removeTab,
+    openTabLocation,
+    lastErrorCode,
+    clearLastError,
+  } = tabsState;
 
   const [orderIds, setOrderIds] = useState<string[]>([]);
   const draggingIdRef = useRef<string | null>(null);
@@ -145,6 +159,10 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
       setPendingDialog({ kind: "duplicateName", path: result.path, suggestedName: suggestSanitized(baseNameOf(result.path)) });
     }
   }, [createTab]);
+
+  const handleOpenCreateNew = useCallback(() => {
+    setPendingDialog({ kind: "createNew" });
+  }, []);
 
   // OS folder drag-and-drop onto the tab bar (`tab_register_existing`).
   // Uses Tauri's native drag-drop event (real filesystem paths) rather than
@@ -261,7 +279,10 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
             </div>
           );
         })}
-        <button type="button" className="ttn-tab-create" title="新しいタブを作成" onClick={() => void handleCreateTab()}>
+        <button type="button" className="ttn-tab-create" title="既存フォルダを登録" onClick={() => void handleCreateTab()}>
+          📂
+        </button>
+        <button type="button" className="ttn-tab-create" title="新しいタブを作成" onClick={handleOpenCreateNew}>
           ＋
         </button>
 
@@ -385,6 +406,24 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
             if (result.ok) setPendingDialog(null);
             else if (result.code === "NAME_DUPLICATE") {
               setPendingDialog({ kind: "duplicateName", path: result.path ?? pendingDialog.path, suggestedName: value });
+            }
+          }}
+        />
+      )}
+
+      {pendingDialog?.kind === "createNew" && (
+        <PromptDialog
+          title="新しいタブを作成"
+          label="タブ（フォルダ）名"
+          initialValue={pendingDialog.suggestedName}
+          submitLabel="作成"
+          validate={validateNameStrict}
+          onCancel={() => setPendingDialog(null)}
+          onSubmit={async (value) => {
+            const result = await createNewTab(value);
+            if (result.ok) setPendingDialog(null);
+            else if (result.code === "NAME_DUPLICATE") {
+              setPendingDialog({ kind: "createNew", suggestedName: suggestSanitized(value) });
             }
           }}
         />

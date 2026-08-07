@@ -56,6 +56,11 @@
 .ttn-tab-create {
   appearance: none;
   border: none;
+  /* Two adjacent buttons now share this class ("register existing" 📂 + "create new" ＋,
+     `docs/plans/tab-management/PLAN.md` §4, GitHub issue #2) — a right border on each keeps them
+     visually distinct from one another and from the last tab, matching `.ttn-tab`'s own
+     border-right separator convention. */
+  border-right: 1px solid var(--ttn-border);
   background: transparent;
   width: 36px;
   font-size: calc(16px * var(--ui-font-scale));
