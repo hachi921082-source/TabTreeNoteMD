@@ -31,6 +31,13 @@ export async function tabRegisterExisting(path: string, name?: string): Promise<
   return invoke<Result<TabInfo>>("tab_register_existing", { path, name: name ?? null });
 }
 
+/** Creates a brand-new, empty folder under the app's default tabs root and registers it — no OS
+ * dialog (`docs/plans/tab-management/PLAN.md` §2 `tab_create_new`, distinct from `tabCreate`'s
+ * OS-folder-picker "register existing" behavior). */
+export async function tabCreateNew(name: string): Promise<Result<TabInfo>> {
+  return invoke<Result<TabInfo>>("tab_create_new", { name });
+}
+
 export async function tabRename(id: string, newName: string): Promise<Result<TabInfo>> {
   return invoke<Result<TabInfo>>("tab_rename", { id, newName });
 }
