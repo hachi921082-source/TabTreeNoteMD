@@ -8,6 +8,7 @@ import { useRef } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { TreeNode } from "../../shared/models";
 import type { ClickModifiers } from "../../shared/treeSelection";
+import { FileIcon } from "./FileIcon";
 
 export type DropPosition = "before" | "after" | "into";
 
@@ -67,7 +68,7 @@ export function TreeRow(props: TreeRowProps) {
         ) : (
           <span className="ttn-tree-toggle-spacer" />
         )}
-        {node.label?.color && <span className="ttn-tree-label-dot" style={{ backgroundColor: node.label.color }} />}
+        <FileIcon color={node.label?.color ?? "var(--ttn-fg-muted)"} />
         {isRenaming ? (
           <input
             ref={inputRef}
@@ -88,11 +89,8 @@ export function TreeRow(props: TreeRowProps) {
             onBlur={(e) => onRenameSubmit(node.memoName, e.target.value)}
           />
         ) : (
-          <span className="ttn-tree-row-name">{node.memoName}</span>
-        )}
-        {node.locked && (
-          <span className="ttn-tree-edit-lock" title="編集ロック中">
-            🔒
+          <span className={`ttn-tree-row-name${node.locked ? " ttn-tree-row-name-locked" : ""}`} title={node.locked ? "編集ロック中" : undefined}>
+            {node.memoName}
           </span>
         )}
       </div>
