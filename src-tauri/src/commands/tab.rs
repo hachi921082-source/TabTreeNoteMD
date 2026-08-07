@@ -136,6 +136,56 @@ pub fn tab_register_existing(
     }
 }
 
+/// Creates a brand-new, empty folder under the default tabs root (`fs::app_data_root::tabs_root_dir`,
+/// `data/tabs/<name>/`) and registers it as a tab — no OS dialog, no existing folder required
+/// (`docs/plans/tab-management/PLAN.md` §2, GitHub issue #2's "create new" vs "register existing"
+/// distinction). `tab_create`/`tab_register_existing` both require an already-existing folder
+/// (`register_tab_at_path`'s `path.is_dir()` check); this command is the one path that actually
+/// creates new on-disk content.
+#[tauri::command]
+pub fn tab_create_new(app: AppHandle, name: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<TabInfo> {
+    let trimmed = name.trim().to_string();
+    if let Err(code) = validate_name(&trimmed, ValidationMode::Strict) {
+        return AppResult::err_code(code, "invalid tab name");
+    }
+
+    let tabs_root = crate::fs::app_data_root::tabs_root_dir();
+    if let Err(err) = std::fs::create_dir_all(&tabs_root) {
+        tracing::error!(error = %err, path = %tabs_root.display(), "tab_create_new: failed to prepare the default tabs root");
+        return AppResult::err_code(ErrorCode::Unknown, "failed to prepare the default tabs folder");
+    }
+
+    let folder_path = tabs_root.join(&trimmed);
+    if folder_path.exists() {
+        return AppResult::err(
+            AppErrorPayload::new(ErrorCode::NameDuplicate, "a folder with this name already exists").with_path(folder_path.to_string_lossy().to_string()),
+        );
+    }
+
+    if let Err(err) = std::fs::create_dir(&folder_path) {
+        tracing::error!(error = %err, path = %folder_path.display(), "tab_create_new: failed to create the new tab folder");
+        return AppResult::err_code(ErrorCode::Unknown, "failed to create the new tab folder");
+    }
+
+    match register_tab_at_path(&app, folder_path.clone(), Some(trimmed), &store, &registry) {
+        Ok(info) => AppResult::ok(info),
+        Err(payload) => {
+            // Don't leave an orphaned folder on disk if registration failed after we already
+            // created it (e.g. a tab-name collision against a *different* folder). Must be
+            // `remove_dir_all`, not `remove_dir`: by this point `register_tab_at_path` has
+            // already written `.tabtreenote.json` into `folder_path` (its own "initialize meta
+            // file" step runs before its duplicate-name check), so the folder is never actually
+            // empty here — `remove_dir` (empty-directories-only) silently no-ops with an
+            // "ディレクトリが空ではありません" IO error in this exact case, verified via manual
+            // reproduction during implementation.
+            if let Err(err) = std::fs::remove_dir_all(&folder_path) {
+                tracing::error!(error = %err, path = %folder_path.display(), "tab_create_new: failed to clean up orphaned folder after a failed registration");
+            }
+            AppResult::err(payload)
+        }
+    }
+}
+
 fn register_tab_at_path(
     app: &AppHandle,
     path: PathBuf,

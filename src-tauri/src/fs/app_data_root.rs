@@ -42,3 +42,10 @@ pub fn settings_json_path() -> PathBuf {
 pub fn ensure_app_data_root() -> io::Result<()> {
     std::fs::create_dir_all(app_data_root())
 }
+
+/// Default parent folder for a brand-new "Create new tab" folder (`docs/plans/tab-management/PLAN.md`
+/// §2 `tab_create_new`, GitHub issue #2) — `data/tabs/`, kept separate from `data/settings.json` so a
+/// user's tab folders don't sit directly alongside the app's own internal settings file.
+pub fn tabs_root_dir() -> PathBuf {
+    app_data_root().join("tabs")
+}

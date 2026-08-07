@@ -9,7 +9,7 @@
 // (`docs/DECISIONS.md` "'Pin' Button: Global Window Always-On-Top Toggle,
 // Not Per-Tab").
 import { useCallback, useEffect, useState } from "react";
-import { tabList, tabCreate, tabRegisterExisting, tabRename, tabReorder, tabRemove, tabOpenLocation } from "../ipc/tab";
+import { tabList, tabCreate, tabCreateNew, tabRegisterExisting, tabRename, tabReorder, tabRemove, tabOpenLocation } from "../ipc/tab";
 import type { TabInfo } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 
@@ -28,6 +28,11 @@ export interface UseTabsResult {
   /** No dialog — registers an already-known folder path (OS drag-and-drop
    * onto the tab bar). */
   registerExistingTab: (path: string) => Promise<TabMutationOutcome>;
+  /** No dialog, no existing folder required — creates a brand-new, empty folder under the app's
+   * default tabs root (`data/tabs/<name>/`) and registers it. Distinct from `createTab`/
+   * `registerExistingTab`, which both require an already-existing folder picked via the OS dialog
+   * or drag-and-drop (`docs/plans/tab-management/PLAN.md` §2 `tab_create_new`, GitHub issue #2). */
+  createNewTab: (name: string) => Promise<TabMutationOutcome>;
   /** Retries `createTab`/`registerExistingTab` with an explicit name after a
    * `NAME_DUPLICATE` rejection, for the same folder path, without
    * re-opening the dialog. */
@@ -88,6 +93,20 @@ export function useTabs(): UseTabsResult {
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message, path: result.error.path ?? path };
+    },
+    [refresh],
+  );
+
+  const createNewTab = useCallback(
+    async (name: string): Promise<TabMutationOutcome> => {
+      const result = await tabCreateNew(name);
+      if (result.ok) {
+        await refresh();
+        setActiveTabId(result.value.id);
+        return { ok: true };
+      }
+      setLastErrorCode(result.error.code);
+      return { ok: false, code: result.error.code, message: result.error.message, path: result.error.path };
     },
     [refresh],
   );
@@ -171,6 +190,7 @@ export function useTabs(): UseTabsResult {
     selectTab,
     createTab,
     registerExistingTab,
+    createNewTab,
     retryCreateWithName,
     renameTab,
     reorderTabs,
