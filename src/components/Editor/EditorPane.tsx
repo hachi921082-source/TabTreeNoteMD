@@ -576,14 +576,22 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         >
           {properties ? (
             <dl className="ttn-properties-list">
+              <dt>ファイル名</dt>
+              <dd>{properties.fileName}</dd>
+              <dt>ファイルパス</dt>
+              <dd className="ttn-properties-file-path">{properties.filePath}</dd>
               <dt>ファイルサイズ</dt>
               <dd>{properties.fileSizeBytes.toLocaleString()} バイト</dd>
               <dt>作成日時</dt>
               <dd>{properties.created}</dd>
               <dt>更新日時</dt>
               <dd>{properties.modified}</dd>
-              <dt>文字数</dt>
+              <dt>総字数</dt>
               <dd>{properties.charCount.toLocaleString()}</dd>
+              <dt>字数</dt>
+              <dd>{properties.charCountExcludingWhitespace.toLocaleString()}（改行・空白を除く）</dd>
+              <dt>行数</dt>
+              <dd>{properties.lineCount.toLocaleString()}</dd>
             </dl>
           ) : (
             <p>読み込み中...</p>
