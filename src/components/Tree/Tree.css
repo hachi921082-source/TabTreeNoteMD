@@ -158,6 +158,11 @@
   margin: 0;
 }
 
+.ttn-properties-file-path {
+  overflow-wrap: break-word;
+  word-break: break-all;
+}
+
 /* Applied to document.body while a tree-row drag is in progress
    (`components/Tree/TreeView.tsx`), and to the currently-hovered tab-bar tab
    element during a cross-tab drag. */
