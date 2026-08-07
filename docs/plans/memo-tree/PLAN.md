@@ -183,12 +183,18 @@ This command never touches `label.kind`, which stays reserved and unimplemented 
 
 ### `memo_get_properties(tab_id, path: NodePath) -> AppResult<MemoProperties>`
 ```rust
-struct MemoProperties { file_size_bytes: u64, created: String, modified: String, char_count: usize }
+struct MemoProperties {
+    file_name: String, file_path: String, file_size_bytes: u64, created: String, modified: String,
+    char_count: usize, char_count_excluding_whitespace: usize, line_count: usize,
+}
 ```
-File info from OS metadata + character count (reading the body once; encoding-aware count, i.e. count
-of decoded characters, not raw bytes — `[spec §2.2]`, "file info + character count"). Byte-count-by-
-encoding / half-width-full-width breakdown is explicitly deferred (`[spec §7]`, "Unimplemented /
-deferred") — not part of this command's scope.
+File info from OS metadata + character-count breakdown (reading the body once; encoding-aware count,
+i.e. count of decoded characters, not raw bytes — `[spec §2.2]`, "file info + character count").
+`char_count`/`char_count_excluding_whitespace`/`line_count` are all computed from the LF-normalized
+body (`memo_file_service::normalize_to_lf`). `file_path` is the logical `<folder>/<path>.md` path in
+both the plain and tab-locked (session) cases — the locked case never exposes the obfuscated on-disk
+token filename. Byte-count-by-encoding / half-width-full-width breakdown is explicitly deferred
+(`[spec §7]`, "Unimplemented / deferred") — not part of this command's scope.
 
 ## 4. Frontend (`components/Tree/`)
 
