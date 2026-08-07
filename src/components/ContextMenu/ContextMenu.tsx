@@ -5,7 +5,7 @@
 // the `label.color` picker, `memo-tree/PLAN.md` §3/§4) — `editor-save/PLAN.md`'s
 // editor context menu should reuse this same component too rather than
 // building its own.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./ContextMenu.css";
 
 export interface ContextMenuItem {
@@ -17,6 +17,9 @@ export interface ContextMenuItem {
   /**
    * Sub-items shown as an indented accordion section beneath this item when clicked (not a
    * hover flyout — simpler, and still keeps the whole menu open until a leaf item is chosen).
+   * The whole menu, including any expanded submenu, is clamped to the viewport (both axes) with
+   * a scroll fallback (see `useLayoutEffect` below), so this accordion approach doesn't need
+   * per-submenu-flyout overflow handling of its own.
    */
   submenu?: ContextMenuItem[];
 }
@@ -29,15 +32,44 @@ export interface ContextMenuProps {
   onClose: () => void;
 }
 
-const ITEM_HEIGHT_PX = 32;
 const MENU_MARGIN_PX = 16;
+
+interface MenuPosition {
+  left: number;
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+}
 
 /** Positions at `(x, y)`; closes on outside click or Esc; flips upward if it
  * would overflow the bottom of the viewport (`[spec §2.2]`, "right-click
- * menu displays upward when at screen bottom edge"). */
+ * menu displays upward when at screen bottom edge"). Position is re-measured
+ * from the real rendered DOM (via `useLayoutEffect`) rather than estimated,
+ * so it stays correct as the accordion expands/collapses; a `maxHeight` cap
+ * plus CSS `overflow-y: auto` guarantee the menu never renders past the
+ * opposite edge even if the measured content doesn't fit. */
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [position, setPosition] = useState<MenuPosition>({ left: x, top: y, maxHeight: window.innerHeight });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+
+    const left = Math.max(MENU_MARGIN_PX, Math.min(x, window.innerWidth - rect.width - MENU_MARGIN_PX));
+
+    const spaceBelow = window.innerHeight - y - MENU_MARGIN_PX;
+    const spaceAbove = y - MENU_MARGIN_PX;
+    const flipUp = rect.height > spaceBelow && spaceAbove > spaceBelow;
+
+    if (flipUp) {
+      setPosition({ left, bottom: window.innerHeight - y, maxHeight: spaceAbove });
+    } else {
+      setPosition({ left, top: y, maxHeight: spaceBelow });
+    }
+  }, [x, y, expandedIndex, items]);
 
   useEffect(() => {
     const handlePointerDown = (e: MouseEvent) => {
@@ -56,19 +88,16 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
-  const expandedSubmenuLength = expandedIndex !== null ? (items[expandedIndex]?.submenu?.length ?? 0) : 0;
-  const estimatedHeight = (items.length + expandedSubmenuLength) * ITEM_HEIGHT_PX + MENU_MARGIN_PX;
-  const flipUp = y + estimatedHeight > window.innerHeight;
-
   return (
     <div
       className="ttn-context-menu"
       ref={ref}
       role="menu"
       style={{
-        left: x,
-        top: flipUp ? undefined : y,
-        bottom: flipUp ? window.innerHeight - y : undefined,
+        left: position.left,
+        top: position.top,
+        bottom: position.bottom,
+        maxHeight: position.maxHeight,
       }}
     >
       {items.map((item, i) => (
