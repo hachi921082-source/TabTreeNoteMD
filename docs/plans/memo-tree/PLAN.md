@@ -208,8 +208,12 @@ user if shown — same reasoning as `memo_get_properties`'s `file_path` masking 
 
 ## 4. Frontend (`components/Tree/`)
 
-- Renders `TreeNode[]` with connection lines, expand/collapse (`memo_set_expanded`), color/type label
-  badges.
+- Renders `TreeNode[]` with connection lines, expand/collapse (`memo_set_expanded`). Every row shows a
+  `FileIcon` (`components/Tree/FileIcon.tsx`, inline-SVG line-art ported from the old app, issue #7):
+  colored by the memo's `label.color` if set, else the muted foreground color. Edit-locked memos
+  (`node.locked`) are *not* marked via `FileIcon`'s `encrypted` prop (never used — no per-memo
+  encryption concept in this app) or a badge; instead their name renders bold + `--ttn-danger` colored,
+  with the "編集ロック中" tooltip moved onto the name span.
 - Selection: click = single-select + open memo (fires `editor_load` via `editor-save/PLAN.md`'s hook);
   Ctrl-click = toggle in multi-select set; Shift-click = range-select over the current visible
   (expanded-aware) flat order. Standard OS-file-explorer-style semantics: flatten the currently-visible
