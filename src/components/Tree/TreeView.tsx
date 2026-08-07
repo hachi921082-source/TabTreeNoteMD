@@ -18,6 +18,7 @@ import { PasswordDialog } from "../dialogs/PasswordDialog";
 import { RecoveryDialog } from "../dialogs/RecoveryDialog";
 import { validateNameStrict } from "../../shared/nameSanitize";
 import { errorMessageFor } from "../../shared/errorMessages";
+import { formatDateTime } from "../../shared/formatDateTime";
 import { locateNode } from "../../shared/treeOps";
 import type { UseTreeResult } from "../../state/useTree";
 import type { UseTabLockResult } from "../../state/useTabLock";
@@ -559,36 +560,51 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
             setProperties(null);
           }}
           footer={
-            <button
-              type="button"
-              onClick={() => {
-                setPendingDialog(null);
-                setProperties(null);
-              }}
-            >
-              閉じる
-            </button>
+            <>
+              <button type="button" onClick={() => void tree.openLocation(pendingDialog.path)}>
+                ファイルの場所を開く(O)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingDialog(null);
+                  setProperties(null);
+                }}
+              >
+                閉じる
+              </button>
+            </>
           }
         >
           {properties ? (
-            <dl className="ttn-properties-list">
-              <dt>ファイル名</dt>
-              <dd>{properties.fileName}</dd>
-              <dt>ファイルパス</dt>
-              <dd className="ttn-properties-file-path">{properties.filePath}</dd>
-              <dt>ファイルサイズ</dt>
-              <dd>{properties.fileSizeBytes.toLocaleString()} バイト</dd>
-              <dt>作成日時</dt>
-              <dd>{properties.created}</dd>
-              <dt>更新日時</dt>
-              <dd>{properties.modified}</dd>
-              <dt>総字数</dt>
-              <dd>{properties.charCount.toLocaleString()}</dd>
-              <dt>字数</dt>
-              <dd>{properties.charCountExcludingWhitespace.toLocaleString()}（改行・空白を除く）</dd>
-              <dt>行数</dt>
-              <dd>{properties.lineCount.toLocaleString()}</dd>
-            </dl>
+            <>
+              <section>
+                <h3 className="ttn-properties-section-title">ファイル情報</h3>
+                <dl className="ttn-properties-list">
+                  <dt>ファイル名</dt>
+                  <dd>{properties.fileName}</dd>
+                  <dt>ファイルパス</dt>
+                  <dd className="ttn-properties-file-path">{properties.filePath}</dd>
+                  <dt>作成日時</dt>
+                  <dd>{formatDateTime(properties.createdMs)}</dd>
+                  <dt>更新日時</dt>
+                  <dd>{formatDateTime(properties.modifiedMs)}</dd>
+                  <dt>ファイルサイズ</dt>
+                  <dd>{properties.fileSizeBytes.toLocaleString()} バイト</dd>
+                </dl>
+              </section>
+              <section className="ttn-properties-section">
+                <h3 className="ttn-properties-section-title">文字数カウント</h3>
+                <dl className="ttn-properties-list">
+                  <dt>総字数</dt>
+                  <dd>{properties.charCount.toLocaleString()}</dd>
+                  <dt>字数</dt>
+                  <dd>{properties.charCountExcludingWhitespace.toLocaleString()}（改行・空白を除く）</dd>
+                  <dt>行数</dt>
+                  <dd>{properties.lineCount.toLocaleString()}</dd>
+                </dl>
+              </section>
+            </>
           ) : (
             <p>読み込み中...</p>
           )}
