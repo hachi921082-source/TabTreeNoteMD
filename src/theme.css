@@ -23,6 +23,18 @@
  * custom-property indirection at all — structurally unable to be affected by `--ui-font-scale`
  * even by accident (`docs/plans/appearance-theme/PLAN.md` §2's explicit structural-separation
  * requirement).
+ *
+ * `--ttn-bg-active-line` (GitHub issue #30) is translucent (`rgba`), unlike its opaque
+ * `--ttn-bg-*` siblings above: CodeMirror 6's `drawSelection()` renders `.cm-selectionBackground`
+ * as a `position: absolute; z-index: -2` layer behind the normal-flow `.cm-line` elements, while
+ * `highlightActiveLine()` paints `.cm-activeLine`'s background as that line's own (opaque) box
+ * background — a solid `.cm-activeLine` fill therefore fully occludes the selection layer
+ * underneath on the line containing the cursor, making an in-line text selection invisible there.
+ * A low-alpha overlay lets the selection color show through tinted rather than hidden, matching
+ * the same low-alpha convention CodeMirror's own bundled themes (e.g. `oneDark`) use for
+ * `.cm-activeLine` for this exact reason. Used only by `editor/textCommands.ts`'s
+ * `editorPaletteExtension()` for `.cm-activeLine`'s content background — `.cm-activeLineGutter`
+ * keeps the opaque `--ttn-bg-hover-surface` since the gutter never overlaps a text selection.
  */
 
 :root {
@@ -41,6 +53,7 @@
   --ttn-bg-hover-surface: #f0f0f0;
   --ttn-bg-selected: #dbe9fb;
   --ttn-bg-code: #f0f0f0;
+  --ttn-bg-active-line: rgba(0, 0, 0, 0.06);
 
   --ttn-fg: #1a1a1a;
   --ttn-fg-muted: #666666;
@@ -70,6 +83,7 @@
   --ttn-bg-hover-surface: #f0f0f0;
   --ttn-bg-selected: #dbe9fb;
   --ttn-bg-code: #f0f0f0;
+  --ttn-bg-active-line: rgba(0, 0, 0, 0.06);
 
   --ttn-fg: #1a1a1a;
   --ttn-fg-muted: #666666;
@@ -99,6 +113,7 @@
   --ttn-bg-hover-surface: #333333;
   --ttn-bg-selected: #2c4a6e;
   --ttn-bg-code: #2b2b2b;
+  --ttn-bg-active-line: rgba(255, 255, 255, 0.09);
 
   --ttn-fg: #e4e4e4;
   --ttn-fg-muted: #a8a8a8;
