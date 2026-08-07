@@ -163,6 +163,19 @@
   word-break: break-all;
 }
 
+/* Section headers ("ファイル情報" / "文字数カウント") in the Properties dialog
+   (`components/Editor/EditorPane.tsx`, `components/Tree/TreeView.tsx`) — same heading style as
+   `.ttn-settings-section h3` (`components/Settings/Settings.css`) for visual consistency. */
+.ttn-properties-section-title {
+  font-size: calc(13px * var(--ui-font-scale));
+  margin: 0 0 8px 0;
+  color: var(--ttn-fg-muted);
+}
+
+.ttn-properties-section {
+  margin-top: 16px;
+}
+
 /* Applied to document.body while a tree-row drag is in progress
    (`components/Tree/TreeView.tsx`), and to the currently-hovered tab-bar tab
    element during a cross-tab drag. */
