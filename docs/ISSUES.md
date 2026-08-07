@@ -60,25 +60,6 @@
 - **Fix**: update the `Cargo.toml` comment to match the Registry Run-key approach. Pure doc correction,
   no code change.
 
-### `sanitizeMarkdownHtml()` defined but unused; enforcement path diverges from PLAN.md §5
-
-- **Found by**: `reviewer-lite`, reviewing `docs/plans/markdown-editing/PLAN.md`.
-- **Symptom**: `src/editor/markdownSanitize.ts` defines `sanitizeMarkdownHtml()`, a DOMPurify-configured
-  wrapper, per PLAN §5's explicit instruction to "Use DOMPurify... configured with a strict custom
-  allowlist... rather than DOMPurify's permissive defaults." It is never called anywhere in `src/`. The
-  actual enforcement path is `markdownSpanParser.ts` calling the same module's lower-level
-  `filterStyleDeclarations()`/`isSafeRelativeImageSrc()` helpers directly, bypassing DOMPurify entirely
-  — this works because the decoration engine never injects raw HTML into the DOM (it builds CodeMirror
-  mark/widget decorations from parsed attributes), so CodeMirror's own text rendering keeps everything
-  else inert by construction.
-- No functional or security defect: hands-on testing confirmed the effective sanitization properties
-  (disallowed CSS properties stripped, `..` path-traversal rejected, `<script>`/`on*` handlers inert)
-  fully hold via the actual path used.
-- Fix direction is a `developer-lite` implementation call, not a user decision: either wire
-  `sanitizeMarkdownHtml()` in for real, or update the plan's Implementation Notes to state why the
-  DOMPurify wrapper was left unused in favor of the narrower parser-level filters (and remove the dead
-  code if so).
-
 ### Toolbar image-insert file input leaks on dialog cancel
 
 - **Found by**: `reviewer-lite`, reviewing `docs/plans/image-handling/PLAN.md`.

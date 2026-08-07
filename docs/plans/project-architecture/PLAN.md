@@ -31,7 +31,7 @@ implemented without reading or copying the old repository's source code.
 | Frontend framework | **React 18 + TypeScript** | Continuity with legacy renderer (`react`/`react-dom` in legacy `package.json`); `DECISIONS.md` explicitly gives "renderer assets... can be carried over largely as is" as part of the Tauri-adoption rationale. This is treated as an implementation-discretion decision (no product-observable consequence, unlike the editor-engine choice), not escalated to `designer-lite`. |
 | Build tool (frontend) | Vite | Same as legacy (`electron-vite` → plain `vite` since Tauri's dev server model replaces `electron-vite`'s main/preload/renderer split) |
 | Editor engine | CodeMirror 6 | `[spec §4.2]`, confirmed, see `markdown-editing/PLAN.md` |
-| HTML sanitization (preview) | DOMPurify (or equivalent) with a custom allowlist config | Continuity with legacy (`dompurify` dependency); see `markdown-editing/PLAN.md` §5 |
+| HTML sanitization (preview) | Parser-level attribute filtering (`filterStyleDeclarations()`/`isSafeRelativeImageSrc()` in `markdownSanitize.ts`, called from `markdownSpanParser.ts`) | No HTML-string round-trip; see `markdown-editing/PLAN.md` §5 |
 | File watching (Rust) | `notify` crate | Rust ecosystem equivalent of legacy `chokidar` |
 | Crypto (Rust) | `aes-gcm` + `scrypt` crates (RustCrypto) | `[spec §4.1]` AES-256-GCM + scrypt |
 | Encoding (Rust) | `encoding_rs` (Shift_JIS fallback) | Rust ecosystem equivalent of legacy `iconv-lite` |

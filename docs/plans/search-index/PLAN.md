@@ -87,9 +87,10 @@ table pipes, horizontal-rule sequences) and HTML tags (including the allowlisted
 code block contents, link label text). This is a **different, simpler** transform than the
 sanitization allowlist in `markdown-editing/PLAN.md` — that one produces safe-to-render HTML for
 preview; this one produces plain searchable text, and can be implemented as a standalone
-regex/line-scanner in `search/index.rs` rather than sharing code with the frontend's DOMPurify-based
-sanitizer (they run in different processes/languages anyway — Rust backend vs. TS frontend — so code
-sharing isn't applicable regardless). Whether raw URLs inside link targets are retained in the
+regex/line-scanner in `search/index.rs` rather than sharing code with the frontend's parser-level
+sanitizer (`markdownSanitize.ts`'s `filterStyleDeclarations()`/`isSafeRelativeImageSrc()`) (they run in
+different processes/languages anyway — Rust backend vs. TS frontend — so code sharing isn't applicable
+regardless). Whether raw URLs inside link targets are retained in the
 indexed plaintext is an implementation nicety either way (`[detailed-spec §5.4]`).
 
 **Fenced code blocks must be recognized via a real fence-boundary scan, not swept up by the same

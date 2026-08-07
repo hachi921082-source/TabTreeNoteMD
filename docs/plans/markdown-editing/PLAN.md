@@ -223,8 +223,9 @@ separate "clear size" control:
 
 ## 5. Sanitization Allowlist
 
-Applied by `markdownSanitize.ts` to the HTML the decoration layer produces for rendering, **on every
-render pass**, not just at save (`[detailed-spec §5.10]`):
+Enforced by `markdownSanitize.ts`'s `filterStyleDeclarations()`/`isSafeRelativeImageSrc()` helpers,
+called directly by `markdownSpanParser.ts` while it parses Markdown source into decoration
+attributes, **on every render pass**, not just at save (`[detailed-spec §5.10]`):
 
 | Tag | Allowed attributes | Notes |
 |---|---|---|
@@ -232,11 +233,13 @@ render pass**, not just at save (`[detailed-spec §5.10]`):
 | `<span>` | `style`, and within it **only** `color` and `font-size` properties | any other CSS property in the same `style` string is stripped from that string, not the whole `<span>` |
 
 Everything else — `<script>`, any `on*` event-handler attribute, `javascript:`-scheme URLs in any
-attribute, `<iframe>`, `<style>`, disallowed CSS properties like `position` — is stripped entirely,
-every render pass, so pasted or hand-typed unsafe HTML never executes even transiently
-(`[spec §4.2]`, `[detailed-spec §5.10]`). Use DOMPurify (continuity with legacy `dompurify` dependency)
-configured with a strict custom allowlist matching exactly this table, rather than DOMPurify's
-permissive defaults.
+attribute, `<iframe>`, `<style>`, disallowed CSS properties like `position` — is never emitted as a
+decoration attribute in the first place: the parser only ever reads out `src`/`width`/`height`/
+`style` from the parsed Markdown, and `style` is passed through `filterStyleDeclarations()` before
+use (`[spec §4.2]`, `[detailed-spec §5.10]`). This is not a DOMPurify pass over an HTML string —
+the decoration engine never constructs an HTML fragment and hands it to the DOM at all; it builds
+CodeMirror `Decoration` marks/widgets directly from these individually-validated attributes, so
+there is no HTML for a sanitizer to run over.
 
 This sanitization applies to the **live-view rendering** path only — the underlying CodeMirror
 document/buffer (and therefore the saved `.md` file) always retains the user's original typed text
