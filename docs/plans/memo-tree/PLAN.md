@@ -184,7 +184,7 @@ This command never touches `label.kind`, which stays reserved and unimplemented 
 ### `memo_get_properties(tab_id, path: NodePath) -> AppResult<MemoProperties>`
 ```rust
 struct MemoProperties {
-    file_name: String, file_path: String, file_size_bytes: u64, created: String, modified: String,
+    file_name: String, file_path: String, file_size_bytes: u64, created_ms: u64, modified_ms: u64,
     char_count: usize, char_count_excluding_whitespace: usize, line_count: usize,
 }
 ```
@@ -194,7 +194,17 @@ i.e. count of decoded characters, not raw bytes — `[spec §2.2]`, "file info +
 body (`memo_file_service::normalize_to_lf`). `file_path` is the logical `<folder>/<path>.md` path in
 both the plain and tab-locked (session) cases — the locked case never exposes the obfuscated on-disk
 token filename. Byte-count-by-encoding / half-width-full-width breakdown is explicitly deferred
-(`[spec §7]`, "Unimplemented / deferred") — not part of this command's scope.
+(`[spec §7]`, "Unimplemented / deferred") — not part of this command's scope. `created_ms`/
+`modified_ms` are raw epoch-ms timestamps (`system_time_to_epoch_ms`, `tree.rs`), not pre-formatted
+strings — the frontend (`shared/formatDateTime.ts`) formats them in the user's local timezone with
+weekday + relative "n日前", matching the old app's client-side `formatDateTime` verbatim.
+
+### `memo_open_location(tab_id, path: NodePath) -> AppResult<()>`
+OS "reveal in file manager" for a single memo (`[spec §2.8]`'s pattern; same `tauri_plugin_opener`
+Shell API as `commands/tab::tab_open_location`). Plain (non-locked) tabs reveal the actual memo file
+(`<folder>/<path>.md`), selected in Explorer. Locked/session tabs instead reveal the tab's folder
+itself (no file selected), since the on-disk file is an obfuscated token name that would confuse the
+user if shown — same reasoning as `memo_get_properties`'s `file_path` masking above.
 
 ## 4. Frontend (`components/Tree/`)
 
