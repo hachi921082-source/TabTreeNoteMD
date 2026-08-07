@@ -102,6 +102,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - **Full-text search (cross-tab)**: Targets memo name and body. Implementation: **lightweight in-memory index** (built at startup, no external DB or persistent index).
   - **Two paths for index differential update**: ① In-app changes (save, rename, delete, etc.) update index directly on save completion / ② External changes via file monitoring only.
   - **Locked tab handling**: Whether locked or in unlock session, that tab's name and body are always excluded from full-text search index (§4.1).
+  - **Scope selector**: all tabs / current tab only (radio buttons in the search dialog, default: current tab; GitHub issue #4).
 
 `[DESIGN §2.4]`
 

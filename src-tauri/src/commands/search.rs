@@ -22,6 +22,12 @@ pub struct SearchOptions {
     pub case_sensitive: bool,
     #[serde(default)]
     pub regex: bool,
+    /// Scope selector (GitHub issue #4): `Some(tab_id)` restricts hits to that one tab
+    /// ("現在のタブ" in the UI); `None` searches every unlocked tab ("全タブ"). Absent from
+    /// older callers thanks to `#[serde(default)]`, which defaults to `None` (all tabs) —
+    /// matches this command's pre-existing behavior for any caller that doesn't send it.
+    #[serde(default)]
+    pub scope_tab_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -72,6 +78,11 @@ pub fn search_query(query: String, options: SearchOptions, index: State<SearchIn
         if tab.locked.unwrap_or(false) {
             continue;
         }
+        if let Some(scope_tab_id) = &options.scope_tab_id {
+            if &entry.tab_id != scope_tab_id {
+                continue;
+            }
+        }
 
         let name_match = matcher(&entry.plaintext_name);
         let body_match = matcher(&entry.plaintext);
@@ -118,7 +129,7 @@ mod tests {
 
     #[test]
     fn build_matcher_plain_substring_is_case_insensitive_by_default() {
-        let m = build_matcher("hello", &SearchOptions { case_sensitive: false, regex: false }).unwrap();
+        let m = build_matcher("hello", &SearchOptions { case_sensitive: false, regex: false, scope_tab_id: None }).unwrap();
         assert!(m("say HELLO world"));
         assert!(m("say hello world"));
         assert!(!m("say goodbye"));
@@ -126,14 +137,14 @@ mod tests {
 
     #[test]
     fn build_matcher_plain_substring_case_sensitive() {
-        let m = build_matcher("Hello", &SearchOptions { case_sensitive: true, regex: false }).unwrap();
+        let m = build_matcher("Hello", &SearchOptions { case_sensitive: true, regex: false, scope_tab_id: None }).unwrap();
         assert!(m("say Hello world"));
         assert!(!m("say hello world"));
     }
 
     #[test]
     fn build_matcher_regex_case_insensitive_by_default() {
-        let m = build_matcher("h[ae]llo", &SearchOptions { case_sensitive: false, regex: true }).unwrap();
+        let m = build_matcher("h[ae]llo", &SearchOptions { case_sensitive: false, regex: true, scope_tab_id: None }).unwrap();
         assert!(m("HALLO there"));
         assert!(m("hello there"));
         assert!(!m("nothing here"));
@@ -141,13 +152,13 @@ mod tests {
 
     #[test]
     fn build_matcher_regex_case_sensitive() {
-        let m = build_matcher("Hello", &SearchOptions { case_sensitive: true, regex: true }).unwrap();
+        let m = build_matcher("Hello", &SearchOptions { case_sensitive: true, regex: true, scope_tab_id: None }).unwrap();
         assert!(m("Hello world"));
         assert!(!m("hello world"));
     }
 
     #[test]
     fn build_matcher_invalid_regex_is_an_error() {
-        assert!(build_matcher("(unclosed", &SearchOptions { case_sensitive: false, regex: true }).is_err());
+        assert!(build_matcher("(unclosed", &SearchOptions { case_sensitive: false, regex: true, scope_tab_id: None }).is_err());
     }
 }
