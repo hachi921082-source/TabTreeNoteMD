@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::tab_lock;
 use crate::commands::{emit_meta_recovered, emit_settings_recovery_event};
@@ -55,8 +56,12 @@ pub struct MemoProperties {
     pub file_name: String,
     pub file_path: String,
     pub file_size_bytes: u64,
-    pub created: String,
-    pub modified: String,
+    /// Raw epoch-ms timestamps (not pre-formatted) — the frontend formats these locally,
+    /// including weekday + relative "n日前", matching the old app's `formatDateTime`
+    /// (`src/shared/formatDateTime.ts`), which requires local-timezone formatting rather than
+    /// the backend's previous UTC-string approach.
+    pub created_ms: u64,
+    pub modified_ms: u64,
     pub char_count: usize,
     pub char_count_excluding_whitespace: usize,
     pub line_count: usize,
@@ -873,20 +878,61 @@ pub fn memo_get_properties(
     let char_count = normalized.chars().count();
     let char_count_excluding_whitespace = normalized.chars().filter(|c| !c.is_whitespace()).count();
     let line_count = normalized.split('\n').count();
-    let created = metadata.created().ok().map(format_system_time_utc).unwrap_or_default();
-    let modified = metadata.modified().ok().map(format_system_time_utc).unwrap_or_default();
+    let created_ms = metadata.created().ok().map(system_time_to_epoch_ms).unwrap_or_default();
+    let modified_ms = metadata.modified().ok().map(system_time_to_epoch_ms).unwrap_or_default();
     let file_name = format!("{}.md", path.rsplit('/').next().unwrap_or(&path));
 
     AppResult::ok(MemoProperties {
         file_name,
         file_path: file_path.display().to_string(),
         file_size_bytes: metadata.len(),
-        created,
-        modified,
+        created_ms,
+        modified_ms,
         char_count,
         char_count_excluding_whitespace,
         line_count,
     })
+}
+
+// ---------------------------------------------------------------------------
+// memo_open_location
+// ---------------------------------------------------------------------------
+
+/// OS "reveal in file manager" for a single memo (`[spec §2.8]`'s pattern, same Shell API as
+/// `commands/tab::tab_open_location`). Plain (non-locked) tabs reveal the actual memo file,
+/// selected in Explorer. Locked/session tabs store the memo body under an obfuscated on-disk
+/// token filename (`tab_lock::session_get_properties`'s same reasoning) — revealing that specific
+/// file would show a confusingly-named file, so this branch reveals the tab's folder itself
+/// instead, without selecting any file (same behavior as `tab_open_location`).
+#[tauri::command]
+pub fn memo_open_location(
+    app: AppHandle,
+    tab_id: String,
+    path: NodePath,
+    store: State<AppSettingsStore>,
+    registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
+) -> AppResult<()> {
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+
+    let access = match tab_lock::resolve_tab_access(&settings, &sessions, &tab_id) {
+        Ok(v) => v,
+        Err(e) => return AppResult::err(e),
+    };
+
+    let target = match access {
+        tab_lock::TabAccess::Session { folder, .. } => folder,
+        tab_lock::TabAccess::Plain { folder, .. } => folder.join(format!("{path}.md")),
+    };
+
+    match app.opener().reveal_item_in_dir(&target) {
+        Ok(()) => AppResult::ok(()),
+        Err(err) => {
+            tracing::error!(error = %err, path = %target.display(), "memo_open_location: failed to reveal location");
+            AppResult::err_code(ErrorCode::NotFound, "could not open the memo's file location")
+        }
+    }
 }
 
 /// Encoding detection (`[detailed-spec §5.3]`): delegates to the shared
@@ -897,35 +943,12 @@ fn decode_memo_body(bytes: &[u8]) -> String {
     crate::store::memo_file_service::decode_memo_body(bytes).0
 }
 
-/// Formats a `SystemTime` as a UTC `"YYYY-MM-DD HH:MM:SS"` string, without pulling in a
-/// date/time crate for this single formatting need. `pub(crate)` so `commands/tab_lock.rs`'s
+/// Converts a `SystemTime` to milliseconds since the Unix epoch, for the frontend to format
+/// locally (weekday + local time + relative "n日前", matching the old app's client-side
+/// `formatDateTime` — `src/shared/formatDateTime.ts`). `pub(crate)` so `commands/tab_lock.rs`'s
 /// session-path `memo_get_properties` equivalent can reuse it.
-pub(crate) fn format_system_time_utc(t: std::time::SystemTime) -> String {
-    let duration = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let total_secs = duration.as_secs();
-    let days = (total_secs / 86400) as i64;
-    let secs_of_day = total_secs % 86400;
-    let (year, month, day) = civil_from_days(days);
-    let hour = secs_of_day / 3600;
-    let minute = (secs_of_day % 3600) / 60;
-    let second = secs_of_day % 60;
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
-}
-
-/// Howard Hinnant's `civil_from_days` algorithm (public domain), converting a day count since
-/// the Unix epoch (1970-01-01) into a proleptic-Gregorian `(year, month, day)`.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let year = if m <= 2 { y + 1 } else { y };
-    (year, m, d)
+pub(crate) fn system_time_to_epoch_ms(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -1292,13 +1315,6 @@ mod tests {
             }
             _ => panic!("expected OtherTab"),
         }
-    }
-
-    #[test]
-    fn civil_from_days_epoch_and_known_date() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        // 2026-08-01 is 20666 days after the epoch.
-        assert_eq!(civil_from_days(20666), (2026, 8, 1));
     }
 
     #[test]

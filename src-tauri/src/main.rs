@@ -175,6 +175,7 @@ fn main() {
             commands::tree::memo_set_editor_override,
             commands::tree::memo_set_edit_lock,
             commands::tree::memo_get_properties,
+            commands::tree::memo_open_location,
             commands::editor::editor_load,
             commands::editor::editor_save,
             commands::editor::editor_close,
