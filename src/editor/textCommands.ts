@@ -144,8 +144,12 @@ function editorPaletteExtension(): Extension {
       border: "none",
       borderRight: "1px solid var(--ttn-border)",
     },
+    // Translucent, not `--ttn-bg-hover-surface` like `.cm-activeLineGutter` below — see
+    // `--ttn-bg-active-line`'s doc comment in `theme.css` (GitHub issue #30): an opaque fill here
+    // would sit in front of and fully hide CodeMirror's negative-z-index `.cm-selectionBackground`
+    // layer on the line containing the cursor, making a same-line text selection invisible.
     ".cm-activeLine": {
-      backgroundColor: "var(--ttn-bg-hover-surface)",
+      backgroundColor: "var(--ttn-bg-active-line)",
     },
     ".cm-activeLineGutter": {
       backgroundColor: "var(--ttn-bg-hover-surface)",
