@@ -171,8 +171,9 @@ export interface MemoProperties {
   fileName: string;
   filePath: string;
   fileSizeBytes: number;
-  created: string;
-  modified: string;
+  /** Raw epoch-ms timestamps — format locally via `shared/formatDateTime.ts`'s `formatDateTime`. */
+  createdMs: number;
+  modifiedMs: number;
   charCount: number;
   charCountExcludingWhitespace: number;
   lineCount: number;

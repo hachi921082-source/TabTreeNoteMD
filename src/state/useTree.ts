@@ -16,6 +16,7 @@ import {
   memoDelete,
   memoGetProperties,
   memoMove,
+  memoOpenLocation,
   memoRename,
   memoSetEditLock,
   memoSetEditorOverride,
@@ -81,6 +82,10 @@ export interface UseTreeResult {
   setEditorOverride: (path: string, editor: MemoEditorSettings | null) => Promise<void>;
   setEditLock: (path: string, locked: boolean) => Promise<void>;
   getProperties: (path: string) => Promise<MemoProperties | null>;
+  /** "ファイルの場所を開く" — reveals the memo's file (or the tab's folder, for locked/session
+   * tabs) in Explorer. Reports failure via `lastErrorCode`, same convention as every other
+   * mutation here. */
+  openLocation: (path: string) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -335,6 +340,15 @@ export function useTree(tabId: string | null): UseTreeResult {
     [tabId],
   );
 
+  const openLocation = useCallback(
+    async (path: string): Promise<void> => {
+      if (!tabId) return;
+      const result = await memoOpenLocation(tabId, path);
+      if (!result.ok) setLastErrorCode(result.error.code);
+    },
+    [tabId],
+  );
+
   return {
     activeTabId: tabId,
     nodes,
@@ -365,6 +379,7 @@ export function useTree(tabId: string | null): UseTreeResult {
     setEditorOverride,
     setEditLock,
     getProperties,
+    openLocation,
     refresh,
   };
 }
