@@ -1,6 +1,14 @@
 .ttn-context-menu {
   position: fixed;
+  /* Without this, the inline `maxHeight` (content-box by default) would undercount the box's
+     real rendered height by its padding+border, letting a flipped-up menu render a few px past
+     the viewport's top edge instead of exactly at MENU_MARGIN_PX. */
+  box-sizing: border-box;
   min-width: 180px;
+  /* Comfortably wider than the longest current label ("空白/改行の表示を消す"), as a hard
+     ceiling so an unexpectedly long future label can't widen the box past the viewport. The
+     horizontal clamp in ContextMenu.tsx only shifts the box; this is what bounds its width. */
+  max-width: min(320px, calc(100vw - 2 * 8px));
   background: var(--ttn-bg);
   color: var(--ttn-fg);
   border: 1px solid var(--ttn-border);
@@ -10,6 +18,10 @@
   z-index: 1000;
   display: flex;
   flex-direction: column;
+  /* `max-height` is applied via inline style (ContextMenu.tsx); this is what makes it scroll
+     instead of overflowing when that cap is exceeded (e.g. a submenu expands but there's not
+     enough room in the chosen direction). */
+  overflow-y: auto;
 }
 
 .ttn-context-menu-item {

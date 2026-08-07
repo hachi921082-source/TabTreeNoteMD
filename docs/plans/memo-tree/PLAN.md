@@ -241,7 +241,9 @@ user if shown — same reasoning as `memo_get_properties`'s `file_path` masking 
 - Right-click context menu (shared component, `components/dialogs/` or a dedicated
   `components/ContextMenu/`): "Rename," "Delete," "Create Memo," "Create as Child," "Icon" submenu,
   "Properties," plus move-up/down/hierarchy entries if not covered by DND alone. Flips to render upward
-  when it would overflow the bottom of the screen (`[spec §2.2]`). **"Icon" submenu is the
+  when it would overflow the bottom of the screen (`[spec §2.2]`), and is also clamped horizontally
+  with a scroll fallback so an expanded submenu (e.g. the "Icon" accordion below) can't overflow either
+  edge — see `ContextMenu.tsx`'s `useLayoutEffect`-based real-DOM-measurement positioning. **"Icon" submenu is the
   `label.color` picker** — see §3's `memo_set_label` entry above for the confirmed concrete palette;
   selecting an entry calls `memo_set_label` with that `color` value. It never sets `label.kind` (which
   stays reserved/unimplemented for v1 — `null` only, `[detailed-spec §3.3]`).
