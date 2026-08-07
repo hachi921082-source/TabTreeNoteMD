@@ -168,10 +168,14 @@ export interface TreeSnapshot {
 }
 
 export interface MemoProperties {
+  fileName: string;
+  filePath: string;
   fileSizeBytes: number;
   created: string;
   modified: string;
   charCount: number;
+  charCountExcludingWhitespace: number;
+  lineCount: number;
 }
 
 /** `memo_move`'s target parameter (`docs/plans/memo-tree/PLAN.md` §3). */

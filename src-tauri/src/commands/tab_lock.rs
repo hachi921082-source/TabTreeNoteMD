@@ -963,11 +963,22 @@ pub(crate) fn session_get_properties(sessions: &LockSessionStore, folder: &Path,
         let key = LockKey::new(&session.key);
         let plaintext = lock_blob::decrypt_memo_body(&key, &bytes).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "failed to decrypt memo body"))?;
         let (decoded, _encoding) = decode_memo_body(&plaintext);
+        let normalized = normalize_to_lf(&decoded);
+        let char_count = normalized.chars().count();
+        let char_count_excluding_whitespace = normalized.chars().filter(|c| !c.is_whitespace()).count();
+        let line_count = normalized.split('\n').count();
+        // Show the logical memo path (mirrors the plain, non-locked path's display), not the
+        // obfuscated on-disk token filename — the token name is a meaningless hash to the user.
+        let display_path = folder.join(format!("{path}.md"));
         Ok(MemoProperties {
+            file_name: format!("{}.md", path.rsplit('/').next().unwrap_or(path)),
+            file_path: display_path.display().to_string(),
             file_size_bytes: plaintext.len() as u64,
             created: metadata.created().ok().map(tree::format_system_time_utc).unwrap_or_default(),
             modified: metadata.modified().ok().map(tree::format_system_time_utc).unwrap_or_default(),
-            char_count: decoded.chars().count(),
+            char_count,
+            char_count_excluding_whitespace,
+            line_count,
         })
     });
     match result {

@@ -52,10 +52,14 @@ pub struct TreeSnapshot {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoProperties {
+    pub file_name: String,
+    pub file_path: String,
     pub file_size_bytes: u64,
     pub created: String,
     pub modified: String,
     pub char_count: usize,
+    pub char_count_excluding_whitespace: usize,
+    pub line_count: usize,
 }
 
 /// `docs/plans/memo-tree/PLAN.md` §3 `memo_move`.
@@ -865,15 +869,23 @@ pub fn memo_get_properties(
         Err(_) => return AppResult::err_code(ErrorCode::NotFound, "memo file not found"),
     };
 
-    let char_count = decode_memo_body(&bytes).chars().count();
+    let normalized = crate::store::memo_file_service::normalize_to_lf(&decode_memo_body(&bytes));
+    let char_count = normalized.chars().count();
+    let char_count_excluding_whitespace = normalized.chars().filter(|c| !c.is_whitespace()).count();
+    let line_count = normalized.split('\n').count();
     let created = metadata.created().ok().map(format_system_time_utc).unwrap_or_default();
     let modified = metadata.modified().ok().map(format_system_time_utc).unwrap_or_default();
+    let file_name = format!("{}.md", path.rsplit('/').next().unwrap_or(&path));
 
     AppResult::ok(MemoProperties {
+        file_name,
+        file_path: file_path.display().to_string(),
         file_size_bytes: metadata.len(),
         created,
         modified,
         char_count,
+        char_count_excluding_whitespace,
+        line_count,
     })
 }
 
