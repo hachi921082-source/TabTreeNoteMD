@@ -86,6 +86,22 @@ name)` (step 3's "existing `.tabtreenote.json` reconciled, not overwritten" alre
 new" and "register existing" per `[detailed-spec §5.1]`). No dialog, no cancel path (the path is
 already known to the caller — the OS-drag-and-drop-onto-tab-bar entry point).
 
+### `tab_create_new(name: String) -> AppResult<TabInfo>`
+No dialog, no existing folder required — the "create a genuinely new, empty tab folder" entry point
+(GitHub issue #2), distinct from `tab_create`/`tab_register_existing`'s "register an already-existing
+folder" semantics. Creates the folder itself under a new dedicated default root,
+`fs::app_data_root::tabs_root_dir()` (`data/tabs/<name>/`, sibling to but separate from
+`data/settings.json`), then registers it exactly like `tab_create`/`tab_register_existing` do.
+1. Validate `name` (trimmed) via `path_safety::validate_name` (Strict) before any filesystem
+   mutation.
+2. `create_dir_all` the default tabs root if it doesn't exist yet (first use of this feature).
+3. Reject with `NAME_DUPLICATE` (`path` = the target folder path) if `data/tabs/<name>/` already
+   exists on disk.
+4. Create the folder, then call the same `register_tab_at_path` helper `tab_create`/
+   `tab_register_existing` use. If registration fails after the folder was created (e.g. a
+   tab-name collision against a *different*, already-registered folder), the just-created folder
+   is removed again — this command never leaves an orphaned empty folder behind on a failed call.
+
 ### `tab_rename(id: String, new_name: String) -> AppResult<TabInfo>`
 - Rejected with `TabLocked` if the tab is locked with no active session (renaming the *display* name
   of a locked tab is meaningless since the placeholder is shown, not a real edit target — if a UI
@@ -178,8 +194,13 @@ file's commands, which trust the cache for listing purposes only.
   accompanying text (`[detailed-spec §3.2]`, `DECISIONS.md` "Tab-Lock Placeholder Display Name: 🔒
   Glyph Alone") — this is `AppSettings.tabs[i].name`'s literal value while locked, not a separate
   UI-only badge layered next to a different placeholder string.
-- "Create tab" entry point: a `+`-style button at the end of the tab bar, or the app's empty-state
-  screen if zero tabs are registered — invokes `tab_create`.
+- "Create tab" entry points, both at the end of the tab bar and on the app's empty-state screen if
+  zero tabs are registered, are **two distinct buttons** (GitHub issue #2, matching the legacy
+  repo's own two-button split): a 📂 "register existing folder" button invoking `tab_create` (OS
+  folder-picker dialog), and a separate ＋ "create new tab" button invoking `tab_create_new`
+  (name-only prompt dialog, no OS dialog, physically creates a new empty folder under
+  `data/tabs/<name>/`). Both surface the same `NAME_DUPLICATE` retry-with-a-different-name flow on
+  collision.
 - Drag-and-drop of an OS folder from Explorer onto the tab bar invokes `tab_register_existing` with the
   dropped path (Tauri's file-drop event).
 
