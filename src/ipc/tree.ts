@@ -54,3 +54,10 @@ export async function memoSetEditLock(tabId: string, path: string, locked: boole
 export async function memoGetProperties(tabId: string, path: string): Promise<Result<MemoProperties>> {
   return invoke<Result<MemoProperties>>("memo_get_properties", { tabId, path });
 }
+
+/** Reveals the memo's file in Explorer (plain tabs) or the tab's folder (locked/session tabs,
+ * since the on-disk file is an obfuscated token — `[spec §2.8]`, `commands/tree.rs`'s
+ * `memo_open_location`). */
+export async function memoOpenLocation(tabId: string, path: string): Promise<Result<void>> {
+  return invoke<Result<void>>("memo_open_location", { tabId, path });
+}
