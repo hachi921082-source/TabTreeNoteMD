@@ -150,6 +150,7 @@ fn main() {
             commands::settings::settings_set,
             commands::tab::tab_list,
             commands::tab::tab_create,
+            commands::tab::tab_create_new,
             commands::tab::tab_register_existing,
             commands::tab::tab_rename,
             commands::tab::tab_reorder,
