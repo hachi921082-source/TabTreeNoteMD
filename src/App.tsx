@@ -161,7 +161,7 @@ function App() {
       />
       <div className="app-content">
         {!tabsState.loading && tabsState.tabs.length === 0 ? (
-          <EmptyState onCreateTab={() => void tabsState.createTab()} />
+          <EmptyState tabsState={tabsState} />
         ) : (
           <>
             {treeSide === "left" && treePane}
