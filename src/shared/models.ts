@@ -261,6 +261,10 @@ export interface RecoveryStatus {
 export interface CrossTabSearchOptions {
   caseSensitive: boolean;
   regex: boolean;
+  /** Scope selector (GitHub issue #4): a tab id restricts results to that one tab
+   * ("現在のタブ"); `null`/`undefined` searches every unlocked tab ("全タブ"). Optional so
+   * omission (e.g. from older/other callers) keeps the pre-existing "all tabs" behavior. */
+  scopeTabId?: string | null;
 }
 
 export type MatchLocation = "name" | "body" | "both";

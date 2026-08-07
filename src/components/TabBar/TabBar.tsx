@@ -90,7 +90,7 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
   // Session-only; deliberately not read from or written to `AppSettings`.
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const crossTabSearch = useCrossTabSearch();
+  const crossTabSearch = useCrossTabSearch(activeTabId);
 
   useEffect(() => {
     if (draggingIdRef.current) return; // don't clobber an in-progress drag's local order

@@ -44,13 +44,23 @@ export function CrossTabSearchDialog({ search, onClose, onOpenHit }: CrossTabSea
           <input
             ref={inputRef}
             type="text"
-            placeholder="すべてのタブから検索"
+            placeholder={search.scope === "current" ? "現在のタブから検索" : "すべてのタブから検索"}
             value={search.query}
             onChange={(e) => search.setQuery(e.target.value)}
           />
           <button type="submit" disabled={search.loading}>
             検索
           </button>
+        </div>
+        <div className="ttn-crosstab-search-scope">
+          <label>
+            <input type="radio" name="ttn-crosstab-search-scope" checked={search.scope === "all"} onChange={() => search.setScope("all")} />
+            全タブ
+          </label>
+          <label>
+            <input type="radio" name="ttn-crosstab-search-scope" checked={search.scope === "current"} onChange={() => search.setScope("current")} />
+            現在のタブ
+          </label>
         </div>
         <div className="ttn-crosstab-search-options">
           <label>
