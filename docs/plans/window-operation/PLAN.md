@@ -47,7 +47,10 @@ Sources: `docs/spec.md` §2.7, §9.1 item 1, §9; `docs/detailed-spec.md` §5.7.
   Appearance/Shortcuts/Links/Autostart go in which tab. Put all four in "General" (they're all
   app-shell/behavior toggles unrelated to the CodeMirror surface itself); "Editor" holds
   `editorDefaults`, the autosave debounce, and EOL policy (the encoding field is shown read-only —
-  `[spec §3.4]` currently only allows `"utf-8"`).
+  `[spec §3.4]` currently only allows `"utf-8"`). **Update (GitHub issue #6)**: Shortcuts' 20+ rows
+  made "General" too long to scroll comfortably, so it was split out into its own third
+  "Shortcuts" tab (Appearance/Links/Autostart remain in "General"); tab order is
+  General/Shortcuts/Editor.
 - **`AppSettings.window.treeCollapsed`** (tree-hide-toggle persistence) and
   **`AppSettings.autostart.enabled`** are additive schema fields, following the same
   precedent/reasoning already used for `toolbarPosition`/`toolbarOrder` in earlier plans — not
@@ -179,11 +182,12 @@ explicitly invoked).
 `components/Settings/`: houses Appearance (`appearance-theme/PLAN.md`), Editor defaults
 (`editorDefaults.*`, referenced by `editor-save/PLAN.md`/`markdown-editing/PLAN.md`), Shortcuts (§3
 above), Links (`link/PLAN.md`'s `openTrigger`/`confirmBeforeOpen`), Autostart (§4 above) —
-General/Editor two-tab layout with checkbox/dropdown vertical-margin conventions and Esc support
-already established as required (`[spec §9]`, issue.md carryover, "Implemented" in legacy, preserved
-here). All fields read via `settings_get` on open, write via `settings_set` per-field or as a single
-patch on a "Save"/immediate-apply action — either interaction pattern is implementation discretion,
-`spec.md` doesn't mandate one.
+General/Shortcuts/Editor three-tab layout (Shortcuts split out of General into its own tab per
+GitHub issue #6, since its 20+ rows made General too long to scroll) with checkbox/dropdown
+vertical-margin conventions and Esc support already established as required (`[spec §9]`,
+issue.md carryover, "Implemented" in legacy, preserved here). All fields read via `settings_get`
+on open, write via `settings_set` per-field or as a single patch on a "Save"/immediate-apply
+action — either interaction pattern is implementation discretion, `spec.md` doesn't mandate one.
 
 ## Open Items
 

@@ -1,8 +1,9 @@
-// Settings screen shell (`docs/plans/window-operation/PLAN.md` §7): General/Editor two-tab modal,
-// houses Appearance (`appearance-theme/PLAN.md` §2/§3 in full — theme, uiFontScale, and the
-// "basic customization of colors/fonts/line spacing" layer: accent color, UI font family, tree
-// row line-height, all under `AppSettings.appearance`), Shortcuts (§3), Links (`link/PLAN.md`'s
-// two schema fields), Autostart (§4), and Editor defaults/autosave/EOL (referenced by
+// Settings screen shell (`docs/plans/window-operation/PLAN.md` §7): General/Shortcuts/Editor
+// three-tab modal. General houses Appearance (`appearance-theme/PLAN.md` §2/§3 in full — theme,
+// uiFontScale, and the "basic customization of colors/fonts/line spacing" layer: accent color, UI
+// font family, tree row line-height, all under `AppSettings.appearance`), Links (`link/PLAN.md`'s
+// two schema fields), and Autostart (§4). Shortcuts (§3) has its own tab since its 20+ rows made
+// General too long to scroll (GitHub issue #6). Editor holds defaults/autosave/EOL (referenced by
 // `editor-save/PLAN.md`/`markdown-editing/PLAN.md`).
 // Opened from `TabBar.tsx`'s ⚙ button; every field reads from the already-loaded `AppSettings` and
 // writes immediately on change via `settings_set` (no separate "Apply" step — `spec.md` doesn't
@@ -23,7 +24,7 @@ export interface SettingsDialogProps {
   onClose: () => void;
 }
 
-type SettingsTab = "general" | "editor";
+type SettingsTab = "general" | "shortcuts" | "editor";
 
 /** Human-readable labels for `shared/shortcuts.ts`'s action ids — UI-only concern, kept out of
  * that framework-agnostic module on purpose. */
@@ -110,6 +111,9 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
       <div className="ttn-settings-tabs" role="tablist">
         <button type="button" className={`ttn-settings-tab${tab === "general" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("general")}>
           一般
+        </button>
+        <button type="button" className={`ttn-settings-tab${tab === "shortcuts" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("shortcuts")}>
+          ショートカット
         </button>
         <button type="button" className={`ttn-settings-tab${tab === "editor" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("editor")}>
           エディタ
@@ -224,7 +228,11 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
             </label>
             {autostartError && <p className="ttn-settings-error">{autostartError}</p>}
           </section>
+        </div>
+      )}
 
+      {tab === "shortcuts" && (
+        <div className="ttn-settings-body">
           <section className="ttn-settings-section">
             <h3>ショートカット</h3>
             <div className="ttn-settings-shortcut-list">
