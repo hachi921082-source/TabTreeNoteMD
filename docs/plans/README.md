@@ -10,10 +10,16 @@ app-settings persistence) — read those two first, since nearly everything else
 
 A feature folder normally holds a single `PLAN.md`, but may hold a second file when one sub-algorithm
 is large and self-contained enough to warrant separate reading (currently: `tab-lock/CRASH-RECOVERY.md`
-alongside `tab-lock/PLAN.md`) — the primary `PLAN.md` always points to any companion file. Table of
-Contents was similarly split out of `markdown-editing/PLAN.md` into its own feature folder,
+alongside `tab-lock/PLAN.md`, and `tab-lock-permanent-unlock/CRASH-RECOVERY.md` alongside
+`tab-lock-permanent-unlock/PLAN.md`) — the primary `PLAN.md` always points to any companion file. Table
+of Contents was similarly split out of `markdown-editing/PLAN.md` into its own feature folder,
 `table-of-contents/`, because it is referenced from three other plans (`markdown-editing`, `link`,
 `tab-lock`), not because of size alone.
+
+`tab-lock-permanent-unlock` is a separate feature folder from `tab-lock` (not a subsection of it)
+because it is its own distinct, separate, irreversible operation with its own command family, marker
+file, and recovery flow (`tab-lock-permanent-unlock/PLAN.md`'s own rationale) — large enough to warrant
+the same PLAN.md/CRASH-RECOVERY.md split the original feature used.
 
 ## Feature Plans
 
@@ -30,6 +36,7 @@ Contents was similarly split out of `markdown-editing/PLAN.md` into its own feat
 | [`search-index/PLAN.md`](search-index/PLAN.md) | Cross-tab full-text index build/update/query, locked-tab exclusion |
 | [`link/PLAN.md`](link/PLAN.md) | Auto-link recognition, `memo:` resolution, external link opening |
 | [`tab-lock/PLAN.md`](tab-lock/PLAN.md) + [`tab-lock/CRASH-RECOVERY.md`](tab-lock/CRASH-RECOVERY.md) | Tab-level password lock/unlock, session lifecycle, cross-tab DND onto locked tabs; crash-mid-lock recovery |
+| [`tab-lock-permanent-unlock/PLAN.md`](tab-lock-permanent-unlock/PLAN.md) + [`tab-lock-permanent-unlock/CRASH-RECOVERY.md`](tab-lock-permanent-unlock/CRASH-RECOVERY.md) | Irreversibly decrypting a whole locked tab back into an ordinary unencrypted tab (distinct from ending a session, `tab-lock/PLAN.md`); crash-mid-permanent-unlock recovery |
 | [`appearance-theme/PLAN.md`](appearance-theme/PLAN.md) | Light/dark theme, UI font scale, basic color/font/spacing customization |
 | [`window-operation/PLAN.md`](window-operation/PLAN.md) | Frameless window, pane layout/splitter, shortcuts, tray/autostart, multi-launch prevention, settings-screen shell |
 
