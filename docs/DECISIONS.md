@@ -416,6 +416,15 @@ subsequent save attempt surfaces a generic error rather than a specific "this me
 unlocking while open leaves the editor read-only until the user navigates away and back. Elaborated in
 `spec.md` §2.2.
 
+## In-Memo Replace "Selection" Mode: Dropped from Scope (GitHub issue #13, 2026-08-08)
+
+**Decision**: Dropped the "constrain replace to the current selection" mode listed in `spec.md` §2.4
+("single / all / selection / one-by-one"). Only replace-one and replace-all are implemented; `spec.md`
+§2.4 corrected to match. Reason: unlike the other three modes, this one can't reuse
+`@codemirror/search`'s ready-made `replaceNext`/`replaceAll` commands — it needs custom range-scoped
+match-finding and boundary-tracking across incremental replaces, a moderate implementation cost judged
+not worth it for a niche power-user feature.
+
 **Rejected alternative**: Live enforcement — the editor listens (event push or poll) for Edit Lock changes
 on the currently-open memo and immediately flips read-only state, with a specific save-failure message.
 
