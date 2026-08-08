@@ -407,13 +407,17 @@ not Edit/Write/commit" rule for that path also still applies regardless of this 
 
 Elaborated in `spec.md` §2.3/§3.4/§4.2 and `detailed-spec.md` §3.2/§3.3/§5.3/§5.10.
 
-## Edit Lock: Snapshot-at-Load Read-Only Enforcement Kept As-Is (2026-08-08)
+## Edit Lock: Live Enforcement Added for an Already-Open Memo (GitHub issue #12, 2026-08-08)
 
-**Decision**: The editor's read-only state for Edit Lock remains a one-time snapshot taken at memo load
-time (`editor_load`'s `edit_locked` flag). If Edit Lock is toggled on/off for a memo that is already open
-in the editor, the open editor does not live-update — locking while open lets typing continue and a
-subsequent save attempt surfaces a generic error rather than a specific "this memo is now locked" message;
-unlocking while open leaves the editor read-only until the user navigates away and back. Elaborated in
+**Original decision**: `editor_load`'s `edit_locked` flag was kept as a one-time load-time snapshot
+(not changed to a polling/subscription model). Live-updating an already-open editor when Edit Lock is
+toggled was deferred as a UX-only gap — the backend already refuses the write when locked (`editor_save`
+step 1), so there was no data-loss/corruption risk either way — and tracked as follow-up GitHub issue #12.
+
+**Follow-up (issue #12)**: Implemented. `EditorPane.tsx`'s `readOnly` now also reads the live tree
+state's `locked` flag for the open memo (`App.tsx`, via `locateNode`), which `useTree.ts`'s `setEditLock`
+already keeps in sync on every successful toggle — no backend/IPC change needed. Toggling Edit Lock on an
+open memo now takes effect immediately, mirroring the legacy app's equivalent live check. Elaborated in
 `spec.md` §2.2.
 
 ## In-Memo Replace "Selection" Mode: Dropped from Scope (GitHub issue #13, 2026-08-08)
@@ -424,11 +428,3 @@ unlocking while open leaves the editor read-only until the user navigates away a
 `@codemirror/search`'s ready-made `replaceNext`/`replaceAll` commands — it needs custom range-scoped
 match-finding and boundary-tracking across incremental replaces, a moderate implementation cost judged
 not worth it for a niche power-user feature.
-
-**Rejected alternative**: Live enforcement — the editor listens (event push or poll) for Edit Lock changes
-on the currently-open memo and immediately flips read-only state, with a specific save-failure message.
-
-**Rationale**: This is a UX gap, not a safety gap — the backend already refuses the write when locked
-(`editor_save` step 1), so there is no data-loss/corruption risk either way. Given that, immediate live
-enforcement isn't worth the added complexity right now; the fix is tracked as a follow-up GitHub issue
-instead of being folded into this decision.

@@ -87,6 +87,9 @@ export interface EditorPaneProps {
   focusEditorToken: number;
   appSettings: AppSettings | null;
   memoEditorOverride: MemoEditorSettings | undefined;
+  /** Live Edit Lock state for the open memo, from the current tree state (GitHub issue #12) —
+   * distinct from `ed.content.editLocked`, which is only a snapshot taken at `editor_load` time. */
+  isMemoEditLocked: boolean;
   setEditorOverride: (path: string, editor: MemoEditorSettings | null) => Promise<void>;
   /** `state/useSettings.ts`'s generic patch — used by `MarkdownToolbar` to persist
    * `AppSettings.window.toolbarPosition`/`toolbarOrder` (`docs/plans/markdown-editing/PLAN.md` §4). */
@@ -107,7 +110,7 @@ export interface EditorPaneHandle {
 }
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
-  { tabId, memoName, focusEditorToken, appSettings, memoEditorOverride, setEditorOverride, patchSettings, onOpenMemoLink },
+  { tabId, memoName, focusEditorToken, appSettings, memoEditorOverride, isMemoEditLocked, setEditorOverride, patchSettings, onOpenMemoLink },
   ref,
 ) {
   const ed = useEditor(tabId, memoName, appSettings);
@@ -128,7 +131,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
   const editorDefaults = appSettings?.editorDefaults ?? FALLBACK_EDITOR_DEFAULTS;
   const resolvedSettings = useMemo(() => resolveEditorSettings(memoEditorOverride, editorDefaults), [memoEditorOverride, editorDefaults]);
-  const readOnly = Boolean(ed.content?.editLocked) || ed.conflict !== null;
+  const readOnly = Boolean(ed.content?.editLocked) || isMemoEditLocked || ed.conflict !== null;
 
   // Live/source view mode (`docs/plans/markdown-editing/PLAN.md` §3; persistence added for
   // GitHub issue #31 "Persist the Markdown toolbar's source/live view toggle per memo").
