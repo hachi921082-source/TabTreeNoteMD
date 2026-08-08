@@ -83,6 +83,7 @@
   appearance: none;
   border: none;
   background: transparent;
+  color: var(--ttn-fg);
   width: 36px;
   height: 100%;
   font-size: calc(15px * var(--ui-font-scale));
