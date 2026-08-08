@@ -455,3 +455,22 @@ consumers). Elaborated in `docs/MDEditor-spec.md` §5 and `docs/plans/markdown/i
 tab folders (folders are picked via folder-picker at runtime, not a static build-time glob) — rejected
 because it would weaken this app's existing conservative security posture (no `assetProtocol` scope
 configured today) more broadly than necessary just to serve images.
+
+## Drag-Resize-Handle for Rendered Images in Live View — Deferred (2026-08-09)
+
+**Decision**: The drag-resize-handle interaction (dragging a handle on a rendered image in live view
+to rewrite `![alt](path)` → `<img src width height>`) is deferred, not rejected — tracked as a future
+follow-up, not scheduled now.
+
+**Rationale**: This was already flagged as the highest-risk remaining piece of the original
+Markdown-preview/image-rendering feature work (~6/10 risk vs. ≤4/10 for the features implemented in
+this pass), specifically because it involves CodeMirror decoration/widget click+drag handling. That
+assessment was borne out during implementation: two critical CodeMirror-transaction-safety bugs (raw
+DOM mutation outside a transaction misread by CM6's `DOMObserver` as a user edit, corrupting the
+document) were found and fixed in the closely-related image-widget code during this same effort,
+reinforcing that this risk class deserves its own dedicated design pass rather than being rushed in
+now.
+
+**Note**: When this is eventually picked up, it will need its own UX design (drag mechanics, handle
+placement, aspect-ratio lock, minimum size) before implementation — starting with a `designer-lite`
+consultation, same as any other feature.
