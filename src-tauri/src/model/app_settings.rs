@@ -27,6 +27,12 @@ pub struct AppSettings {
     pub last_opened: Option<LastOpened>,
     pub editor_defaults: EditorDefaults,
     pub autosave: AutosaveSettings,
+    /// Additive field, `docs/plans/markdown/markdown-preview/PLAN.md` §3 — preview pane re-render
+    /// debounce, independent of `autosave.plain_debounce_ms` above (no disk I/O involved).
+    /// `#[serde(default)]` so a pre-existing `settings.json` (written before this feature) still
+    /// parses, same treatment as `appearance`/`autostart` above.
+    #[serde(default)]
+    pub preview: PreviewSettings,
     pub links: LinkSettings,
     pub encoding: EncodingSettings,
     pub eol: EolSettings,
@@ -153,6 +159,12 @@ pub struct EditorDefaults {
     pub tab_width: u32,
     pub show_line_numbers: bool,
     pub font_size: u32,
+    /// Additive field, `docs/plans/markdown/markdown-preview/PLAN.md` §3 — default pane layout for
+    /// a newly-opened memo with no per-memo override. `#[serde(default)]` on the field itself
+    /// (rather than the whole struct, since `EditorDefaults` is non-additive/always fully present)
+    /// so an old-format `settings.json` still parses.
+    #[serde(default)]
+    pub pane_mode: PaneMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +180,37 @@ pub enum WrapMode {
 pub enum ViewMode {
     Live,
     Source,
+}
+
+/// Pane-layout tri-state (`docs/plans/markdown/markdown-preview/PLAN.md` §2/§4) — fully
+/// independent of `ViewMode` (live/source); the two toggles never interact except for the one
+/// auto-reveal case documented on `model::tree::MemoEditorSettings::pane_mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PaneMode {
+    Edit,
+    Split,
+    Preview,
+}
+
+impl Default for PaneMode {
+    fn default() -> Self {
+        PaneMode::Edit
+    }
+}
+
+/// `docs/plans/markdown/markdown-preview/PLAN.md` §3 — additive top-level settings section,
+/// sibling of `autosave`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSettings {
+    pub debounce_ms: u32,
+}
+
+impl Default for PreviewSettings {
+    fn default() -> Self {
+        PreviewSettings { debounce_ms: 150 }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -248,10 +291,12 @@ impl Default for AppSettings {
                 tab_width: 4,
                 show_line_numbers: true,
                 font_size: 14,
+                pane_mode: PaneMode::Edit,
             },
             autosave: AutosaveSettings {
                 plain_debounce_ms: 1500,
             },
+            preview: PreviewSettings::default(),
             links: LinkSettings {
                 open_trigger: OpenTrigger::SingleClick,
                 confirm_before_open: false,
