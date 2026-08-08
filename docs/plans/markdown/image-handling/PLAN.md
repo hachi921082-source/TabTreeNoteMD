@@ -610,9 +610,9 @@ every other construct — render as literal raw text there, unchanged by this pl
 
 ## 7. Deferred Items
 
-Per `docs/MDEditor-spec.md` §9, carried into `docs/QA.md`'s existing "Real `<img>` Rendering +
-Drag-Resize-Handle in Live View" entry (not resolved by this plan, tracked as explicit future
-follow-ups, not rejected):
+Per `docs/MDEditor-spec.md` §9, not resolved by this plan, tracked as explicit future follow-ups, not
+rejected. The drag-resize-handle item's scope-timing decision (deferred, not scheduled now) is recorded
+in `docs/DECISIONS.md`'s "Drag-Resize-Handle for Rendered Images in Live View — Deferred" entry:
 
 - **Image drag-to-resize handle** — dragging a handle on a rendered image would rewrite
   `![alt](path)` → `<img src width height>`. This plan renders real images but implements no resize
