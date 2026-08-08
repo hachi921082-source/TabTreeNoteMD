@@ -59,7 +59,7 @@ New files:
 |---|---|
 | `src-tauri/src/commands/image.rs` (existing file, new function added) | `image_read_bytes` command (§3). |
 | `src-tauri/src/fs/path_safety.rs` (existing file, new functions added — see note below) | `resolve_relative_within_base`/`has_parent_dir_segment` (§3.1), hoisted out of `commands/link.rs` so `image_read_bytes` can reuse them instead of duplicating. |
-| `src/editor/imageLoader.ts` | Shared path-keyed Blob-URL cache, `getOrLoadImage`/`releaseMemoImages` (§5). |
+| `src/editor/imageLoader.ts` | Shared path-keyed Blob-URL cache, `getOrLoadImage`/`releaseMemoImages` (§5), plus a `failedKeys` known-failed-path record and `hasImageLoadFailed` query (§5.2, §6.5) used to avoid re-attempting a load already known to fail. |
 | `src/ipc/image.ts` (existing file, new function added) | `imageReadBytes` wrapper around the new command (§4). |
 
 **Note on `fs/path_safety.rs` not being a brand-new file**: `project-architecture/PLAN.md` §2 already
@@ -75,7 +75,7 @@ Modified files:
 |---|---|
 | `src-tauri/src/commands/link.rs` | `resolve_file_path`'s body refactored to delegate to the new shared `path_safety::resolve_relative_within_base` (§3.1) — its own public signature, error codes, and all existing tests are unchanged (a behavior-preserving internal refactor, not a behavior change). |
 | `src-tauri/src/main.rs` | `image_read_bytes` added to the `tauri::generate_handler![...]` list (alongside the existing `commands::image::image_save_pasted` line). |
-| `src/editor/markdownDecorations.ts` | `MarkdownDecorationConfig` gains a `memoKey: string \| null` field (§5.4, §6.1); `ImagePlaceholderWidget`'s two call sites (`Image` node handling, bare `<img>` tag handling) replaced with a new `ImageWidget` (§6.2); `ImagePlaceholderWidget` itself is kept, unrenamed, as the read-failure fallback's own DOM builder (§6.5) rather than deleted. |
+| `src/editor/markdownDecorations.ts` | `MarkdownDecorationConfig` gains a `memoKey: string \| null` field (§5.4, §6.1); a new `imageLoadFailedEffect` `StateEffect<void>` and `ImageWidget` (whose `toDOM(view)` now takes CodeMirror's `view` parameter) are added, and `ImagePlaceholderWidget`'s two call sites (`Image` node handling, bare `<img>` tag handling) are replaced with a new `buildImageWidget` helper (§6.2) that picks between `ImageWidget` and `ImagePlaceholderWidget` up front; `MarkdownDecorationsPlugin.update()` gains an `imageLoadFailedEffect` check alongside its existing `docChanged`/`selectionSet`/`viewportChanged` rebuild triggers (§6.2); `ImagePlaceholderWidget` itself is kept, unrenamed, as the fallback's own DOM builder (§6.5) rather than deleted. |
 | `src/components/Editor/EditorPane.tsx` | Derives `memoKey` (§5.4) and calls `releaseMemoImages(memoKey)` on memo switch/unmount (§5.3); passes `memoKey` into `markdownConfigFacet`'s config alongside the existing `currentTabId` (`markdown-editing/PLAN.md`'s existing facet-update effect — one more field, same effect). |
 | `src/editor/markdownDecorations.css` (or wherever `.cm-md-image-placeholder` is currently styled) | New `.cm-md-image`/`.cm-md-image-loading` rules (§6.3). |
 
@@ -442,13 +442,36 @@ export interface MarkdownDecorationConfig {
 link-resolution) — `image_read_bytes`'s `tabId` argument reuses that same field, no new field needed
 for it.
 
-### 6.2 New `ImageWidget`
+### 6.2 New `ImageWidget`, `imageLoadFailedEffect`, and `buildImageWidget`
 
 Replaces `ImagePlaceholderWidget` at both of its current call sites (`markdownDecorations.ts`'s
-`Image` lezer-node handling and its bare `<img>`-tag handling via `findImageTags`) — `import {
-getOrLoadImage } from "./imageLoader";`:
+`Image` lezer-node handling and its bare `<img>`-tag handling via `findImageTags`) — but the call
+sites go through a new `buildImageWidget` helper (below), not `ImageWidget` directly, so a path
+already known to have failed short-circuits straight to the placeholder instead of retrying a load
+already known to fail.
+
+**Why not a direct DOM swap on failure (load-bearing — read this)**: an earlier version of this
+section had `ImageWidget.toDOM()`'s failure branch call
+`img.replaceWith(new ImagePlaceholderWidget(...).toDOM())` directly. That is a raw mutation of an
+already-attached `contentDOM` node, performed outside any CodeMirror transaction. CM6's
+`DOMObserver` — which watches `contentDOM` for `childList`/`characterData` changes so it can
+reconcile IME/spellcheck/extension-driven external edits back into document state — misread that
+replacement as a user edit and corrupted the document, which then got autosaved over the real
+Markdown source. This was reproduced as a real, critical bug and is fixed by the design below:
+`ImageWidget.toDOM()` never touches the DOM on failure; instead it dispatches an empty,
+effect-only transaction, and lets CodeMirror's own transaction-driven reconciliation perform the
+actual swap (a real widget-class change triggers a real remount, which `DOMObserver` correctly
+attributes to the editor, not the user).
 
 ```ts
+import { getOrLoadImage, hasImageLoadFailed } from "./imageLoader";
+
+/** Dispatched (as an empty-document-change, effect-only transaction) by `ImageWidget.toDOM()`'s
+ * async load-failure branch below, in place of a raw `contentDOM` mutation (see this section's
+ * "Why not a direct DOM swap on failure" note). Consulted by `MarkdownDecorationsPlugin.update()`
+ * (below) to trigger a decoration rebuild through CodeMirror's own transaction-driven path. */
+const imageLoadFailedEffect = StateEffect.define<void>();
+
 class ImageWidget extends WidgetType {
   constructor(
     readonly src: string,
@@ -463,9 +486,11 @@ class ImageWidget extends WidgetType {
     return other.src === this.src && other.alt === this.alt && other.tabId === this.tabId && other.memoKey === this.memoKey;
   }
 
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     // No tab/memo context at all — nothing to resolve against; render the fallback immediately
-    // rather than attempting a call that can't succeed.
+    // rather than attempting a call that can't succeed. This is a synchronous, pre-mount build of
+    // the returned element (no later mutation of an already-attached node), so it's unrelated to
+    // the transaction-safety concern below.
     if (!this.tabId || !this.memoKey) {
       return new ImagePlaceholderWidget(this.src, this.alt).toDOM();
     }
@@ -473,36 +498,74 @@ class ImageWidget extends WidgetType {
     img.className = "cm-md-image cm-md-image-loading";
     img.alt = this.alt;
     img.title = this.src;
+    const { tabId, memoKey, src } = this;
     // Lazy by construction (§6.4): this fetch only starts once CodeMirror actually calls toDOM()
     // for a widget that entered the viewport, not eagerly during decoration-set build.
-    void getOrLoadImage(this.tabId, this.src, this.memoKey).then((blobUrl) => {
+    void getOrLoadImage(tabId, src, memoKey).then((blobUrl) => {
       if (blobUrl) {
+        // Safe in-place attribute mutation — no text nodes involved, so DOMObserver (which
+        // watches contentDOM's childList/characterData) has nothing to misinterpret here.
         img.src = blobUrl;
         img.classList.remove("cm-md-image-loading");
       } else {
-        // Read-failure fallback (§6.5): swap in the same placeholder markup used before this
-        // feature existed, rather than leaving a broken native <img> icon on screen.
-        img.replaceWith(new ImagePlaceholderWidget(this.src, this.alt).toDOM());
+        // Read-failure fallback (§6.5). Deliberately does NOT mutate img/contentDOM directly
+        // here (that was the corruption bug above): getOrLoadImage resolving to null means
+        // imageLoader.ts already recorded this path as failed (failedKeys), so all that's
+        // needed is to ask CodeMirror to rebuild decorations; the rebuild itself (build() below,
+        // via buildImageWidget) is what actually swaps in ImagePlaceholderWidget, through
+        // CodeMirror's own transaction-driven DOM reconciliation.
+        view.dispatch({ effects: imageLoadFailedEffect.of() });
       }
     });
     return img;
   }
 }
+
+/** Picks which widget a decoration should use for a given image `src`, consulting
+ * `imageLoader.ts`'s known-failed-path record (`hasImageLoadFailed`) first. A path already known
+ * to have failed is given a real `ImagePlaceholderWidget` decoration directly here — no
+ * `ImageWidget`, no repeated async attempt — so the corrupting-DOM-mutation bug this design
+ * replaces can't recur even on the very rebuild that's reacting to the failure: by the time
+ * `build()` runs again, `hasImageLoadFailed` is already true for `src`, and this function returns
+ * the placeholder outright rather than constructing another `ImageWidget` that would just fail
+ * the same async load again. */
+function buildImageWidget(src: string, alt: string, config: MarkdownDecorationConfig): WidgetType {
+  if (config.currentTabId && config.memoKey && hasImageLoadFailed(config.currentTabId, src, config.memoKey)) {
+    return new ImagePlaceholderWidget(src, alt);
+  }
+  return new ImageWidget(src, alt, config.currentTabId, config.memoKey);
+}
 ```
 
-Call-site changes (both existing lines, `config` already in scope at each):
+Call-site changes (both existing lines, `config` already in scope at each — go through
+`buildImageWidget`, not `ImageWidget` directly):
 
 ```ts
 // Image lezer-node handling (was: new ImagePlaceholderWidget(urlText, altText))
-addReplace(node.from, node.to, Decoration.replace({ widget: new ImageWidget(urlText, altText, config.currentTabId, config.memoKey) }));
+addReplace(node.from, node.to, Decoration.replace({ widget: buildImageWidget(urlText, altText, config) }));
 
 // Bare <img>-tag handling (was: new ImagePlaceholderWidget(img.src, ""))
-addReplace(img.from, img.to, Decoration.replace({ widget: new ImageWidget(img.src, "", config.currentTabId, config.memoKey) }));
+addReplace(img.from, img.to, Decoration.replace({ widget: buildImageWidget(img.src, "", config) }));
 ```
 
-`ImagePlaceholderWidget` itself is **not deleted** — it becomes purely a fallback DOM builder, called
-from `ImageWidget.toDOM()`'s two failure branches above (no tab/memo context; async load failure), and
-is no longer directly used as a decoration widget on its own.
+`ImagePlaceholderWidget` itself is **not deleted** — it remains purely a fallback DOM builder,
+reached from two places: `buildImageWidget`'s known-already-failed branch (above) and
+`ImageWidget.toDOM()`'s no-tab/memo-context branch (above). It is no longer used directly as a
+decoration widget on its own.
+
+**`MarkdownDecorationsPlugin.update()` rebuild trigger**: `imageLoadFailedEffect` carries no
+document/selection/viewport change of its own — it's an empty-change, effect-only transaction
+dispatched purely to trigger a rebuild in a transaction-safe way — so it needs its own explicit
+check alongside the plugin's existing triggers:
+
+```ts
+update(update: ViewUpdate): void {
+  const imageLoadJustFailed = update.transactions.some((tr) => tr.effects.some((e) => e.is(imageLoadFailedEffect)));
+  if (update.docChanged || update.selectionSet || update.viewportChanged || imageLoadJustFailed) {
+    this.decorations = this.build(update.view);
+  }
+}
+```
 
 ### 6.3 Display Cap CSS
 
@@ -526,9 +589,19 @@ scrolling a large document with many images never fetches images that never ente
 ### 6.5 Read-Failure Fallback
 
 On any failure — missing/moved file, rejected path, `image_read_bytes`'s thrown promise rejection
-(§3.3) — `getOrLoadImage` resolves to `null` (§5.2), and `ImageWidget.toDOM()`'s `.then()` branch
-swaps in `ImagePlaceholderWidget`'s own DOM (§6.2) in place of the (never-`src`-set) broken `<img>`
-element, rather than leaving a native broken-image icon on screen.
+(§3.3) — `getOrLoadImage` resolves to `null` (§5.2) and `imageLoader.ts` records the key in its
+`failedKeys` set (queried via `hasImageLoadFailed`). `ImageWidget.toDOM()`'s `.then()` branch does
+**not** touch the DOM itself on this path (§6.2's "Why not a direct DOM swap on failure" note); it
+dispatches `imageLoadFailedEffect` (§6.2), which drives `MarkdownDecorationsPlugin.update()` to
+rebuild decorations. The rebuild calls `buildImageWidget` again for the same `src` — now returning
+`ImagePlaceholderWidget` directly, since `hasImageLoadFailed` is true — and it is CodeMirror's own
+decoration reconciliation, not this code, that performs the actual DOM swap from the loading
+`<img>` element to the placeholder markup. Nothing in this path mutates an already-attached
+`contentDOM` node outside of a CodeMirror transaction.
+
+A later successful load for the same key (e.g. the file is restored) clears the failure record
+(`imageLoader.ts`'s `loadAndCache`), so the next decoration rebuild for that `src` goes back to
+constructing a real `ImageWidget` instead of the placeholder.
 
 ### 6.6 Source-View Mode
 
