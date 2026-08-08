@@ -16,6 +16,7 @@ import { PromptDialog } from "../dialogs/PromptDialog";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { PasswordDialog } from "../dialogs/PasswordDialog";
 import { RecoveryDialog } from "../dialogs/RecoveryDialog";
+import { PermanentUnlockRecoveryDialog } from "../dialogs/PermanentUnlockRecoveryDialog";
 import { validateNameStrict } from "../../shared/nameSanitize";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { formatDateTime } from "../../shared/formatDateTime";
@@ -43,7 +44,13 @@ type PendingDialog =
   | { kind: "unlock" }
   /** Cross-tab drop onto a locked (no-session) tab (`docs/plans/tab-lock/PLAN.md` §5) — shown at
    * the moment of drop, distinct from `unlock` (which unlocks the currently-displayed tab). */
-  | { kind: "unlockForDrop"; targetTabId: string; paths: string[]; copy: boolean };
+  | { kind: "unlockForDrop"; targetTabId: string; paths: string[]; copy: boolean }
+  /** Entry point (a) (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.9) — permanently
+   * unlocking the currently-displayed tab from within its own active unlock session. Confirming
+   * always calls `tabLock.permanentUnlockTab` with no password (a session is a precondition for
+   * this banner to even render), unlike entry point (b)'s own two-step confirm/password flow in
+   * `TabBar.tsx`. */
+  | { kind: "permanentUnlockConfirm" };
 
 interface ContextMenuState {
   x: number;
@@ -92,14 +99,16 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
     setDropTarget(next);
   }, []);
 
-  const { nodes, loading, locked, recoveryPending, selection, openMemoName, lastErrorCode, clearLastError, activeTabId } = tree;
+  const { nodes, loading, locked, recoveryPending, recoveryKind, selection, openMemoName, lastErrorCode, clearLastError, activeTabId } = tree;
 
   // Crash-mid-lock recovery (`docs/plans/tab-lock/CRASH-RECOVERY.md` "Trigger Point"): the moment
-  // `tree_open` reports `recoveryPending: true` for this tab, fetch the per-entry classification
-  // so the recovery dialog can render its Finish/Restore choice.
+  // `tree_open` reports `recoveryPending: true`/`recoveryKind: "lock"` for this tab, fetch the
+  // per-entry classification so the recovery dialog can render its Finish/Restore choice. The
+  // permanent-unlock direction (`recoveryKind: "permanentUnlock"`) stages this itself inside
+  // `PermanentUnlockRecoveryDialog` instead (`tab-lock-permanent-unlock/PLAN.md` §7.7).
   useEffect(() => {
     setRecoveryStatus(null);
-    if (!recoveryPending || !activeTabId) return;
+    if (!recoveryPending || recoveryKind !== "lock" || !activeTabId) return;
     let cancelled = false;
     void tabLock.fetchRecoveryStatus(activeTabId).then((status) => {
       if (!cancelled) setRecoveryStatus(status);
@@ -107,7 +116,7 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [recoveryPending, activeTabId, tabLock]);
+  }, [recoveryPending, recoveryKind, activeTabId, tabLock]);
 
   // ---- selection auto-follow: scroll the open/selected row into view -----
   useEffect(() => {
@@ -374,13 +383,27 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
     return <div className="ttn-tree ttn-tree-loading" ref={containerRef} />;
   }
 
+  if (recoveryPending && recoveryKind === "permanentUnlock") {
+    return (
+      <div className="ttn-tree ttn-tree-message" ref={containerRef}>
+        <p>前回の完全ロック解除処理が完了しませんでした。復旧処理が必要です。</p>
+        {activeTabId && <PermanentUnlockRecoveryDialog tabId={activeTabId} tabLock={tabLock} />}
+      </div>
+    );
+  }
+
   if (recoveryPending) {
     return (
       <div className="ttn-tree ttn-tree-message" ref={containerRef}>
         <p>前回のロック操作が完了しませんでした。復旧処理が必要です。</p>
         {recoveryStatus && (
           <RecoveryDialog
-            status={recoveryStatus}
+            variant="lock"
+            doneCount={recoveryStatus.renamedCount}
+            total={recoveryStatus.total}
+            anomalous={recoveryStatus.anomalous}
+            anomalousCount={recoveryStatus.anomalousCount}
+            defaultAction={recoveryStatus.defaultAction}
             busy={tabLock.busy}
             errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null}
             onCancel={() => tabLock.clearLastError()}
@@ -446,6 +469,34 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
         setContextMenu({ x: e.clientX, y: e.clientY, path: null });
       }}
     >
+      {/* Entry point (a) (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.9) — an active unlock
+          session lets the user permanently unlock this tab without re-entering its password. */}
+      {locked && hasActiveSession && (
+        <div className="ttn-tree-session-banner">
+          <span>🔓 このタブは一時的にロック解除されています</span>
+          <button type="button" onClick={() => setPendingDialog({ kind: "permanentUnlockConfirm" })}>
+            完全にロック解除
+          </button>
+        </div>
+      )}
+      {pendingDialog?.kind === "permanentUnlockConfirm" && (
+        <ConfirmDialog
+          title="完全にロック解除"
+          message={
+            <>
+              <p>このタブを完全にロック解除すると、暗号化前の通常のタブに戻ります。この操作は取り消せません。</p>
+              <p>念のため、事前にフォルダ全体のバックアップを取っておくことをおすすめします。</p>
+            </>
+          }
+          confirmLabel="完全にロック解除"
+          onCancel={() => setPendingDialog(null)}
+          onConfirm={async () => {
+            if (!activeTabId) return;
+            const ok = await tabLock.permanentUnlockTab(activeTabId, undefined);
+            if (ok) setPendingDialog(null);
+          }}
+        />
+      )}
       {nodes.length === 0 ? (
         <div className="ttn-tree-empty">
           <button type="button" onClick={() => setPendingDialog({ kind: "createRoot" })}>
