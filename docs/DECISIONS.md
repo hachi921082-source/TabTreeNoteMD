@@ -443,3 +443,15 @@ needs a second new toolbar-header button beyond the two already planned (pane-mo
 duplicates state-machine complexity for little benefit; (b) deferring "preview only" entirely for this
 pass — rejected because showing preview-only after finishing editing was the original motivating request
 for this whole feature.
+
+## Real `<img>` Rendering via Byte-Read IPC Command + Blob-URL Cache (2026-08-08)
+
+**Decision**: Live-view/preview/PDF-export image rendering reads image bytes through a new backend
+command, `image_read_bytes` (returns raw bytes via `tauri::ipc::Response`, not base64/JSON), and the
+frontend builds and caches a `Blob` URL per image path (shared path-keyed cache across the three
+consumers). Elaborated in `docs/MDEditor-spec.md` §5 and `docs/plans/markdown/image-handling/PLAN.md`.
+
+**Rejected alternative**: widening the Tauri `assetProtocol` scope to permit arbitrary runtime-chosen
+tab folders (folders are picked via folder-picker at runtime, not a static build-time glob) — rejected
+because it would weaken this app's existing conservative security posture (no `assetProtocol` scope
+configured today) more broadly than necessary just to serve images.
