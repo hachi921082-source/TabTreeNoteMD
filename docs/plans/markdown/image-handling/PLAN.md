@@ -45,7 +45,7 @@ Elaborates `docs/MDEditor-spec.md` §5. Two things, both new:
    as a raw byte IPC response (not JSON/base64-wrapped).
 2. A frontend shared image-loading pipeline (`src/editor/imageLoader.ts`) built on top of that command
    — a path-keyed Blob-URL cache — consumed by three call sites: the live-view editor pane (this
-   plan's own §6), the preview pane (`markdown-preview/PLAN.md` §5.5), and the PDF export iframe
+   plan's own §6), the preview pane (`markdown-preview/RENDERING.md` §5), and the PDF export iframe
    (`pdf-export/PLAN.md` §3).
 
 **Non-goals (deferred, not in scope here)**: image drag-to-resize handle, click-to-enlarge lightbox,
@@ -272,7 +272,7 @@ implementation time, see Open Items.)
 
 Elaborates `docs/MDEditor-spec.md` §5's "Blob-URL cache" bullet. Shared, module-level state (a single
 cache instance for the whole app, not per-component) — consumed by this plan's own live-view widget
-(§6), `markdown-preview/PLAN.md` §5.5's `getOrLoadImage` call, and `pdf-export/PLAN.md` §3's fallback
+(§6), `markdown-preview/RENDERING.md` §5's `getOrLoadImage` call, and `pdf-export/PLAN.md` §3's fallback
 `entry.bytes` access.
 
 ### 5.1 Cache Design
@@ -551,7 +551,7 @@ follow-ups, not rejected):
 
 ## 8. Consumers (Cross-References, Not Duplicated Here)
 
-- `markdown-preview/PLAN.md` §5.5 — resolves `img[data-relative-src]` elements in the rendered preview
+- `markdown-preview/RENDERING.md` §5 — resolves `img[data-relative-src]` elements in the rendered preview
   HTML via this plan's `getOrLoadImage`, after the container's `innerHTML` is set.
 - `pdf-export/PLAN.md` §3 — resolves images inside the hidden print iframe's own document via the same
   cache, with a fallback to `peekCachedBytes` (§5.2 above) if a `blob:` URL minted in the main window
