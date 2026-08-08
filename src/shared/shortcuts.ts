@@ -52,6 +52,21 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "markdown.image": "Ctrl+Shift+I",
   "markdown.rearrangeToggle": "Ctrl+Shift+R",
   "markdown.toggleLiveView": "Ctrl+Shift+M",
+
+  // `docs/plans/markdown/markdown-preview/PLAN.md` §6.3 — cycles the 3-state pane-mode toggle
+  // (edit -> split -> preview -> edit -> ...). Not one of the 16 fixed grid slots (lives in the
+  // toolbar header instead, same treatment as `markdown.toggleLiveView` above) and dispatched by a
+  // separate, focus-unconstrained effect in `EditorPane.tsx` rather than through
+  // `MarkdownToolbar`'s `invokeAction` switch.
+  "markdown.paneModeCycle": "Ctrl+Shift+P",
+
+  // `docs/plans/markdown/pdf-export/PLAN.md` §4 (`docs/MDEditor-spec.md` §8) — hidden-iframe print
+  // flow. Not one of the 16 fixed grid slots (toolbar-header button instead, same treatment as
+  // `markdown.paneModeCycle` above) and, like it, dispatched by a separate, focus-unconstrained
+  // effect in `EditorPane.tsx`. `Ctrl+P` is also WebView2/Chromium's native browser-print shortcut —
+  // the handler must call `event.preventDefault()` to suppress that native dialog (`MDEditor-spec.md`
+  // §8's "`Ctrl+P` native-print conflict" note).
+  "markdown.pdfExport": "Ctrl+P",
 };
 
 /** Merges user overrides (`AppSettings.shortcuts`) over the defaults, by
