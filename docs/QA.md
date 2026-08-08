@@ -39,34 +39,6 @@ heading level (shallowest heading becomes the flat top level, GitHub-style)?
 "relative," a small follow-up fix to `generateTocList`. **Non-blocking**: no other implementation work
 depends on this being resolved.
 
-## Drag-Resize-Handle for Rendered Images in Live View
-
-**Raised by**: `developer-lite`, mid-implementation of `image-handling/PLAN.md` Phase 2 (backend
-command `image_save_pasted` is done; the frontend paste/toolbar-insert flow that writes
-`![alt](img_xxxx.png)` Markdown text is straightforward and not blocked by this question). The
-companion question about real `<img>` rendering scope/mechanism (asset-protocol vs. byte-read IPC
-command) that was originally bundled with this one has since been resolved and shipped — see
-`DECISIONS.md`'s "Real `<img>` Rendering via Byte-Read IPC Command + Blob-URL Cache" entry,
-`docs/MDEditor-spec.md` §5, and `docs/plans/markdown/image-handling/PLAN.md`.
-
-**Context**: `docs/plans/image-handling/PLAN.md` §4 attributes "the single image's markup converts to
-`<img src=".." width=".." height="..">`" to a **drag handle on the rendered image in live view**, but
-neither `image-handling/PLAN.md` nor `markdown-editing/PLAN.md` contains a widget markup spec, drag
-mechanics, handle position/size, aspect-ratio-lock behavior, or a minimum-size rule for this
-interaction — it remains undesigned even though the underlying real `<img>` rendering it would attach
-to is now implemented.
-
-**Question**: Is building the drag-resize-handle interaction in scope for `developer-lite` to design
-and implement now, or should it be tracked as an explicit follow-up in both plans' "Open Items" (no
-regression versus current behavior, which has no resize handle)? If in scope now, the actual
-resize-handle UX needs deciding: drag mechanics, handle placement, aspect-ratio lock, minimum size.
-
-**Needed**: A decision on scope timing (now vs. follow-up) and, if now, on the resize-handle UX, to
-record in `DECISIONS.md` and reflect into `image-handling/PLAN.md` / `markdown-editing/PLAN.md`.
-**Non-blocking**: `developer-lite` can complete and ship the rest of `image-handling/PLAN.md`'s
-clearly-specified parts without this being resolved first; images render without a resize handle in
-the meantime.
-
 ---
 
 _(Past questions and their resolutions are available via this file's git history and are permanently
