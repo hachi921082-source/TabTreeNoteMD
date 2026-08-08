@@ -28,7 +28,8 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   - §3.6 Image Paste Storage — filename rule, no-orphan-cleanup policy.
   - §3.7 Constants Inventory — table of concrete numeric defaults (retry counts, TTL, scrypt params, etc.).
 - **§4 Backend Operation Inventory** — logical command list by domain: §4.1 Tab, §4.2 Tree/memo, §4.3 Editor/save, §4.4 Search, §4.5 Settings, §4.6 Link, §4.7 Image.
-- **§5 Feature Behavior Details** — elaboration per feature: §5.1 Tab Management, §5.2 Memo Tree, §5.3 Text Editing, §5.4 Search/Index, §5.5 Appearance/Theme, §5.6 Persistence/Save Triggers, §5.7 Window/Operation, §5.8 Link Functionality, §5.9 Tab Lock End-to-End Flows (locking/crash-recovery/unlocking/permanent-unlock/permanent-unlock-crash-recovery/cross-tab DND), §5.10 Markdown Editing (16-slot toolbar, icon set, sanitization allowlist, TOC).
+- **§5 Feature Behavior Details** — elaboration per feature: §5.1 Tab Management, §5.2 Memo Tree (incl.
+  tree guide lines), §5.3 Text Editing, §5.4 Search/Index, §5.5 Appearance/Theme, §5.6 Persistence/Save Triggers, §5.7 Window/Operation, §5.8 Link Functionality, §5.9 Tab Lock End-to-End Flows (locking/crash-recovery/unlocking/permanent-unlock/permanent-unlock-crash-recovery/cross-tab DND), §5.10 Markdown Editing (16-slot toolbar, icon set, sanitization allowlist, TOC).
 - **§6 Cross-Cutting Mechanism Details** — §6.1 Atomic Write concrete sequence, §6.2 Self-Write Registry, §6.3 Sync Order, §6.4 Conflict Detection & Corruption Recovery, §6.5 other Post-M7 rules (folder-not-found, validation strictness, no native dialogs, Esc rule).
 - **§7 Error Handling — Expanded** — table of every `ErrorCode`: trigger scenario + expected UI response.
 - **§8 Non-Functional Elaboration** — performance qualitative bar, backup/portability acceptance check.
@@ -460,6 +461,17 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
   single label/action.
   - Target memo currently unlocked → label "編集ロック" → sets `locked: true`.
   - Target memo currently locked → label "編集ロック解除" → sets `locked: false`.
+- **Tree guide lines** (indent connector lines; GitHub issue #60): each row renders one guide-line
+  segment per ancestor depth level, positioned before the existing expand/collapse toggle button
+  (replacing the current plain `paddingLeft: depth * 16 + 6` indent with per-depth segments).
+  - For an ancestor depth where that ancestor still has more siblings below it, the segment shows a
+    continuing vertical line; otherwise the segment is blank (that ancestor was itself a last child, so
+    its line already terminated above).
+  - The row's own connector (at its own depth) renders as a branch shape: `├─`-style if the row has
+    more siblings following it, `└─`-style (corner only, no continuation below) if it is the last child.
+  - Presentational only — no new interaction, state, or data-model field; purely a rendering change to
+    the existing `TreeRow` depth-based layout.
+  - Line color: existing theme token `--ttn-border`.
 
 ### 5.3 Text Editing (Right Pane) — Elaboration
 
