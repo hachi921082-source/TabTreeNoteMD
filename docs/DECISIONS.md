@@ -390,3 +390,19 @@ This is scoped to *source code* only. The old repository's specification documen
 historical origin of the product requirements already consolidated into `spec.md` (visible throughout
 as `[DESIGN §x]`-style citations) — that provenance is unaffected. `CLAUDE.md`'s "reference only, do
 not Edit/Write/commit" rule for that path also still applies regardless of this policy.
+
+## Remove Unused Editor Default Settings: Display Mode Selector and Soft-Tab Checkbox (2026-08-08)
+
+**Decision**: Removed two rows from Settings → Editor (GitHub issue #61):
+
+- The "display mode" selector (`AppSettings.editorDefaults.viewMode`). The effective default is now
+  hardcoded to `'live'` — no behavior change, since `'live'` was already the existing factory default.
+  The per-memo live/source override and its runtime toggle are unaffected and remain fully functional.
+- The "insert tab as spaces" checkbox (`AppSettings.editorDefaults.softTab`, and the corresponding
+  per-memo `MemoEditorSettings.softTab` override field). Tab-key behavior is now hardcoded to always
+  insert a literal tab character (`\t`). **Behavior change**: the prior factory default was
+  `softTab: true` (spaces), so existing users who relied on the default will see Tab now insert a tab
+  character instead of spaces. The right-click "Convert" tab↔space transform is unaffected (separate,
+  on-demand feature).
+
+Elaborated in `spec.md` §2.3/§3.4/§4.2 and `detailed-spec.md` §3.2/§3.3/§5.3/§5.10.
