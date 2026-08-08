@@ -45,9 +45,24 @@ pub struct TreeSnapshot {
     pub nodes: Vec<MetaTreeNode>,
     pub tab_name: String,
     pub locked: bool,
-    /// `true` when a crash-mid-lock marker was found (`tab-lock/CRASH-RECOVERY.md`) — the
-    /// frontend should show that feature's recovery dialog instead of the normal tree view.
+    /// `true` when a crash-mid-lock or crash-mid-permanent-unlock marker was found
+    /// (`tab-lock/CRASH-RECOVERY.md`, `tab-lock-permanent-unlock/CRASH-RECOVERY.md`) — the
+    /// frontend should show the recovery dialog identified by `recovery_kind` instead of the
+    /// normal tree view.
     pub recovery_pending: bool,
+    /// Which recovery dialog to show when `recovery_pending` is `true`. Always present when
+    /// `recovery_pending` is `true`, `None` otherwise (`tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_kind: Option<RecoveryKind>,
+}
+
+/// Which crash-recovery flow `recovery_pending: true` refers to
+/// (`docs/plans/tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecoveryKind {
+    Lock,
+    PermanentUnlock,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,6 +122,7 @@ pub fn tree_open(
     store: State<AppSettingsStore>,
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -115,10 +131,11 @@ pub fn tree_open(
         return AppResult::err_code(ErrorCode::NotFound, "tab not found");
     };
     let folder = PathBuf::from(&entry.folder_path);
-    let tab_name = entry.name.clone();
-    let cached_locked = entry.locked.unwrap_or(false);
+    let mut tab_name = entry.name.clone();
+    let mut cached_locked = entry.locked.unwrap_or(false);
+    drop(settings);
 
-    // Step 0 (`tab-lock/CRASH-RECOVERY.md`'s "Trigger Point"): crash-mid-lock marker check,
+    // Step 0a (`tab-lock/CRASH-RECOVERY.md`'s "Trigger Point"): crash-mid-lock marker check,
     // before anything else. A zero-progress marker is silently auto-rolled-back inline; anything
     // else reports `recovery_pending: true` so the frontend shows the recovery dialog instead of
     // this tab's normal tree/empty-state view.
@@ -128,8 +145,38 @@ pub fn tree_open(
             tab_name,
             locked: false,
             recovery_pending: true,
+            recovery_kind: Some(RecoveryKind::Lock),
         });
     }
+
+    // Step 0b (`tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3): a second, independent marker
+    // check for a crash-mid-permanent-unlock. Important: this call's `NoMarker` return may have
+    // already mutated `AppSettings`/`LockSessionStore`/`SearchIndex` as a side effect (the "Case
+    // B" auto-finish branch, `CRASH-RECOVERY.md` §3.3) — unlike `check_marker_on_tree_open`
+    // above, which only ever deletes a file. `AppSettings` is therefore re-fetched immediately
+    // below rather than reusing the `tab_name`/`cached_locked` locals captured above, which may
+    // now be stale.
+    if matches!(
+        tab_lock::check_unlock_marker_on_tree_open(&folder, &registry, &store, &sessions, &search_index, &tab_id),
+        tab_lock::UnlockMarkerCheck::RecoveryPending
+    ) {
+        return AppResult::ok(TreeSnapshot {
+            nodes: vec![],
+            tab_name,
+            locked: cached_locked,
+            recovery_pending: true,
+            recovery_kind: Some(RecoveryKind::PermanentUnlock),
+        });
+    }
+
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+    let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
+        return AppResult::err_code(ErrorCode::NotFound, "tab not found");
+    };
+    tab_name = entry.name.clone();
+    cached_locked = entry.locked.unwrap_or(false);
+    drop(settings);
 
     let (parsed, recovery_outcome) = load_tab_meta_with_recovery(&folder);
     let really_locked = parsed.as_ref().map(|m| m.lock.is_some()).unwrap_or(false);
@@ -138,7 +185,6 @@ pub fn tree_open(
     // `AppSettings.tabs[i].locked` display cache gets corrected if it
     // disagrees with the tab's own metadata file (e.g. after an external
     // folder copy swapped in a differently-locked `.tabtreenote.json`).
-    let mut tab_name = tab_name;
     if really_locked != cached_locked {
         let _ = store.modify(&registry, |s| -> Result<(), ()> {
             if let Some(t) = s.tabs.iter_mut().find(|t| t.id == tab_id) {
@@ -172,6 +218,7 @@ pub fn tree_open(
             tab_name,
             locked: true,
             recovery_pending: false,
+            recovery_kind: None,
         });
     }
 
@@ -187,6 +234,7 @@ pub fn tree_open(
         tab_name,
         locked: false,
         recovery_pending: false,
+        recovery_kind: None,
     })
 }
 
@@ -289,6 +337,7 @@ fn memo_create_impl(
         tab_name,
         locked: false,
         recovery_pending: false,
+        recovery_kind: None,
     })
 }
 
@@ -363,6 +412,7 @@ pub fn memo_rename(
         tab_name,
         locked: false,
         recovery_pending: false,
+        recovery_kind: None,
     })
 }
 
@@ -457,6 +507,7 @@ pub fn memo_delete(
         tab_name,
         locked: false,
         recovery_pending: false,
+        recovery_kind: None,
     })
 }
 
@@ -583,6 +634,7 @@ fn memo_move_within_tab(
             tab_name: tab_name.to_string(),
             locked: false,
             recovery_pending: false,
+            recovery_kind: None,
         },
         target: None,
     })
@@ -695,12 +747,14 @@ fn memo_move_cross_tab(
             tab_name: source_tab_name.to_string(),
             locked: false,
             recovery_pending: false,
+            recovery_kind: None,
         },
         target: Some(TreeSnapshot {
             nodes: target_loaded.tree,
             tab_name: target_tab_name.to_string(),
             locked: false,
             recovery_pending: false,
+            recovery_kind: None,
         }),
     })
 }
@@ -834,6 +888,7 @@ fn mutate_node_field(
         tab_name,
         locked: false,
         recovery_pending: false,
+        recovery_kind: None,
     })
 }
 
@@ -1052,8 +1107,11 @@ pub(crate) fn save_tab_meta(folder: &Path, schema_version: u32, app_version: Str
 
 /// Direct-child `.md` files of `folder`, by `memoName` (extension stripped). A missing folder
 /// yields an empty list, not an error (`[detailed-spec §6.5]`). Symbolic links/junctions are not
-/// followed (`[spec §2.2]`).
-fn scan_real_memo_names(folder: &Path) -> Vec<String> {
+/// followed (`[spec §2.2]`). `pub(crate)` so `commands/tab_lock.rs`'s permanent-unlock
+/// crash-recovery trigger-point check (`tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3.2) can
+/// reuse this same password-free "any `.md` file present" scan, and so its Finish recovery
+/// command can reindex from the actual on-disk file list (`PLAN.md` §4.6).
+pub(crate) fn scan_real_memo_names(folder: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return Vec::new();
     };

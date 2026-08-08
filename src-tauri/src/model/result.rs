@@ -22,6 +22,11 @@ pub enum ErrorCode {
     MetaCorrupt,
     LongPath,
     TabLocked,
+    /// An entry was found in the "both or neither exist" anomalous state while permanently
+    /// unlocking a tab (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §3) — surfaced during the
+    /// *ordinary* (non-recovery) permanent-unlock loop, a case the lock direction's own ordinary
+    /// `tab_lock` loop cannot reach (its tokens are always freshly generated and collision-checked).
+    AnomalousFileState,
     Unknown,
 }
 

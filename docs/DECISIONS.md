@@ -185,6 +185,63 @@ files as permanently unreadable, unmapped token blobs.
   item Q1 is resolved and removed from that file per its own resolved-item convention; this entry is
   its permanent record.
 
+## Tab Lock: Permanent Unlock Operation Added (2026-08-08)
+
+**Decision**: `spec.md` §4.1's former statement that "permanent unlock operations do not apply" (it
+only ever meant nested/partial locks don't apply — a tab is fully locked or fully unlocked, never a
+mix, which is unchanged) is superseded: a whole-tab **permanent unlock** is now a supported, explicit,
+irreversible operation (`spec.md` §4.1 pt.9, `detailed-spec.md` §5.9 "Permanently unlocking a tab").
+It fully decrypts a locked tab's memos, renames obfuscated token files back to their real names, and
+replaces the tab's `lock` metadata with a plain `tree`, distinct from — and not a substitute for —
+ending a session (which remains temporary and automatic on leaving the tab, unchanged).
+
+- **Two entry points, both kept**: from within an active unlock session (reuses the session's already-
+  verified key, no repeat password prompt) and directly from the locked/no-session state (its own
+  password prompt, structurally the same decrypt-and-verify `tab_unlock` already performs). Both were
+  kept rather than picking one, since they serve different real situations (already reviewing the tab's
+  contents vs. deciding to strip protection without first opening a session) at no extra design cost —
+  they converge on the same underlying operation.
+- **Crash safety reuses the existing lock-direction marker design, mirrored**: a minimal in-progress
+  marker (existence + format version only) plus per-entry on-disk state classification and a
+  Finish/Restore-Lock choice, symmetric to `docs/plans/tab-lock/CRASH-RECOVERY.md`. The new marker
+  deliberately does **not** duplicate the `fileMap`/`kdf` the lock-direction marker carries: the
+  still-present `lock` blob (untouched until the very last file-system step) already is that
+  authoritative record, and copying real memo names into a second plaintext marker file would
+  needlessly re-expose already-hidden names during any crash window, unlike the lock-direction marker's
+  `fileMap` (never secret, since the real filenames are already visible on disk when that marker is
+  written).
+- **Confirmation is a UI-level requirement, not just the password gate**: since the outcome is
+  irreversible and cannot be reversed by re-locking with the same guarantees (the discarded key means a
+  later lock only protects data going forward), an explicit confirmation step is required at both entry
+  points, mirroring the existing confirm-before-destructive-action pattern for trash failure -> direct
+  delete (`spec.md` §5.8).
+- **Full-text search re-indexes immediately** rather than waiting for the next app restart, matching the
+  in-app "patch the index directly" pattern already used for ordinary content changes
+  (`search-index/PLAN.md` §1) — a deliberate contrast with the separately-accepted, unrelated gap where
+  a newly-registered tab's pre-existing files aren't indexed until restart (`search-index/PLAN.md`'s own
+  status note); that gap is not extended to this feature.
+- **Where elaborated**: `spec.md` §4.1 pt.7 (revised) and pt.9 (new); `detailed-spec.md` §5.9
+  "Permanently unlocking a tab" and its "Recovery on tab-folder access (crash mid-permanent-unlock)"
+  subsection. The actual `CRASH-RECOVERY.md`-equivalent document (exact marker filename/JSON shape,
+  new Tauri command names, frontend dialog wiring) is left to `developer-lite`'s `PLAN.md` for this
+  feature.
+
+**Follow-up review (2026-08-08, same day)** closed several gaps found by symmetry with `tab_lock`'s own
+existing behavior, plus three user decisions:
+- By symmetry with `tab_lock` (no user input needed): the flow now includes `tab_lock`'s own
+  open-unsaved-memo defensive check; an explicit requirement that the frontend serialize/block all other
+  operations on the tab for the operation's duration (the same pre-existing exposure `tab_lock` itself
+  has, now stated rather than left implicit); `.bak` companion cleanup when deleting a restored token
+  file (same residue class as the already-fixed GitHub issue #18); a one-line "errors out if the tab
+  isn't locked" precondition (mirrors `tab_unlock`); and an explicit statement that a pending
+  permanent-unlock marker gets the same (i.e., no special) tab-bar treatment as a pending lock marker.
+- **User decisions**: the confirmation dialog is a simple OK/Cancel with warning copy (not typed
+  tab-name confirmation, not a checkbox) and must include a line recommending a folder-copy backup first
+  (`spec.md` §6's existing "folder copy = backup" property); a same-named plaintext file unexpectedly
+  already present at restore time is treated as an anomalous entry (aborted with an error, untouched) —
+  reusing crash-recovery's existing `EntryState::Anomalous` framing, now stated as applying to the
+  ordinary (non-crash) restore loop too, not only to crash recovery.
+
 ## UI-State Persistence Decisions: Scroll Position, Toolbar Position, Search History (2026-08-01)
 
 Three previously-unaddressed or hedged "does this survive app restart?" questions were resolved

@@ -22,6 +22,7 @@ const MESSAGES: Record<ErrorCode, string> = {
   META_CORRUPT: "管理情報を復元しました",
   LONG_PATH: "パスが長すぎる可能性があります",
   TAB_LOCKED: "ロックされたタブには操作できません",
+  ANOMALOUS_FILE_STATE: "想定外の状態のファイルが見つかりました。タブをもう一度開いて復旧処理を行ってください。",
   UNKNOWN: "予期しないエラーが発生しました",
 };
 

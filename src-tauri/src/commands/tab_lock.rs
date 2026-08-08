@@ -20,7 +20,7 @@ use crate::commands::tree::{self, MemoMoveResult, MemoProperties, TreeSnapshot};
 use crate::commands::emit_settings_recovery_event;
 use crate::crypto::kdf::{self, KdfParams};
 use crate::crypto::lock_blob::{self, FileMapEntry, LockField, LockKey, LockPayload};
-use crate::fs::atomic_write::atomic_write;
+use crate::fs::atomic_write::{atomic_write, bak_path};
 use crate::fs::retry::with_retry;
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::model::app_settings::{AppSettings, EolPolicy};
@@ -74,8 +74,58 @@ fn delete_marker(folder: &Path, registry: &SelfWriteRegistry) -> std::io::Result
 }
 
 // ---------------------------------------------------------------------------
+// Permanent-unlock in-progress marker (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §2)
+// ---------------------------------------------------------------------------
+
+/// `<tab folder>/.tabtreenote.unlock-inprogress`. `pub(crate)` so `commands/tree.rs`'s
+/// `tree_open` step 0 can detect its presence without a string-literal duplicate, mirroring
+/// `LOCK_INPROGRESS_MARKER_NAME` above.
+pub(crate) const UNLOCK_INPROGRESS_MARKER_NAME: &str = ".tabtreenote.unlock-inprogress";
+const UNLOCK_MARKER_FORMAT_VERSION: u32 = 1;
+
+/// Deliberately minimal — no `fileMap`/`kdf` (contrast with `LockInProgressMarker` above): the
+/// still-present `lock` field in `.tabtreenote.json` (untouched until step 8 of
+/// `tab_permanent_unlock` below) already is the authoritative planned mapping for the entire
+/// operation (`PLAN.md` §2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnlockInProgressMarker {
+    format_version: u32,
+}
+
+fn unlock_marker_path(folder: &Path) -> PathBuf {
+    folder.join(UNLOCK_INPROGRESS_MARKER_NAME)
+}
+
+fn load_unlock_marker(folder: &Path) -> Option<UnlockInProgressMarker> {
+    let bytes = std::fs::read(unlock_marker_path(folder)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn write_unlock_marker(folder: &Path, marker: &UnlockInProgressMarker, registry: &SelfWriteRegistry) -> std::io::Result<()> {
+    let json = serde_json::to_vec_pretty(marker)?;
+    atomic_write(&unlock_marker_path(folder), &json, registry)
+}
+
+fn delete_unlock_marker(folder: &Path, registry: &SelfWriteRegistry) -> std::io::Result<()> {
+    let path = unlock_marker_path(folder);
+    registry.register(&path);
+    with_retry(|| std::fs::remove_file(&path))
+}
+
+// ---------------------------------------------------------------------------
 // Per-entry state check (`CRASH-RECOVERY.md` "Per-Entry State Check ...")
 // ---------------------------------------------------------------------------
+
+/// Direction-agnostic on-disk evidence for one `{ memoName, token }` pair — `classify_entry`
+/// (lock direction) and `classify_unlock_entry` (below, permanent-unlock direction,
+/// `tab-lock-permanent-unlock/PLAN.md` §4.1) each interpret the same two booleans according to
+/// their own direction's success criterion. Returns `(real_exists, token_exists)`.
+fn pair_exists(folder: &Path, entry: &FileMapEntry) -> (bool, bool) {
+    let real = folder.join(format!("{}.md", entry.memo_name));
+    let token = folder.join(&entry.token);
+    (real.exists(), token.exists())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EntryState {
@@ -90,13 +140,58 @@ enum EntryState {
 }
 
 fn classify_entry(folder: &Path, entry: &FileMapEntry) -> EntryState {
-    let real = folder.join(format!("{}.md", entry.memo_name));
-    let token = folder.join(&entry.token);
-    match (real.exists(), token.exists()) {
+    match pair_exists(folder, entry) {
         (false, true) => EntryState::Renamed,
         (true, false) => EntryState::NotRenamed,
         _ => EntryState::Anomalous,
     }
+}
+
+/// Mirror of `EntryState`/`Classification`/`classify_marker` for the opposite (permanent-unlock)
+/// direction (`tab-lock-permanent-unlock/PLAN.md` §4.2). Operates on a plain `&[FileMapEntry]`
+/// slice rather than a marker struct, since `UnlockInProgressMarker` carries no `fileMap` (§2
+/// above) — the still-present `lock` field's decrypted payload is the caller's source of entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnlockEntryState {
+    /// `<memoName>.md` exists, token does not — this entry's restore (`tab_permanent_unlock`
+    /// step 7) completed.
+    Restored,
+    /// Token exists, `<memoName>.md` does not — this entry's restore never started.
+    NotRestored,
+    /// Both or neither exist — anomalous (external interference), never auto-resolved.
+    Anomalous,
+}
+
+fn classify_unlock_entry(folder: &Path, entry: &FileMapEntry) -> UnlockEntryState {
+    match pair_exists(folder, entry) {
+        (true, false) => UnlockEntryState::Restored,
+        (false, true) => UnlockEntryState::NotRestored,
+        _ => UnlockEntryState::Anomalous,
+    }
+}
+
+struct UnlockClassification {
+    restored: usize,
+    not_restored: usize,
+    anomalous: usize,
+    total: usize,
+}
+
+fn classify_unlock_entries(folder: &Path, file_map: &[FileMapEntry]) -> UnlockClassification {
+    let mut c = UnlockClassification {
+        restored: 0,
+        not_restored: 0,
+        anomalous: 0,
+        total: file_map.len(),
+    };
+    for entry in file_map {
+        match classify_unlock_entry(folder, entry) {
+            UnlockEntryState::Restored => c.restored += 1,
+            UnlockEntryState::NotRestored => c.not_restored += 1,
+            UnlockEntryState::Anomalous => c.anomalous += 1,
+        }
+    }
+    c
 }
 
 struct Classification {
@@ -150,6 +245,77 @@ pub(crate) fn check_marker_on_tree_open(folder: &Path, registry: &SelfWriteRegis
         return MarkerCheck::NoMarker;
     }
     MarkerCheck::RecoveryPending
+}
+
+/// Result of `tree_open`'s step-0 check for a pending permanent-unlock marker
+/// (`tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3.1).
+pub(crate) enum UnlockMarkerCheck {
+    /// No marker found, or found and fully auto-resolved in place (the "zero restored" or
+    /// "already finished" cases below) — caller proceeds with ordinary `tree_open` handling,
+    /// after re-reading `AppSettings` (see `CRASH-RECOVERY.md` §3's note: this call may have
+    /// already mutated `AppSettings`/`LockSessionStore`/`SearchIndex` as a side effect).
+    NoMarker,
+    /// A marker was found with at least one restored/anomalous entry and the classification
+    /// could not be auto-resolved without a password — caller returns `recoveryPending: true`,
+    /// `recoveryKind: PermanentUnlock`.
+    RecoveryPending,
+}
+
+/// `tree_open`'s step 0, second check (`tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3) — a
+/// second, independent marker check alongside `check_marker_on_tree_open` above. Folds in the two
+/// fully-deterministic, password-free, no-dialog auto-resolve cases (§3.2 "zero restored", §3.3
+/// "already finished" / Case B) inline, exactly mirroring how `check_marker_on_tree_open` folds
+/// in its own "zero renamed" case.
+pub(crate) fn check_unlock_marker_on_tree_open(
+    folder: &Path,
+    registry: &SelfWriteRegistry,
+    store: &AppSettingsStore,
+    sessions: &LockSessionStore,
+    search_index: &SearchIndex,
+    tab_id: &str,
+) -> UnlockMarkerCheck {
+    if load_unlock_marker(folder).is_none() {
+        return UnlockMarkerCheck::NoMarker;
+    }
+
+    // Case "zero restored" (§3.2): token files have no `.md` extension by construction, so the
+    // presence of any `.md` file directly under the tab folder is a cheap, password-free proxy
+    // for "at least one entry may already be restored." A false "not zero" classification merely
+    // costs the user a password prompt that turns out not to have been strictly necessary — this
+    // branch only ever deletes the marker, touching no other file.
+    if tree::scan_real_memo_names(folder).is_empty() {
+        if let Err(err) = delete_unlock_marker(folder, registry) {
+            tracing::error!(error = %err, "check_unlock_marker_on_tree_open: failed to delete a zero-progress in-progress marker");
+            return UnlockMarkerCheck::RecoveryPending;
+        }
+        return UnlockMarkerCheck::NoMarker;
+    }
+
+    // Case "already finished" (Case B, §3.3): `.tabtreenote.json` already shows a plain `tree`
+    // field, meaning `tab_permanent_unlock` step 8 already ran — every `fileMap` entry is
+    // provably already restored, with no per-entry decision left to make and no key needed.
+    let (parsed, _recovery) = tree::load_tab_meta_with_recovery(folder);
+    if parsed.as_ref().map(|m| m.tree.is_some()).unwrap_or(false) {
+        // Accepted residual gap (`CRASH-RECOVERY.md` §3.3): if no session is active, `real_name`
+        // is `None` — the tab's displayed name stays stuck at the 🔒 placeholder until the user
+        // manually renames it, but `locked` is still cleared so the tab is fully functional.
+        let real_name = sessions.with_session(tab_id, |s| s.real_tab_name.clone());
+        let _ = clear_locked_placeholder(store, registry, tab_id, real_name.as_deref());
+        sessions.end(tab_id);
+        for name in tree::scan_real_memo_names(folder) {
+            if let Ok(bytes) = std::fs::read(folder.join(format!("{name}.md"))) {
+                let (decoded, _encoding) = decode_memo_body(&bytes);
+                search_index.upsert(tab_id, &name, &decoded);
+            }
+        }
+        if let Err(err) = delete_unlock_marker(folder, registry) {
+            tracing::error!(error = %err, "check_unlock_marker_on_tree_open: failed to delete an already-finished marker");
+            return UnlockMarkerCheck::RecoveryPending;
+        }
+        return UnlockMarkerCheck::NoMarker;
+    }
+
+    UnlockMarkerCheck::RecoveryPending
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +387,12 @@ pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Op
     // Step 3 (defensive; the primary trigger is always `tree_open`'s own marker check).
     if load_marker(&folder).is_some() {
         return AppResult::err_code(ErrorCode::Unknown, "a previous lock attempt on this tab was never recovered; open the tab to run recovery first");
+    }
+    // Mutual exclusion, the other direction (`tab-lock-permanent-unlock/PLAN.md` §5.1): a
+    // never-recovered permanent-unlock attempt must be resolved before this tab can be locked
+    // again.
+    if load_unlock_marker(&folder).is_some() {
+        return AppResult::err_code(ErrorCode::Unknown, "a previous permanent-unlock attempt on this tab was never recovered; open the tab to run recovery first");
     }
 
     // Step 4: current unlocked tree.
@@ -323,6 +495,29 @@ fn set_locked_placeholder(store: &AppSettingsStore, registry: &SelfWriteRegistry
         if let Some(t) = s.tabs.iter_mut().find(|t| t.id == tab_id) {
             t.locked = Some(true);
             t.name = LOCKED_PLACEHOLDER_NAME.to_string();
+        }
+        Ok(())
+    }) {
+        Ok(Ok((_settings, outcome))) => Ok(outcome),
+        _ => Err(()),
+    }
+}
+
+/// Reverse of `set_locked_placeholder` above (`tab-lock-permanent-unlock/PLAN.md` §4.5).
+/// `real_name: None` clears `locked` without touching `name` — used by the Case-B auto-finish
+/// path (`CRASH-RECOVERY.md` §3.3) when no active session survives to supply the real name.
+fn clear_locked_placeholder(
+    store: &AppSettingsStore,
+    registry: &SelfWriteRegistry,
+    tab_id: &str,
+    real_name: Option<&str>,
+) -> Result<crate::settings::app_settings_store::RecoveryOutcome, ()> {
+    match store.modify(registry, |s| -> Result<(), ()> {
+        if let Some(t) = s.tabs.iter_mut().find(|t| t.id == tab_id) {
+            t.locked = Some(false);
+            if let Some(name) = real_name {
+                t.name = name.to_string();
+            }
         }
         Ok(())
     }) {
@@ -453,6 +648,201 @@ pub fn tab_end_session(app: AppHandle, tab_id: String) -> AppResult<()> {
     let sessions = app.state::<LockSessionStore>();
     sessions.end(&tab_id);
     AppResult::ok(())
+}
+
+// ---------------------------------------------------------------------------
+// tab_permanent_unlock (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §4-§5)
+// ---------------------------------------------------------------------------
+
+/// Resolves the encryption key + decrypted lock payload for a currently-locked tab (`PLAN.md`
+/// §4.3). If `tab_id` has an active unlock session, uses its already-verified key/tree/fileMap
+/// directly (entry point (a); no disk re-read, no re-verification, `password` is ignored).
+/// Otherwise requires `password` and performs the same decrypt-and-verify `tab_unlock` steps 1-3
+/// already do (entry point (b)). Shared by `tab_permanent_unlock` and all three recovery
+/// commands' Case-A branch (`CRASH-RECOVERY.md` §4).
+async fn resolve_key_and_lock_payload(
+    folder: &Path,
+    sessions: &LockSessionStore,
+    tab_id: &str,
+    password: Option<String>,
+) -> Result<(LockKey, LockPayload), AppErrorPayload> {
+    if let Some((key_bytes, payload)) = sessions.with_session(tab_id, |s| {
+        (
+            s.key,
+            LockPayload {
+                real_tab_name: s.real_tab_name.clone(),
+                tree: s.tree.clone(),
+                file_map: s.file_map.clone(),
+            },
+        )
+    }) {
+        return Ok((LockKey::new(&key_bytes), payload));
+    }
+    let Some(password) = password else {
+        return Err(AppErrorPayload::new(ErrorCode::Unknown, "password is required to permanently unlock this tab"));
+    };
+    let (parsed, _recovery) = tree::load_tab_meta_with_recovery(folder);
+    let Some(lock_value) = parsed.and_then(|m| m.lock) else {
+        return Err(AppErrorPayload::new(ErrorCode::Unknown, "this tab is not locked"));
+    };
+    let field: LockField = serde_json::from_value(lock_value).map_err(|_| AppErrorPayload::new(ErrorCode::Unknown, "this tab's lock metadata is corrupted"))?;
+    let key_bytes = kdf::derive_key(password, field.kdf.clone())
+        .await
+        .map_err(|_| AppErrorPayload::new(ErrorCode::Unknown, "failed to derive decryption key"))?;
+    let key = LockKey::new(&key_bytes);
+    let payload = lock_blob::decrypt_lock_field(&key, &field).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "incorrect password"))?;
+    Ok((key, payload))
+}
+
+/// One `fileMap` entry's restore, plus a `.bak`-companion cleanup (`PLAN.md` §4.4). Reuses
+/// `tab_lock_recovery_restore`'s existing per-entry body (decrypt token -> `atomic_write`
+/// plaintext -> remove token), plus a new best-effort `.bak`-companion cleanup (`DECISIONS.md`'s
+/// follow-up review: "same residue class as the already-fixed GitHub issue #18"). Scoped to this
+/// new code path only — `tab_lock_recovery_restore`'s own existing loop is left untouched.
+fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, key: &LockKey, registry: &SelfWriteRegistry) -> Result<(), AppErrorPayload> {
+    let token_path = folder.join(&entry.token);
+    let bytes = std::fs::read(&token_path).map_err(|err| {
+        tracing::error!(error = %err, path = %token_path.display(), "failed to read an obfuscated memo file while permanently unlocking this tab");
+        AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while unlocking this tab")
+    })?;
+    let plaintext = lock_blob::decrypt_memo_body(key, &bytes).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "incorrect password"))?;
+    let real_path = folder.join(format!("{}.md", entry.memo_name));
+    atomic_write(&real_path, &plaintext, registry).map_err(|err| {
+        tracing::error!(error = %err, path = %real_path.display(), "failed to restore a plaintext memo file while permanently unlocking this tab");
+        AppErrorPayload::new(ErrorCode::Unknown, "failed to restore a memo file")
+    })?;
+    registry.register(&token_path);
+    with_retry(|| std::fs::remove_file(&token_path)).map_err(|err| {
+        tracing::error!(error = %err, path = %token_path.display(), "failed to remove an obfuscated memo file after restoring it");
+        AppErrorPayload::new(ErrorCode::IoLocked, "failed to remove an obfuscated memo file while unlocking this tab")
+    })?;
+    // Best-effort `.bak` companion cleanup (GH #18-class residue) — a missing `.bak` is not an error.
+    let bak = bak_path(&token_path);
+    if bak.exists() {
+        registry.register(&bak);
+        if let Err(err) = with_retry(|| std::fs::remove_file(&bak)) {
+            tracing::warn!(error = %err, path = %bak.display(), "failed to remove an orphaned obfuscated .bak file (best-effort, not fatal)");
+        }
+    }
+    Ok(())
+}
+
+/// `docs/plans/tab-lock-permanent-unlock/PLAN.md` §5. `password: None` for entry point (a) (an
+/// active session supplies the key); `Some(pw)` for entry point (b).
+#[tauri::command]
+pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
+    let store = app.state::<AppSettingsStore>();
+    let registry = app.state::<SelfWriteRegistry>();
+    let sessions = app.state::<LockSessionStore>();
+    let active_memo = app.state::<ActiveMemoTracker>();
+
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+    let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
+        return AppResult::err_code(ErrorCode::NotFound, "tab not found");
+    };
+    let folder = PathBuf::from(&entry.folder_path);
+    drop(settings);
+
+    // Step 2: precondition (mirrors `tab_unlock`'s own check).
+    let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&folder);
+    let Some(meta) = parsed else {
+        return AppResult::err_code(ErrorCode::Unknown, "tab metadata could not be read");
+    };
+    if meta.lock.is_none() {
+        return AppResult::err_code(ErrorCode::Unknown, "this tab is not locked");
+    }
+
+    // Step 3 (defensive; mirrors `tab_lock` step 2).
+    if active_memo.is_active_tab(&tab_id) {
+        return AppResult::err_code(ErrorCode::Unknown, "cannot permanently unlock a tab with an open, unsaved memo");
+    }
+
+    // Step 4: mutual exclusion, both directions.
+    if load_marker(&folder).is_some() {
+        return AppResult::err_code(ErrorCode::Unknown, "a previous lock attempt on this tab was never recovered; open the tab to run recovery first");
+    }
+    if load_unlock_marker(&folder).is_some() {
+        return AppResult::err_code(ErrorCode::Unknown, "a previous permanent-unlock attempt on this tab was never recovered; open the tab to run recovery first");
+    }
+
+    // Step 5: resolve key + payload.
+    let (key, payload) = match resolve_key_and_lock_payload(&folder, &sessions, &tab_id, password).await {
+        Ok(v) => v,
+        Err(err) => return AppResult::err(err),
+    };
+
+    // Step 6: write the marker before touching any file.
+    let marker = UnlockInProgressMarker {
+        format_version: UNLOCK_MARKER_FORMAT_VERSION,
+    };
+    if let Err(err) = write_unlock_marker(&folder, &marker, &registry) {
+        tracing::error!(error = %err, "tab_permanent_unlock: failed to write in-progress marker");
+        return AppResult::err_code(ErrorCode::Unknown, "failed to start permanently unlocking this tab");
+    }
+
+    // Step 7: restore loop, in any order.
+    for entry_fm in &payload.file_map {
+        match classify_unlock_entry(&folder, entry_fm) {
+            // Idempotent; not reachable on a fresh call, relevant only if this exact call is
+            // somehow retried.
+            UnlockEntryState::Restored => continue,
+            // Abort the entire operation immediately: do not process further entries, do not
+            // roll back already-restored entries, leave the marker in place. The next
+            // tab-folder access runs the crash-recovery flow, which classifies this exact same
+            // state (`CRASH-RECOVERY.md`).
+            UnlockEntryState::Anomalous => {
+                tracing::error!(memo_name = %entry_fm.memo_name, "tab_permanent_unlock: encountered an anomalous entry; aborting the whole operation, marker left for crash recovery");
+                return AppResult::err_code(ErrorCode::AnomalousFileState, "an unexpected file state was found while permanently unlocking this tab");
+            }
+            UnlockEntryState::NotRestored => {
+                if let Err(err) = restore_one_permanent_unlock_entry(&folder, entry_fm, &key, &registry) {
+                    tracing::error!(?err, "tab_permanent_unlock: failed mid-way through restoring memo files; marker left for crash recovery");
+                    return AppResult::err(err);
+                }
+            }
+        }
+    }
+
+    // Step 8: rewrite metadata — plain `tree` field, real names. Only reached once step 7
+    // completed with zero anomalous entries.
+    if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, &registry) {
+        tracing::error!(error = %err, "tab_permanent_unlock: failed to save plain tab metadata");
+        return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
+    }
+
+    // Step 9: delete the marker — sole success signal recovery relies on.
+    if let Err(err) = delete_unlock_marker(&folder, &registry) {
+        tracing::error!(error = %err, "tab_permanent_unlock: failed to delete the in-progress marker after a successful unlock");
+        return AppResult::err_code(ErrorCode::Unknown, "tab was permanently unlocked, but a temporary recovery file could not be removed");
+    }
+
+    // Step 10: settings.
+    match clear_locked_placeholder(&store, &registry, &tab_id, Some(&payload.real_tab_name)) {
+        Ok(outcome) => emit_settings_recovery_event(&app, outcome),
+        Err(()) => {
+            tracing::error!("tab_permanent_unlock: failed to persist unlocked tab settings");
+            return AppResult::err_code(ErrorCode::Unknown, "tab was permanently unlocked, but settings could not be updated");
+        }
+    }
+
+    // Step 11: end session (no-op if none was active).
+    sessions.end(&tab_id);
+
+    // Step 12: reindex.
+    let search_index = app.state::<SearchIndex>();
+    for entry_fm in &payload.file_map {
+        if let Ok(bytes) = std::fs::read(folder.join(format!("{}.md", entry_fm.memo_name))) {
+            let (decoded, _encoding) = decode_memo_body(&bytes);
+            search_index.upsert(&tab_id, &entry_fm.memo_name, &decoded);
+        }
+    }
+
+    AppResult::ok(TabInfo {
+        id: tab_id,
+        name: payload.real_tab_name,
+        locked: false,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -702,6 +1092,261 @@ pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password:
 }
 
 // ---------------------------------------------------------------------------
+// Crash-mid-permanent-unlock recovery commands
+// (`docs/plans/tab-lock-permanent-unlock/CRASH-RECOVERY.md` §4)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PermanentUnlockRecoveryDefaultAction {
+    FinishUnlocking,
+    RestoreLock,
+}
+
+/// Return type of `tab_permanent_unlock_recovery_status`. Unlike the lock direction's own
+/// `RecoveryStatus`, classification here may require a password (the marker carries no
+/// `fileMap`/`kdf` of its own, `PLAN.md` §2) — the extra `AlreadyFinished`/`PasswordRequired`
+/// variants stage that asymmetry for the frontend (`CRASH-RECOVERY.md` §4).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PermanentUnlockRecoveryStatus {
+    /// Case B (§3.3) resolved between the status call and now, or was somehow reached here
+    /// anyway (defensive) — no password needed, only "Finish Unlocking" makes sense.
+    AlreadyFinished,
+    /// No cached session key and no `password` supplied — frontend should show a password field.
+    PasswordRequired,
+    /// A key was available (session or verified password) and classification succeeded.
+    ///
+    /// `#[serde(rename_all = "camelCase")]` on the enclosing `enum` only renames the variant
+    /// *tag* (`"kind"`), not a struct-like variant's own field names — a per-variant
+    /// `rename_all` is required here too, or these fields would serialize as snake_case
+    /// (`restored_count`, ...) while the sibling lock-direction `RecoveryStatus` (a plain
+    /// `struct` with `rename_all` directly on it) serializes as camelCase, silently breaking the
+    /// frontend's `PermanentUnlockRecoveryStatus` parsing (a real regression caught in review).
+    #[serde(rename_all = "camelCase")]
+    Classified {
+        restored_count: usize,
+        not_restored_count: usize,
+        anomalous_count: usize,
+        total: usize,
+        default_action: PermanentUnlockRecoveryDefaultAction,
+        anomalous: bool,
+    },
+}
+
+#[tauri::command]
+pub async fn tab_permanent_unlock_recovery_status(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<PermanentUnlockRecoveryStatus> {
+    let store = app.state::<AppSettingsStore>();
+    let registry = app.state::<SelfWriteRegistry>();
+    let sessions = app.state::<LockSessionStore>();
+
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+    let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
+        return AppResult::err_code(ErrorCode::NotFound, "tab not found");
+    };
+    let folder = PathBuf::from(&entry.folder_path);
+    drop(settings);
+
+    if load_unlock_marker(&folder).is_none() {
+        return AppResult::err_code(ErrorCode::NotFound, "no interrupted permanent-unlock attempt found for this tab");
+    }
+
+    let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&folder);
+    if parsed.as_ref().map(|m| m.tree.is_some()).unwrap_or(false) {
+        return AppResult::ok(PermanentUnlockRecoveryStatus::AlreadyFinished);
+    }
+
+    if password.is_none() && !sessions.has_session(&tab_id) {
+        return AppResult::ok(PermanentUnlockRecoveryStatus::PasswordRequired);
+    }
+
+    let payload = match resolve_key_and_lock_payload(&folder, &sessions, &tab_id, password).await {
+        Ok((_key, payload)) => payload,
+        Err(err) => return AppResult::err(err),
+    };
+    let c = classify_unlock_entries(&folder, &payload.file_map);
+    let default_action = if c.total > 0 && c.restored * 2 > c.total {
+        PermanentUnlockRecoveryDefaultAction::FinishUnlocking
+    } else {
+        PermanentUnlockRecoveryDefaultAction::RestoreLock
+    };
+
+    AppResult::ok(PermanentUnlockRecoveryStatus::Classified {
+        restored_count: c.restored,
+        not_restored_count: c.not_restored,
+        anomalous_count: c.anomalous,
+        total: c.total,
+        default_action,
+        anomalous: c.anomalous > 0,
+    })
+}
+
+/// `CRASH-RECOVERY.md` §4.2 "Finish": with the resolved key, restore every remaining
+/// `NotRestored` entry, then resume `PLAN.md` §5 steps 8-12.
+#[tauri::command]
+pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
+    let store = app.state::<AppSettingsStore>();
+    let registry = app.state::<SelfWriteRegistry>();
+    let sessions = app.state::<LockSessionStore>();
+
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+    let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
+        return AppResult::err_code(ErrorCode::NotFound, "tab not found");
+    };
+    let current_name = entry.name.clone();
+    let folder = PathBuf::from(&entry.folder_path);
+    drop(settings);
+
+    if load_unlock_marker(&folder).is_none() {
+        return AppResult::err_code(ErrorCode::NotFound, "no interrupted permanent-unlock attempt found for this tab");
+    }
+
+    let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&folder);
+    let already_has_tree_field = parsed.as_ref().map(|m| m.tree.is_some()).unwrap_or(false);
+
+    let real_tab_name: Option<String> = if already_has_tree_field {
+        // Case B reached here defensively: metadata already rewritten, nothing left to decrypt.
+        sessions.with_session(&tab_id, |s| s.real_tab_name.clone())
+    } else {
+        let payload = match resolve_key_and_lock_payload(&folder, &sessions, &tab_id, password).await {
+            Ok((key, payload)) => {
+                for entry_fm in &payload.file_map {
+                    match classify_unlock_entry(&folder, entry_fm) {
+                        UnlockEntryState::Restored => continue,
+                        UnlockEntryState::Anomalous => {
+                            tracing::error!(memo_name = %entry_fm.memo_name, "tab_permanent_unlock_recovery_finish: encountered an anomalous entry; aborting");
+                            return AppResult::err_code(ErrorCode::AnomalousFileState, "an unexpected file state was found while finishing this tab's unlock");
+                        }
+                        UnlockEntryState::NotRestored => {
+                            if let Err(err) = restore_one_permanent_unlock_entry(&folder, entry_fm, &key, &registry) {
+                                return AppResult::err(err);
+                            }
+                        }
+                    }
+                }
+                payload
+            }
+            Err(err) => return AppResult::err(err),
+        };
+        if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, &registry) {
+            tracing::error!(error = %err, "tab_permanent_unlock_recovery_finish: failed to save plain tab metadata");
+            return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
+        }
+        Some(payload.real_tab_name)
+    };
+
+    if let Err(err) = delete_unlock_marker(&folder, &registry) {
+        tracing::error!(error = %err, "tab_permanent_unlock_recovery_finish: failed to delete the in-progress marker");
+        return AppResult::err_code(ErrorCode::Unknown, "recovery finished, but a temporary recovery file could not be removed");
+    }
+
+    match clear_locked_placeholder(&store, &registry, &tab_id, real_tab_name.as_deref()) {
+        Ok(outcome) => emit_settings_recovery_event(&app, outcome),
+        Err(()) => {
+            tracing::error!("tab_permanent_unlock_recovery_finish: failed to persist unlocked tab settings");
+            return AppResult::err_code(ErrorCode::Unknown, "recovery finished, but settings could not be updated");
+        }
+    }
+
+    sessions.end(&tab_id);
+
+    // Reindex from the actual on-disk file list (not `payload.file_map`), so the Case-B
+    // short-circuit — which has no `payload` — reindexes correctly too.
+    let search_index = app.state::<SearchIndex>();
+    for name in tree::scan_real_memo_names(&folder) {
+        if let Ok(bytes) = std::fs::read(folder.join(format!("{name}.md"))) {
+            let (decoded, _encoding) = decode_memo_body(&bytes);
+            search_index.upsert(&tab_id, &name, &decoded);
+        }
+    }
+
+    AppResult::ok(TabInfo {
+        id: tab_id,
+        name: real_tab_name.unwrap_or(current_name),
+        locked: false,
+    })
+}
+
+/// `CRASH-RECOVERY.md` §4.3 "Restore": with the resolved key, for every `Restored` entry
+/// re-encrypt (fresh IV) back into its already-recorded token name, then remove the plaintext.
+/// No `lock` blob is ever touched by this whole operation, and `AppSettings.tabs[i].locked` was
+/// never changed, so no settings rollback is needed either — the tab ends up exactly as if
+/// `tab_permanent_unlock` had never been called.
+#[tauri::command]
+pub async fn tab_permanent_unlock_recovery_restore(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
+    let store = app.state::<AppSettingsStore>();
+    let registry = app.state::<SelfWriteRegistry>();
+    let sessions = app.state::<LockSessionStore>();
+
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+    let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
+        return AppResult::err_code(ErrorCode::NotFound, "tab not found");
+    };
+    let current_name = entry.name.clone();
+    let folder = PathBuf::from(&entry.folder_path);
+    drop(settings);
+
+    if load_unlock_marker(&folder).is_none() {
+        return AppResult::err_code(ErrorCode::NotFound, "no interrupted permanent-unlock attempt found for this tab");
+    }
+
+    let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&folder);
+    if parsed.as_ref().map(|m| m.tree.is_some()).unwrap_or(false) {
+        return AppResult::err_code(ErrorCode::Unknown, "this permanent-unlock attempt already finished; nothing to restore");
+    }
+
+    let (key, payload) = match resolve_key_and_lock_payload(&folder, &sessions, &tab_id, password).await {
+        Ok(v) => v,
+        Err(err) => return AppResult::err(err),
+    };
+
+    for entry_fm in &payload.file_map {
+        match classify_unlock_entry(&folder, entry_fm) {
+            // Already back in token form.
+            UnlockEntryState::NotRestored => continue,
+            UnlockEntryState::Anomalous => {
+                tracing::error!(memo_name = %entry_fm.memo_name, "tab_permanent_unlock_recovery_restore: encountered an anomalous entry; aborting");
+                return AppResult::err_code(ErrorCode::AnomalousFileState, "an unexpected file state was found while restoring this tab's lock");
+            }
+            UnlockEntryState::Restored => {
+                let real_path = folder.join(format!("{}.md", entry_fm.memo_name));
+                let plaintext = match std::fs::read(&real_path) {
+                    Ok(b) => b,
+                    Err(err) => {
+                        tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to read a plaintext memo file");
+                        return AppResult::err_code(ErrorCode::Unknown, "failed to read a memo file while restoring this tab's lock");
+                    }
+                };
+                let encrypted = lock_blob::encrypt_memo_body(&key, &plaintext);
+                let token_path = folder.join(&entry_fm.token);
+                if let Err(err) = atomic_write(&token_path, &encrypted, &registry) {
+                    tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to write an obfuscated memo file");
+                    return AppResult::err_code(ErrorCode::Unknown, "failed to restore an obfuscated memo file");
+                }
+                registry.register(&real_path);
+                if let Err(err) = with_retry(|| std::fs::remove_file(&real_path)) {
+                    tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to remove a plaintext memo file after re-encrypting it");
+                }
+            }
+        }
+    }
+
+    if let Err(err) = delete_unlock_marker(&folder, &registry) {
+        tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to delete the in-progress marker");
+        return AppResult::err_code(ErrorCode::Unknown, "restore finished, but a temporary recovery file could not be removed");
+    }
+
+    AppResult::ok(TabInfo {
+        id: tab_id,
+        name: current_name,
+        locked: true,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Session-path helpers: tree structure mutations while a session is active
 // (`docs/plans/tab-lock/PLAN.md` §3 "While a Session Is Active")
 // ---------------------------------------------------------------------------
@@ -712,6 +1357,7 @@ pub(crate) fn session_tree_snapshot(session: &LockSession) -> TreeSnapshot {
         tab_name: session.real_tab_name.clone(),
         locked: true,
         recovery_pending: false,
+        recovery_kind: None,
     }
 }
 
@@ -721,6 +1367,7 @@ fn empty_locked_snapshot() -> TreeSnapshot {
         tab_name: String::new(),
         locked: true,
         recovery_pending: false,
+        recovery_kind: None,
     }
 }
 
@@ -1327,6 +1974,7 @@ pub(crate) fn move_cross_tab_plain_to_session(
             tab_name: source_tab_name.to_string(),
             locked: false,
             recovery_pending: false,
+            recovery_kind: None,
         },
         target: Some(target_snapshot),
     })
@@ -1409,6 +2057,7 @@ pub(crate) fn move_cross_tab_session_to_plain(
             tab_name: target_tab_name.to_string(),
             locked: false,
             recovery_pending: false,
+            recovery_kind: None,
         }),
     })
 }
@@ -1930,5 +2579,375 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::remove_dir_all(&plain_dir).ok();
         std::fs::remove_dir_all(&second_dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // Permanent unlock (`docs/plans/tab-lock-permanent-unlock/PLAN.md` +
+    // `CRASH-RECOVERY.md`)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn classify_unlock_entry_states() {
+        let dir = tempdir();
+        let entry = FileMapEntry {
+            memo_name: "Diary".to_string(),
+            token: "abc123".to_string(),
+        };
+
+        // Neither exists yet.
+        assert_eq!(classify_unlock_entry(&dir, &entry), UnlockEntryState::Anomalous);
+
+        std::fs::write(dir.join("abc123"), b"encrypted").unwrap();
+        assert_eq!(classify_unlock_entry(&dir, &entry), UnlockEntryState::NotRestored);
+
+        std::fs::remove_file(dir.join("abc123")).unwrap();
+        std::fs::write(dir.join("Diary.md"), b"hello").unwrap();
+        assert_eq!(classify_unlock_entry(&dir, &entry), UnlockEntryState::Restored);
+
+        std::fs::write(dir.join("abc123"), b"encrypted again").unwrap();
+        assert_eq!(classify_unlock_entry(&dir, &entry), UnlockEntryState::Anomalous);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Mirrors `check_marker_on_tree_open_auto_rolls_back_a_zero_progress_marker`'s "zero
+    /// renamed" case, opposite direction (`CRASH-RECOVERY.md` §3.2): with no `.md` file present
+    /// anywhere under the tab folder, the marker is silently deleted with no password/dialog.
+    #[test]
+    fn check_unlock_marker_on_tree_open_auto_rolls_back_a_zero_restored_marker() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let store = AppSettingsStore::new();
+        let sessions = LockSessionStore::new();
+        let search_index = SearchIndex::new();
+        std::fs::write(dir.join("tok123"), b"encrypted").unwrap();
+
+        let marker = UnlockInProgressMarker {
+            format_version: UNLOCK_MARKER_FORMAT_VERSION,
+        };
+        write_unlock_marker(&dir, &marker, &registry).unwrap();
+
+        assert!(matches!(
+            check_unlock_marker_on_tree_open(&dir, &registry, &store, &sessions, &search_index, "tab-x"),
+            UnlockMarkerCheck::NoMarker
+        ));
+        assert!(!unlock_marker_path(&dir).exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `CRASH-RECOVERY.md` §3: with at least one `.md` file present and `.tabtreenote.json` not
+    /// yet showing a plain `tree` field, classification cannot be auto-resolved without a
+    /// password — the marker is left in place and `RecoveryPending` is reported.
+    #[test]
+    fn check_unlock_marker_on_tree_open_reports_recovery_pending_when_a_real_file_is_present() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let store = AppSettingsStore::new();
+        let sessions = LockSessionStore::new();
+        let search_index = SearchIndex::new();
+        std::fs::write(dir.join("Diary.md"), b"hello").unwrap();
+
+        let marker = UnlockInProgressMarker {
+            format_version: UNLOCK_MARKER_FORMAT_VERSION,
+        };
+        write_unlock_marker(&dir, &marker, &registry).unwrap();
+
+        assert!(matches!(
+            check_unlock_marker_on_tree_open(&dir, &registry, &store, &sessions, &search_index, "tab-x"),
+            UnlockMarkerCheck::RecoveryPending
+        ));
+        assert!(unlock_marker_path(&dir).exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn permanent_unlock_recovery_default_action_tie_break() {
+        let dir = tempdir();
+        // 2 restored, 1 not_restored -> strict majority restored -> FinishUnlocking.
+        let file_map = vec![
+            FileMapEntry { memo_name: "A".into(), token: "ta".into() },
+            FileMapEntry { memo_name: "B".into(), token: "tb".into() },
+            FileMapEntry { memo_name: "C".into(), token: "tc".into() },
+        ];
+        std::fs::write(dir.join("A.md"), b"x").unwrap();
+        std::fs::write(dir.join("B.md"), b"x").unwrap();
+        std::fs::write(dir.join("tc"), b"x").unwrap();
+        let c = classify_unlock_entries(&dir, &file_map);
+        assert_eq!(c.restored, 2);
+        assert_eq!(c.not_restored, 1);
+        let default_action = if c.total > 0 && c.restored * 2 > c.total {
+            PermanentUnlockRecoveryDefaultAction::FinishUnlocking
+        } else {
+            PermanentUnlockRecoveryDefaultAction::RestoreLock
+        };
+        assert_eq!(default_action, PermanentUnlockRecoveryDefaultAction::FinishUnlocking);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Regression test (reviewer-lite finding): `#[serde(rename_all = "camelCase")]` on the
+    /// `PermanentUnlockRecoveryStatus` enum only renames the variant tag (`"kind"`), not a
+    /// struct-like variant's own field names — without a per-variant `rename_all` on `Classified`
+    /// too, its fields would silently serialize as snake_case (`restored_count`, ...) while
+    /// `src/shared/models.ts`'s TS type expects camelCase (`restoredCount`, ...), so every one of
+    /// these fields would deserialize as `undefined` on the frontend with no compiler/runtime
+    /// error anywhere in the Rust side to catch it. Asserts on the actual serialized JSON shape
+    /// (`serde_json::to_value`), not just the Rust struct, since that's exactly the layer the bug
+    /// lived in.
+    #[test]
+    fn permanent_unlock_recovery_status_classified_serializes_fields_as_camel_case() {
+        let status = PermanentUnlockRecoveryStatus::Classified {
+            restored_count: 2,
+            not_restored_count: 1,
+            anomalous_count: 0,
+            total: 3,
+            default_action: PermanentUnlockRecoveryDefaultAction::FinishUnlocking,
+            anomalous: false,
+        };
+        let json = serde_json::to_value(&status).unwrap();
+
+        assert_eq!(json["kind"], "classified");
+        assert_eq!(json["restoredCount"], 2);
+        assert_eq!(json["notRestoredCount"], 1);
+        assert_eq!(json["anomalousCount"], 0);
+        assert_eq!(json["total"], 3);
+        assert_eq!(json["defaultAction"], "finishUnlocking");
+        assert_eq!(json["anomalous"], false);
+
+        // The snake_case field names must NOT be present — this is the exact shape that fooled
+        // the frontend's `Result<PermanentUnlockRecoveryStatus>` parsing into silent `undefined`s.
+        assert!(json.get("restored_count").is_none());
+        assert!(json.get("not_restored_count").is_none());
+        assert!(json.get("anomalous_count").is_none());
+        assert!(json.get("default_action").is_none());
+    }
+
+    /// `PLAN.md` §4.4's `.bak`-companion cleanup (`DECISIONS.md`'s follow-up review, the
+    /// GH #18-class residue) — a leftover `<token>.bak` file (e.g. from an earlier
+    /// `atomic_write` rotation) is removed as part of restoring the entry, alongside the primary
+    /// token file.
+    #[test]
+    fn restore_one_permanent_unlock_entry_restores_plaintext_and_cleans_bak_companion() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let key = LockKey::new(&[11u8; 32]);
+        let entry = FileMapEntry {
+            memo_name: "Diary".to_string(),
+            token: "tok456".to_string(),
+        };
+        let encrypted = lock_blob::encrypt_memo_body(&key, b"secret content");
+        std::fs::write(dir.join(&entry.token), &encrypted).unwrap();
+        // A leftover `.bak` companion, orphaned from an earlier write.
+        std::fs::write(dir.join("tok456.bak"), b"stale encrypted leftover").unwrap();
+
+        restore_one_permanent_unlock_entry(&dir, &entry, &key, &registry).unwrap();
+
+        assert!(!dir.join("tok456").exists());
+        assert!(!dir.join("tok456.bak").exists(), "the orphaned .bak companion must also be cleaned up");
+        assert_eq!(std::fs::read(dir.join("Diary.md")).unwrap(), b"secret content");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `PLAN.md` §5 step 7's abort-on-anomalous-entry policy, driven directly against the same
+    /// building blocks `tab_permanent_unlock` itself uses (the command function needs a live
+    /// `State<T>` extraction not easily constructed outside a running `tauri::App`, same
+    /// constraint already documented by `full_lock_unlock_session_round_trip` above): once an
+    /// `Anomalous` entry is found, the whole operation stops immediately — entries already
+    /// restored before it are left restored (no rollback), entries after it are left completely
+    /// untouched, and the marker stays on disk for the crash-recovery flow to pick up.
+    #[test]
+    fn permanent_unlock_restore_loop_aborts_on_anomalous_entry_without_rollback() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let key = LockKey::new(&[13u8; 32]);
+
+        let file_map = vec![
+            FileMapEntry { memo_name: "First".into(), token: "tok-first".into() },
+            FileMapEntry { memo_name: "Second".into(), token: "tok-second".into() },
+            FileMapEntry { memo_name: "Third".into(), token: "tok-third".into() },
+        ];
+        // "First" is already restored (both `.bak`-cleanup-relevant primary files consistent).
+        std::fs::write(dir.join("First.md"), b"first content").unwrap();
+        // "Second" is anomalous: both the real file and the token happen to be present.
+        std::fs::write(dir.join("Second.md"), b"second content").unwrap();
+        std::fs::write(dir.join("tok-second"), b"second token bytes").unwrap();
+        // "Third" is not yet restored (only the token exists).
+        let encrypted_third = lock_blob::encrypt_memo_body(&key, b"third content");
+        std::fs::write(dir.join("tok-third"), &encrypted_third).unwrap();
+
+        let marker = UnlockInProgressMarker {
+            format_version: UNLOCK_MARKER_FORMAT_VERSION,
+        };
+        write_unlock_marker(&dir, &marker, &registry).unwrap();
+
+        // Same shape as `tab_permanent_unlock` step 7's loop.
+        let mut aborted = false;
+        for entry_fm in &file_map {
+            match classify_unlock_entry(&dir, entry_fm) {
+                UnlockEntryState::Restored => continue,
+                UnlockEntryState::Anomalous => {
+                    aborted = true;
+                    break;
+                }
+                UnlockEntryState::NotRestored => {
+                    restore_one_permanent_unlock_entry(&dir, entry_fm, &key, &registry).unwrap();
+                }
+            }
+        }
+
+        assert!(aborted, "the loop must stop at the anomalous entry");
+        // "First" was already restored before the loop ran and is untouched either way.
+        assert!(dir.join("First.md").exists());
+        // "Second" (the anomalous entry) is left exactly as found — both files still present.
+        assert!(dir.join("Second.md").exists());
+        assert!(dir.join("tok-second").exists());
+        // "Third" comes after the anomalous entry in iteration order and must never be reached.
+        assert!(!dir.join("Third.md").exists(), "an entry after the anomalous one must not be processed");
+        assert!(dir.join("tok-third").exists(), "an entry after the anomalous one must not be processed");
+        // The marker is left in place for the crash-recovery flow.
+        assert!(unlock_marker_path(&dir).exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// End-to-end integration test for the whole feature's core data flow, in the same style as
+    /// `full_lock_unlock_session_round_trip` above (driving the `pub(crate)` building blocks
+    /// directly rather than the `#[tauri::command]` wrappers, which need a live `State<T>`
+    /// extraction). Covers both entry points: (a) permanently unlocking from within an active
+    /// session (no password), and (b) permanently unlocking a second, session-less locked tab
+    /// directly with its password, via `resolve_key_and_lock_payload`.
+    #[tokio::test]
+    async fn full_lock_unlock_permanent_unlock_round_trip() {
+        // ---- Entry point (a): lock -> unlock into a session -> permanently unlock via the session
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(dir.join("Diary.md"), b"page one").unwrap();
+
+        let kdf_params = KdfParams::generate_new();
+        let key_bytes = kdf::derive_key("hunter2".to_string(), kdf_params.clone()).await.unwrap();
+        let key = LockKey::new(&key_bytes);
+        let file_map = vec![FileMapEntry {
+            memo_name: "Diary".to_string(),
+            token: obfuscated_naming::generate_unique_token(&dir),
+        }];
+        let marker = LockInProgressMarker {
+            format_version: MARKER_FORMAT_VERSION,
+            kdf: kdf_params.clone(),
+            file_map: file_map.clone(),
+        };
+        write_marker(&dir, &marker, &registry).unwrap();
+        for entry in &file_map {
+            rename_and_encrypt_entry(&dir, entry, &key, &registry).unwrap();
+        }
+        let tree = vec![MetaTreeNode::default_for_new_file("Diary".to_string())];
+        let lock_payload = LockPayload {
+            real_tab_name: "Private".to_string(),
+            tree: tree.clone(),
+            file_map: file_map.clone(),
+        };
+        let field = lock_blob::encrypt_lock_field(&key, kdf_params, None, &lock_payload).unwrap();
+        write_lock_field(&dir, &field, &registry).unwrap();
+        delete_marker(&dir, &registry).unwrap();
+
+        let sessions = LockSessionStore::new();
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: lock_payload.real_tab_name.clone(),
+                tree: lock_payload.tree.clone(),
+                file_map: lock_payload.file_map.clone(),
+                kdf: field.kdf.clone(),
+                hint: field.hint.clone(),
+                key: key_bytes,
+            },
+        );
+
+        // ---- `tab_permanent_unlock` steps 5-9, driven manually, session branch (password: None)
+        let (resolved_key, resolved_payload) = resolve_key_and_lock_payload(&dir, &sessions, "tab-1", None).await.unwrap();
+        let unlock_marker = UnlockInProgressMarker {
+            format_version: UNLOCK_MARKER_FORMAT_VERSION,
+        };
+        write_unlock_marker(&dir, &unlock_marker, &registry).unwrap();
+        for entry_fm in &resolved_payload.file_map {
+            match classify_unlock_entry(&dir, entry_fm) {
+                UnlockEntryState::Restored => continue,
+                UnlockEntryState::Anomalous => panic!("no anomalous entry expected"),
+                UnlockEntryState::NotRestored => {
+                    restore_one_permanent_unlock_entry(&dir, entry_fm, &resolved_key, &registry).unwrap();
+                }
+            }
+        }
+        tree::save_tab_meta(&dir, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &resolved_payload.tree, &registry).unwrap();
+        delete_unlock_marker(&dir, &registry).unwrap();
+        sessions.end("tab-1");
+
+        // Verify: plain memo file back, plain tree in metadata (no `lock` field), token/marker gone.
+        assert_eq!(std::fs::read(dir.join("Diary.md")).unwrap(), b"page one");
+        assert!(!dir.join(&file_map[0].token).exists());
+        assert!(!unlock_marker_path(&dir).exists());
+        let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&dir);
+        let meta = parsed.expect("metadata should parse");
+        assert!(meta.lock.is_none(), "a permanently-unlocked tab must not carry a `lock` field");
+        assert_eq!(meta.tree.unwrap().len(), 1);
+        assert!(!sessions.has_session("tab-1"));
+
+        // ---- Entry point (b): a second locked tab, no session, permanently unlocked by password
+        let dir2 = tempdir();
+        std::fs::write(dir2.join("Notes.md"), b"second tab content").unwrap();
+        let kdf_params2 = KdfParams::generate_new();
+        let key_bytes2 = kdf::derive_key("hunter3".to_string(), kdf_params2.clone()).await.unwrap();
+        let key2 = LockKey::new(&key_bytes2);
+        let file_map2 = vec![FileMapEntry {
+            memo_name: "Notes".to_string(),
+            token: obfuscated_naming::generate_unique_token(&dir2),
+        }];
+        for entry in &file_map2 {
+            rename_and_encrypt_entry(&dir2, entry, &key2, &registry).unwrap();
+        }
+        let tree2 = vec![MetaTreeNode::default_for_new_file("Notes".to_string())];
+        let lock_payload2 = LockPayload {
+            real_tab_name: "Second Private".to_string(),
+            tree: tree2,
+            file_map: file_map2.clone(),
+        };
+        let field2 = lock_blob::encrypt_lock_field(&key2, kdf_params2, None, &lock_payload2).unwrap();
+        write_lock_field(&dir2, &field2, &registry).unwrap();
+
+        // A wrong password must fail cleanly (`DecryptFailed`), leaving the locked tab untouched.
+        let no_sessions = LockSessionStore::new();
+        match resolve_key_and_lock_payload(&dir2, &no_sessions, "tab-2", Some("wrong password".to_string())).await {
+            Err(err) => assert_eq!(err.code, ErrorCode::DecryptFailed),
+            Ok(_) => panic!("expected a DecryptFailed error for a wrong password"),
+        }
+
+        // No active session for "tab-2" — `resolve_key_and_lock_payload` must fall back to
+        // deriving the key from the given password.
+        let (resolved_key2, resolved_payload2) = resolve_key_and_lock_payload(&dir2, &no_sessions, "tab-2", Some("hunter3".to_string())).await.unwrap();
+        assert_eq!(resolved_payload2.real_tab_name, "Second Private");
+
+        let unlock_marker2 = UnlockInProgressMarker {
+            format_version: UNLOCK_MARKER_FORMAT_VERSION,
+        };
+        write_unlock_marker(&dir2, &unlock_marker2, &registry).unwrap();
+        for entry_fm in &resolved_payload2.file_map {
+            if classify_unlock_entry(&dir2, entry_fm) == UnlockEntryState::NotRestored {
+                restore_one_permanent_unlock_entry(&dir2, entry_fm, &resolved_key2, &registry).unwrap();
+            }
+        }
+        tree::save_tab_meta(&dir2, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &resolved_payload2.tree, &registry).unwrap();
+        delete_unlock_marker(&dir2, &registry).unwrap();
+
+        assert_eq!(std::fs::read(dir2.join("Notes.md")).unwrap(), b"second tab content");
+        assert!(!dir2.join(&file_map2[0].token).exists());
+        assert!(!unlock_marker_path(&dir2).exists());
+        let (parsed2, _recovery2) = tree::load_tab_meta_with_recovery(&dir2);
+        let meta2 = parsed2.expect("metadata should parse");
+        assert!(meta2.lock.is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&dir2).ok();
     }
 }
