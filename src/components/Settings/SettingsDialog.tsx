@@ -285,14 +285,6 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
             <label className="ttn-settings-row ttn-settings-row-checkbox">
               <input
                 type="checkbox"
-                checked={settings.editorDefaults.softTab}
-                onChange={(e) => void patchSettings({ editorDefaults: { softTab: e.target.checked } })}
-              />
-              <span>タブをスペースとして挿入する</span>
-            </label>
-            <label className="ttn-settings-row ttn-settings-row-checkbox">
-              <input
-                type="checkbox"
                 checked={settings.editorDefaults.showLineNumbers}
                 onChange={(e) => void patchSettings({ editorDefaults: { showLineNumbers: e.target.checked } })}
               />
@@ -307,16 +299,6 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 value={settings.editorDefaults.fontSize}
                 onChange={(e) => void patchSettings({ editorDefaults: { fontSize: Number(e.target.value) } })}
               />
-            </label>
-            <label className="ttn-settings-row">
-              <span>表示モード</span>
-              <select
-                value={settings.editorDefaults.viewMode}
-                onChange={(e) => void patchSettings({ editorDefaults: { viewMode: e.target.value as AppSettings["editorDefaults"]["viewMode"] } })}
-              >
-                <option value="live">ライブ表示</option>
-                <option value="source">ソース表示</option>
-              </select>
             </label>
           </section>
 
