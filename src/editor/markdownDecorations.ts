@@ -120,14 +120,15 @@ class ImagePlaceholderWidget extends WidgetType {
   }
 
   toDOM(): HTMLElement {
-    // `image-handling/PLAN.md` (paste/resize + `image_save_pasted`) is not implemented yet, so
-    // actual image bytes can't be resolved/displayed here — this placeholder clearly marks that
-    // rather than attempting a broken `<img src>` load. Becomes a real rendered `<img>` once that
-    // plan lands (`docs/plans/markdown-editing/PLAN.md` §2's `imagePaste.ts` cross-reference).
+    // Real `<img>` rendering (`docs/plans/markdown/image-handling/PLAN.md` §6.2, `ImageWidget`
+    // below) now handles the normal case. This widget is reached only as its fallback: a
+    // genuinely missing/unloadable image (`imageLoader.ts`'s `hasImageLoadFailed`) or a null
+    // tab/memo context (`ImageWidget.toDOM()`'s early-return branch) — hence the "not found"
+    // wording rather than a "not implemented yet" placeholder.
     const el = document.createElement("span");
     el.className = "cm-md-image-placeholder";
     el.textContent = `🖼 ${this.alt || this.src}`;
-    el.title = `${this.src} — image preview not implemented yet (see image-handling/PLAN.md)`;
+    el.title = `image not found: ${this.src}`;
     return el;
   }
 
