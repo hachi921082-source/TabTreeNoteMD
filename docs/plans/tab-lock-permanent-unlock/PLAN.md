@@ -15,11 +15,12 @@
 > PLAN.md/CRASH-RECOVERY.md split the original feature used, not a few extra paragraphs bolted onto
 > an already-large, already-implemented pair of documents.
 
-Sources: `docs/spec.md` §4.1 pt.7 (revised), pt.9 (new); `docs/detailed-spec.md` §5.9 "Permanently
+Sources: `docs/spec.md` §4.1 pt.7 (revised), pt.9 (new); `docs/tab-lock-detailed-spec.md` "Permanently
 unlocking a tab" and its "Recovery on tab-folder access (crash mid-permanent-unlock)"/"Serialization
-against other operations on this tab"/"Order rationale (crash safety)"/"Tab bar during a pending
-recovery" subsections; `docs/DECISIONS.md` "Tab Lock: Permanent Unlock Operation Added" (+ its
-"Follow-up review" addendum).
+against other operations on this tab"/"Order rationale (crash safety)" subsections (split out of
+`docs/detailed-spec.md` §5.9); `docs/detailed-spec.md` §5.9's "Tab bar during a pending recovery"
+subsection; `docs/DECISIONS.md` "Tab Lock: Permanent Unlock Operation Added" (+ its "Follow-up review"
+addendum).
 
 ---
 
@@ -284,7 +285,7 @@ pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Opti
 ```
 
 `password: None` for entry point (a) (active session supplies the key); `Some(pw)` for entry point
-(b). Elaborates `[detailed-spec §5.9]` "Permanently unlocking a tab" steps 1-10 (step 1, the
+(b). Elaborates `[tab-lock-detailed-spec]` "Permanently unlocking a tab" steps 1-10 (step 1, the
 confirmation dialog, is frontend-only — see §7):
 
 1. Resolve `tab_id` → `folder` from `AppSettings` (`NotFound` if missing).
@@ -408,7 +409,7 @@ locked-state and tree content, like `lockTab`/`finishRecovery`/`restoreRecovery`
 
 Widen `message: string` → `message: React.ReactNode` (backward compatible — a `string` is a valid
 `ReactNode`) so the permanent-unlock confirmation can pass a two-`<p>` fragment (irreversibility
-warning + required backup-copy recommendation, `[spec §4.1 pt.9]`, `[detailed-spec §5.9]` step 1)
+warning + required backup-copy recommendation, `[spec §4.1 pt.9]`, `[tab-lock-detailed-spec]` step 1)
 instead of one concatenated string.
 
 ### 7.6 `src/components/dialogs/RecoveryDialog.tsx` — generalize for reuse
