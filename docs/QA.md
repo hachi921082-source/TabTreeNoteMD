@@ -39,27 +39,6 @@ heading level (shallowest heading becomes the flat top level, GitHub-style)?
 "relative," a small follow-up fix to `generateTocList`. **Non-blocking**: no other implementation work
 depends on this being resolved.
 
-## In-Memo Replace "Selection" Mode Missing from Implementation
-
-**Raised by**: `reviewer-lite`, during review of the editor-save implementation
-(`docs/plans/editor-save/PLAN.md`).
-
-**Context**: `spec.md` §2.4 lists in-memo replace modes as "single / all / selection / one-by-one"
-(`[DESIGN §2.4]`, carried over from the legacy repository). The implemented
-`components/Search/SearchPanel.tsx` / `state/useSearch.ts` only support replace-one and replace-all —
-there is no "constrain replace to the current selection" mode. Unlike other implementation-discretion
-resolutions in this plan, which are written up explicitly in `docs/plans/editor-save/PLAN.md`'s
-"Implementation Notes," this gap is not documented anywhere, so it currently reads as an overlooked
-scope item rather than a disclosed decision.
-
-**Question**: Was "selection" replace mode intentionally dropped from v1 scope (and if so, why — worth
-recording so it is not accidentally "rediscovered" as a bug later), or does it need to be added back as
-a follow-up implementation task for `developer-lite`?
-
-**Needed**: A decision so `spec.md` §2.4 can be corrected to match (either drop "selection" from the
-listed modes, with rationale recorded in `DECISIONS.md`, or keep it and add a follow-up implementation
-task). **Non-blocking**: no other implementation work depends on this being resolved.
-
 ## Real `<img>` Rendering + Drag-Resize-Handle in Live View: Scope and Mechanism
 
 **Raised by**: `developer-lite`, mid-implementation of `image-handling/PLAN.md` Phase 2 (backend
