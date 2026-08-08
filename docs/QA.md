@@ -39,51 +39,33 @@ heading level (shallowest heading becomes the flat top level, GitHub-style)?
 "relative," a small follow-up fix to `generateTocList`. **Non-blocking**: no other implementation work
 depends on this being resolved.
 
-## Real `<img>` Rendering + Drag-Resize-Handle in Live View: Scope and Mechanism
+## Drag-Resize-Handle for Rendered Images in Live View
 
 **Raised by**: `developer-lite`, mid-implementation of `image-handling/PLAN.md` Phase 2 (backend
 command `image_save_pasted` is done; the frontend paste/toolbar-insert flow that writes
-`![alt](img_xxxx.png)` Markdown text is straightforward and not blocked by this question).
+`![alt](img_xxxx.png)` Markdown text is straightforward and not blocked by this question). The
+companion question about real `<img>` rendering scope/mechanism (asset-protocol vs. byte-read IPC
+command) that was originally bundled with this one has since been resolved and shipped — see
+`DECISIONS.md`'s "Real `<img>` Rendering via Byte-Read IPC Command + Blob-URL Cache" entry,
+`docs/MDEditor-spec.md` §5, and `docs/plans/markdown/image-handling/PLAN.md`.
 
 **Context**: `docs/plans/image-handling/PLAN.md` §4 attributes "the single image's markup converts to
-`<img src=".." width=".." height="..">`" to a **drag handle on the rendered image in live view**, and
-its own header line assigns "the decoration layer that renders `<img>`/`![alt](url)` and provides the
-resize handle" to `markdown-editing/PLAN.md`. But `markdown-editing/PLAN.md`'s own status line says the
-opposite: its current `ImagePlaceholderWidget` (`src/editor/markdownDecorations.ts`) is an explicit
-`<span>` stub (🖼 emoji + alt/src text, no real image bytes, no resize handle) that "becomes a real
-rendered `<img>` once `image-handling/PLAN.md` lands." Each plan defers the concrete design to the
-other — confirmed by reading both in full: neither contains a widget markup spec, drag mechanics,
-handle position/size, aspect-ratio-lock behavior, or a minimum-size rule.
+`<img src=".." width=".." height="..">`" to a **drag handle on the rendered image in live view**, but
+neither `image-handling/PLAN.md` nor `markdown-editing/PLAN.md` contains a widget markup spec, drag
+mechanics, handle position/size, aspect-ratio-lock behavior, or a minimum-size rule for this
+interaction — it remains undesigned even though the underlying real `<img>` rendering it would attach
+to is now implemented.
 
-Beyond the missing UX spec, actually rendering a real `<img>` pointing at a file in an arbitrary
-user-chosen tab folder (folders are picked via folder-picker at runtime, not fixed app-data paths)
-needs infrastructure not mentioned in any plan. Confirmed by inspection: `src-tauri/tauri.conf.json`
-currently has `"csp": null` and no `app.security.assetProtocol` scope configured at all; the only image
-command listed in `project-architecture/PLAN.md`'s command inventory (§4) is `image_save_pasted` (write
-path only, no read/serve command exists). Two candidate mechanisms exist, each a real
-architecture/security tradeoff not addressed anywhere in `spec.md`/`detailed-spec.md`/`DECISIONS.md`:
-(1) Tauri's asset protocol, which would need an `assetProtocol` scope config that somehow permits
-arbitrary runtime-chosen directories (not a static glob known at build time) — this widens what the
-webview can directly fetch off disk; or (2) a new IPC command that reads the image file and returns
-bytes/base64 for the frontend to build a `data:` URL — avoids widening the asset-protocol scope, at the
-cost of extra IPC overhead/memory for larger images, and would add a new command not currently in
-`project-architecture/PLAN.md`'s inventory table.
+**Question**: Is building the drag-resize-handle interaction in scope for `developer-lite` to design
+and implement now, or should it be tracked as an explicit follow-up in both plans' "Open Items" (no
+regression versus current behavior, which has no resize handle)? If in scope now, the actual
+resize-handle UX needs deciding: drag mechanics, handle placement, aspect-ratio lock, minimum size.
 
-**Question**: (a) Is building real `<img>` rendering + a drag-resize-handle interaction in scope for
-`developer-lite` to design and implement now, as part of closing out `image-handling/PLAN.md` /
-`markdown-editing/PLAN.md`'s cross-reference — or should the existing `ImagePlaceholderWidget` stub be
-left as-is (no regression versus current behavior) and this tracked as an explicit follow-up in both
-plans' "Open Items"? (b) If in scope now, which rendering mechanism should be used — Tauri asset-protocol
-scope config (needs a decision on how to scope it for arbitrary runtime-chosen folders) or a new
-base64/bytes-returning IPC command (needs a decision on the new command's name/shape and where perf
-limits, if any, apply)? Whichever is chosen also needs the actual resize-handle UX decided (drag
-mechanics, handle placement, aspect-ratio lock, minimum size).
-
-**Needed**: A decision on scope timing (now vs. follow-up) and, if now, on the rendering mechanism, to
+**Needed**: A decision on scope timing (now vs. follow-up) and, if now, on the resize-handle UX, to
 record in `DECISIONS.md` and reflect into `image-handling/PLAN.md` / `markdown-editing/PLAN.md`.
 **Non-blocking**: `developer-lite` can complete and ship the rest of `image-handling/PLAN.md`'s
-clearly-specified parts (backend command, paste/toolbar-insert flow) without this being resolved first;
-the placeholder widget stays a non-regressing stub in the meantime.
+clearly-specified parts without this being resolved first; images render without a resize handle in
+the meantime.
 
 ---
 
