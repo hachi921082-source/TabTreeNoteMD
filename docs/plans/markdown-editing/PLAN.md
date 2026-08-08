@@ -138,15 +138,16 @@ must hold for arbitrarily frequent toggling within one editing session (`[detail
 
 ## 3. Live View vs. Source Toggle
 
-- Governed initially by `AppSettings.editorDefaults.viewMode` (`'live'` factory default) with an
-  optional per-memo `MemoEditorSettings.viewMode` override (`[spec §3.4]`). `editor_load`
-  (`editor-save/PLAN.md`) does not itself decide the view mode — the frontend reads
-  `MemoEditorSettings.viewMode ?? AppSettings.editorDefaults.viewMode` when constructing the CodeMirror
-  instance for a newly-opened memo.
+- Which mode a memo opens in is fixed to `'live'` (not a user-configurable global default; there is no
+  Settings → Editor "display mode" selector, GitHub issue #61), with an optional per-memo
+  `MemoEditorSettings.viewMode` override (`[spec §3.4]`). `editor_load` (`editor-save/PLAN.md`) does not
+  itself decide the view mode — the frontend reads `MemoEditorSettings.viewMode ?? 'live'` when
+  constructing the CodeMirror instance for a newly-opened memo.
 - A runtime toggle (keyboard shortcut and/or toolbar button) is **always available** regardless of the
-  above, and changes only the current session's display — it does not write back to either setting
-  value (`[detailed-spec §5.10]`; persisting a toggled state as a new default is explicitly out of
-  current scope).
+  above, and writes its new value into the currently-open memo's `MemoEditorSettings.viewMode` override
+  (`[detailed-spec §5.10]`), so reopening a memo or restarting the app resumes in that memo's
+  last-toggled mode (GitHub issue #31) — a memo with no override yet still falls back to the fixed
+  `'live'` default.
 - Implementation: the decoration `StateField`/`ViewPlugin` checks a simple boolean facet/compartment
   (`liveViewEnabled`); toggling reconfigures that compartment only — the document itself is never
   touched by the toggle.
