@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::app_settings::{ViewMode, WrapMode};
+use super::app_settings::{PaneMode, ViewMode, WrapMode};
 
 /// A memo's unique identifier within a tab. Since a tab's `.md` files are always direct children
 /// of the tab folder (no nested subfolders, `[spec §2.2]`) and the filesystem itself forbids two
@@ -112,6 +112,12 @@ pub struct MemoEditorSettings {
     pub font_size: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_mode: Option<ViewMode>,
+    /// Per-memo pane-layout override (`docs/plans/markdown/markdown-preview/PLAN.md` §3). Absent
+    /// means "follow `AppSettings.editorDefaults.paneMode`" — mirrors `view_mode` exactly, and is
+    /// fully independent of it (the live/source axis and the pane-mode axis never interact except
+    /// for the one documented auto-reveal case in that plan's §4.1/§4.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_mode: Option<PaneMode>,
     /// 1-indexed document line number visible at the top of the viewport at save time
     /// (`[detailed-spec §5.3]`, "Document-Position-Based Anchor, Not Raw Pixel Offset").
     #[serde(default, skip_serializing_if = "Option::is_none")]
