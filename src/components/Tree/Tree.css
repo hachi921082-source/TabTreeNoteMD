@@ -19,6 +19,20 @@
   padding: 16px;
 }
 
+/* Entry point (a) (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.9) — a slim strip above the
+   normally-rendered tree, unlike `.ttn-tree-message` above (which replaces the whole tree area
+   for the no-session-locked/recovery-pending states). */
+.ttn-tree-session-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--ttn-fg-muted);
+  border-bottom: 1px solid var(--ttn-border);
+}
+
 .ttn-tree-rows {
   flex: 0 0 auto;
 }
