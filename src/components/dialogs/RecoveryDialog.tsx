@@ -1,7 +1,10 @@
-// Crash-mid-lock recovery dialog (`docs/plans/tab-lock/CRASH-RECOVERY.md` "Frontend"). Shown by
-// `components/Tree/TreeView.tsx` when `tree_open` reports `recoveryPending: true` for the active
-// tab. Reuses the shared `Dialog` shell and the same password-input UI as `PasswordDialog.tsx`,
-// with two named actions ("Finish Locking" / "Restore") instead of a single OK button.
+// Crash-mid-lock / crash-mid-permanent-unlock recovery dialog
+// (`docs/plans/tab-lock/CRASH-RECOVERY.md` "Frontend",
+// `docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.6). Shown by `components/Tree/TreeView.tsx`
+// when `tree_open` reports `recoveryPending: true` for the active tab — `recoveryKind` picks
+// which direction's copy/labels this dialog uses via the `variant` prop below. Reuses the shared
+// `Dialog` shell and the same password-input UI as `PasswordDialog.tsx`, with two named actions
+// ("Finish" / "Restore") instead of a single OK button.
 //
 // Esc IS allowed to close this dialog (it is not one of the Esc-disabled exceptions,
 // `[detailed-spec §6.5]`) — closing without choosing an action just leaves the marker in place;
@@ -9,10 +12,26 @@
 // (`CRASH-RECOVERY.md` "Frontend").
 import { useState } from "react";
 import { Dialog } from "./Dialog";
-import type { RecoveryStatus } from "../../shared/models";
 
+/** Normalized shape both directions' differently-named/differently-valued status fields map onto
+ * (`tab-lock-permanent-unlock/PLAN.md` §7.6) — `variant` only changes copy/labels. */
 export interface RecoveryDialogProps {
-  status: RecoveryStatus;
+  variant: "lock" | "permanentUnlock";
+  /** `RecoveryStatus.renamedCount` (lock direction), or a `Classified` permanent-unlock status's
+   * `restoredCount`. */
+  doneCount: number;
+  total: number;
+  anomalous: boolean;
+  anomalousCount: number;
+  /** Normalized from either direction's own enum (`RecoveryDefaultAction`/
+   * `PermanentUnlockRecoveryDefaultAction`). */
+  defaultAction: "finish" | "restore";
+  /** `true` (default) for the lock direction, which always needs a fresh password to derive its
+   * key. The permanent-unlock direction can reach this "classified" stage with the key already
+   * resolved (an active session, or a password already verified in an earlier stage,
+   * `PermanentUnlockRecoveryDialog.tsx`) — pass `false` there so Finish/Restore aren't blocked on
+   * typing a password that would just be ignored by the backend anyway. */
+  passwordRequired?: boolean;
   errorMessage?: string | null;
   busy?: boolean;
   onFinish: (password: string) => void;
@@ -20,50 +39,81 @@ export interface RecoveryDialogProps {
   onCancel: () => void;
 }
 
-export function RecoveryDialog({ status, errorMessage, busy, onFinish, onRestore, onCancel }: RecoveryDialogProps) {
+const COPY = {
+  lock: {
+    title: "ロック処理の復旧",
+    restoreLabel: "元に戻す（ロックを取り消す）",
+    finishLabel: "ロックを完了する",
+    finishBusyLabel: "処理中...",
+    summary: (doneCount: number, total: number) =>
+      `前回のこのタブのロック処理が完了しませんでした。パスワードを入力して、ロックを完了するか、元に戻すかを選択してください。（完了: ${doneCount} / ${total} 件）`,
+    anomalousSummary: (anomalousCount: number) => `前回のロック処理が中断され、想定外の状態のファイルが見つかりました（${anomalousCount} 件）。手動での確認が必要です。`,
+  },
+  permanentUnlock: {
+    title: "完全ロック解除の復旧",
+    restoreLabel: "ロックを元に戻す",
+    finishLabel: "ロック解除を完了する",
+    finishBusyLabel: "処理中...",
+    summary: (doneCount: number, total: number) =>
+      `前回のこのタブの完全ロック解除が完了しませんでした。パスワードを入力して、ロック解除を完了するか、ロックを元に戻すかを選択してください。（完了: ${doneCount} / ${total} 件）`,
+    anomalousSummary: (anomalousCount: number) => `前回の完全ロック解除処理が中断され、想定外の状態のファイルが見つかりました（${anomalousCount} 件）。手動での確認が必要です。`,
+  },
+} as const;
+
+export function RecoveryDialog({
+  variant,
+  doneCount,
+  total,
+  anomalous,
+  anomalousCount,
+  defaultAction,
+  passwordRequired = true,
+  errorMessage,
+  busy,
+  onFinish,
+  onRestore,
+  onCancel,
+}: RecoveryDialogProps) {
   const [password, setPassword] = useState("");
-  const canSubmit = password.length > 0 && !busy;
+  const canSubmit = (!passwordRequired || password.length > 0) && !busy;
+  const copy = COPY[variant];
 
   // `CRASH-RECOVERY.md`'s anomalous (both-or-neither) case is "surfaced as a distinct error
   // state to the user rather than auto-resolved" — no Finish/Restore choice is offered for it,
   // since neither action's on-disk-evidence assumptions hold for an anomalous entry.
-  if (status.anomalous) {
+  if (anomalous) {
     return (
-      <Dialog title="ロック処理の復旧" footer={<button type="button" onClick={onCancel}>閉じる</button>}>
-        <p className="ttn-recovery-summary">
-          前回のロック処理が中断され、想定外の状態のファイルが見つかりました（
-          {status.anomalousCount} 件）。手動での確認が必要です。
-        </p>
+      <Dialog title={copy.title} footer={<button type="button" onClick={onCancel}>閉じる</button>}>
+        <p className="ttn-recovery-summary">{copy.anomalousSummary(anomalousCount)}</p>
       </Dialog>
     );
   }
 
   return (
     <Dialog
-      title="ロック処理の復旧"
+      title={copy.title}
       onClose={onCancel}
       footer={
         <>
           <button type="button" onClick={onCancel}>
             キャンセル
           </button>
-          <button type="button" disabled={!canSubmit} autoFocus={status.defaultAction === "restore"} onClick={() => onRestore(password)}>
-            元に戻す（ロックを取り消す）
+          <button type="button" disabled={!canSubmit} autoFocus={defaultAction === "restore"} onClick={() => onRestore(password)}>
+            {copy.restoreLabel}
           </button>
-          <button type="button" disabled={!canSubmit} autoFocus={status.defaultAction === "finish"} onClick={() => onFinish(password)}>
-            {busy ? "処理中..." : "ロックを完了する"}
+          <button type="button" disabled={!canSubmit} autoFocus={defaultAction === "finish"} onClick={() => onFinish(password)}>
+            {busy ? copy.finishBusyLabel : copy.finishLabel}
           </button>
         </>
       }
     >
-      <p className="ttn-recovery-summary">
-        前回のこのタブのロック処理が完了しませんでした。パスワードを入力して、ロックを完了するか、元に戻すかを選択してください。
-        （完了: {status.renamedCount} / {status.total} 件）
-      </p>
-      <label className="ttn-dialog-field">
-        <span>パスワード</span>
-        <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
-      </label>
+      <p className="ttn-recovery-summary">{copy.summary(doneCount, total)}</p>
+      {passwordRequired && (
+        <label className="ttn-dialog-field">
+          <span>パスワード</span>
+          <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
+        </label>
+      )}
       {errorMessage && <div className="ttn-dialog-error">{errorMessage}</div>}
     </Dialog>
   );
