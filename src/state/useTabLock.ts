@@ -8,8 +8,19 @@
 // even though it never became the active tab. `activeSessionRealNames` therefore tracks every
 // currently-active session (tabId -> real tab name), not just one.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { tabEndSession, tabLock, tabLockRecoveryFinish, tabLockRecoveryRestore, tabLockRecoveryStatus, tabUnlock } from "../ipc/tabLock";
-import type { RecoveryStatus } from "../shared/models";
+import {
+  tabEndSession,
+  tabLock,
+  tabLockRecoveryFinish,
+  tabLockRecoveryRestore,
+  tabLockRecoveryStatus,
+  tabPermanentUnlock,
+  tabPermanentUnlockRecoveryFinish,
+  tabPermanentUnlockRecoveryRestore,
+  tabPermanentUnlockRecoveryStatus,
+  tabUnlock,
+} from "../ipc/tabLock";
+import type { PermanentUnlockRecoveryStatus, RecoveryStatus } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 
 export interface UseTabLockResult {
@@ -26,6 +37,12 @@ export interface UseTabLockResult {
   fetchRecoveryStatus: (tabId: string) => Promise<RecoveryStatus | null>;
   finishRecovery: (tabId: string, password: string) => Promise<boolean>;
   restoreRecovery: (tabId: string, password: string) => Promise<boolean>;
+  /** `docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.4. `password` omitted for entry point
+   * (a) (an active session already supplies the key); given for entry point (b). */
+  permanentUnlockTab: (tabId: string, password?: string) => Promise<boolean>;
+  fetchPermanentUnlockRecoveryStatus: (tabId: string, password?: string) => Promise<PermanentUnlockRecoveryStatus | null>;
+  finishPermanentUnlockRecovery: (tabId: string, password?: string) => Promise<boolean>;
+  restorePermanentUnlockRecovery: (tabId: string, password?: string) => Promise<boolean>;
 }
 
 /** `onTabsChanged`/`onTreeChanged` are `state/useTabs.ts`'s `refresh` / `state/useTree.ts`'s
@@ -132,6 +149,61 @@ export function useTabLock(activeTabId: string | null, onTabsChanged: () => void
     [onTabsChanged, onTreeChanged],
   );
 
+  const permanentUnlockTab = useCallback(
+    async (tabId: string, password?: string): Promise<boolean> => {
+      setBusy(true);
+      const result = await tabPermanentUnlock(tabId, password);
+      setBusy(false);
+      if (result.ok) {
+        onTabsChanged();
+        onTreeChanged();
+        return true;
+      }
+      setLastErrorCode(result.error.code);
+      return false;
+    },
+    [onTabsChanged, onTreeChanged],
+  );
+
+  const fetchPermanentUnlockRecoveryStatus = useCallback(async (tabId: string, password?: string): Promise<PermanentUnlockRecoveryStatus | null> => {
+    const result = await tabPermanentUnlockRecoveryStatus(tabId, password);
+    if (result.ok) return result.value;
+    setLastErrorCode(result.error.code);
+    return null;
+  }, []);
+
+  const finishPermanentUnlockRecovery = useCallback(
+    async (tabId: string, password?: string): Promise<boolean> => {
+      setBusy(true);
+      const result = await tabPermanentUnlockRecoveryFinish(tabId, password);
+      setBusy(false);
+      if (result.ok) {
+        onTabsChanged();
+        onTreeChanged();
+        return true;
+      }
+      setLastErrorCode(result.error.code);
+      return false;
+    },
+    [onTabsChanged, onTreeChanged],
+  );
+
+  const restorePermanentUnlockRecovery = useCallback(
+    async (tabId: string, password?: string): Promise<boolean> => {
+      setBusy(true);
+      const result = await tabPermanentUnlockRecoveryRestore(tabId, password);
+      setBusy(false);
+      if (result.ok) {
+        onTabsChanged();
+        onTreeChanged();
+        return true;
+      }
+      setLastErrorCode(result.error.code);
+      return false;
+    },
+    [onTabsChanged, onTreeChanged],
+  );
+
   return {
     activeSessionRealNames,
     busy,
@@ -142,5 +214,9 @@ export function useTabLock(activeTabId: string | null, onTabsChanged: () => void
     fetchRecoveryStatus,
     finishRecovery,
     restoreRecovery,
+    permanentUnlockTab,
+    fetchPermanentUnlockRecoveryStatus,
+    finishPermanentUnlockRecovery,
+    restorePermanentUnlockRecovery,
   };
 }
