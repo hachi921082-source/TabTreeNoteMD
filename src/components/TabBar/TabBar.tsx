@@ -323,11 +323,13 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
               void patchSettings({ window: { treeSide: next } });
             }}
           >
-            ⇄
+            {/* Trailing U+FE0E (VS15) forces text presentation, avoiding Windows' color-emoji-font
+                fallback which ignores the CSS `color` property. */}
+            ⇄︎
           </button>
           {/* Settings screen shell (`docs/plans/window-operation/PLAN.md` §7). */}
           <button type="button" className="ttn-toolbar-btn" title="設定" aria-label="設定" onClick={() => setSettingsOpen(true)}>
-            ⚙
+            ⚙︎
           </button>
         </div>
 
