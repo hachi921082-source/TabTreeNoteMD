@@ -258,6 +258,53 @@ mod tests {
         assert_eq!(detect_extension(b"not an image", Some("garbage")), "png");
     }
 
+    // `image_read_bytes`'s server-side path validation (`AbsolutePathPolicy::Reject`) — the
+    // command itself takes `AppHandle`/`State<...>` params that aren't practical to construct in a
+    // unit test, so these exercise `resolve_relative_within_base` directly with the exact
+    // arguments `image_read_bytes` passes it, mirroring `link.rs`'s own `resolve_file_path_*` tests
+    // for the sibling `AllowPassthrough` policy. Traversal/absolute/rooted rejection here was also
+    // manually verified via live CDP testing (`docs/RESOLVED-ISSUES.md` #75) but had no automated
+    // coverage until now.
+    #[test]
+    fn image_read_bytes_rejects_parent_dir_traversal() {
+        let base = tempdir();
+        let err = resolve_relative_within_base("../secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        let err = resolve_relative_within_base("sub\\..\\..\\secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn image_read_bytes_rejects_absolute_paths() {
+        let base = tempdir();
+        let err = resolve_relative_within_base("C:\\Windows\\System32\\cmd.exe", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        let err = resolve_relative_within_base("C:/Windows/System32/cmd.exe", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn image_read_bytes_rejects_rooted_but_not_absolute_paths() {
+        let base = tempdir();
+        // Leading `\` with no drive-letter prefix — `has_root()` true, `is_absolute()` false on
+        // Windows, so `base.join(...)` would otherwise discard `base` entirely and escape it.
+        let err = resolve_relative_within_base("\\secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        let err = resolve_relative_within_base("/secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn image_read_bytes_resolves_valid_relative_paths_within_the_tab_folder() {
+        let base = tempdir();
+        let resolved = resolve_relative_within_base("img_0011223344556677.png", Some(&base), AbsolutePathPolicy::Reject).unwrap();
+        assert_eq!(resolved, base.join("img_0011223344556677.png"));
+        fs::remove_dir_all(&base).ok();
+    }
+
     #[test]
     fn write_image_file_writes_bytes_via_temp_then_rename() {
         let dir = tempdir();
