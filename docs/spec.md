@@ -98,7 +98,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 
 ### 2.4 Search and Replace
 
-- In-memo search (incremental / next / prev), replace (single / all / selection / one-by-one), regex support, case / word-wise options. Search history.
+- In-memo search (incremental / next / prev), replace (single / all / one-by-one), regex support, case / word-wise options. Search history.
 - **Full-text search (cross-tab)**: Targets memo name and body. Implementation: **lightweight in-memory index** (built at startup, no external DB or persistent index).
   - **Two paths for index differential update**: ① In-app changes (save, rename, delete, etc.) update index directly on save completion / ② External changes via file monitoring only.
   - **Locked tab handling**: Whether locked or in unlock session, that tab's name and body are always excluded from full-text search index (§4.1).
