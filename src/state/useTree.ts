@@ -24,7 +24,7 @@ import {
   memoSetLabel,
   treeOpen,
 } from "../ipc/tree";
-import type { LabelColor, MemoEditorSettings, MemoProperties, MoveTarget, TreeNode, TreeSnapshot } from "../shared/models";
+import type { LabelColor, MemoEditorSettings, MemoProperties, MoveTarget, RecoveryKind, TreeNode, TreeSnapshot } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 import type { ClickModifiers, SelectionState } from "../shared/treeSelection";
 import { applyClick, clearSelection, flattenVisible, moveSelection } from "../shared/treeSelection";
@@ -39,6 +39,9 @@ export interface UseTreeResult {
   tabName: string;
   locked: boolean;
   recoveryPending: boolean;
+  /** Which recovery dialog to show when `recoveryPending` is `true`
+   * (`docs/plans/tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3). `undefined` otherwise. */
+  recoveryKind: RecoveryKind | undefined;
   loading: boolean;
   lastErrorCode: ErrorCode | null;
   clearLastError: () => void;
@@ -94,6 +97,7 @@ export function useTree(tabId: string | null): UseTreeResult {
   const [tabName, setTabName] = useState("");
   const [locked, setLocked] = useState(false);
   const [recoveryPending, setRecoveryPending] = useState(false);
+  const [recoveryKind, setRecoveryKind] = useState<RecoveryKind | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [lastErrorCode, setLastErrorCode] = useState<ErrorCode | null>(null);
   const [selection, setSelection] = useState<SelectionState>(clearSelection());
@@ -107,6 +111,7 @@ export function useTree(tabId: string | null): UseTreeResult {
     setTabName(snapshot.tabName);
     setLocked(snapshot.locked);
     setRecoveryPending(snapshot.recoveryPending);
+    setRecoveryKind(snapshot.recoveryKind);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -115,6 +120,7 @@ export function useTree(tabId: string | null): UseTreeResult {
       setTabName("");
       setLocked(false);
       setRecoveryPending(false);
+      setRecoveryKind(undefined);
       setLoading(false);
       return;
     }
@@ -355,6 +361,7 @@ export function useTree(tabId: string | null): UseTreeResult {
     tabName,
     locked,
     recoveryPending,
+    recoveryKind,
     loading,
     lastErrorCode,
     clearLastError,
