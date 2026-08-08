@@ -453,6 +453,13 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
 - Dedicated force-delete shortcut (`[spec §9.1 item 3]`): must work regardless of current focus target
   and must not depend on the tree row having focus. **Confirmed key binding: `Ctrl+Delete`** (no longer
   just an example — see `DECISIONS.md` "Force-Delete Shortcut Key: Confirmed as `Ctrl+Delete`").
+- **Edit-lock menu item** (`[spec §2.2]`, right-click menu; GitHub issue #64): a single two-state item
+  toggling the target memo's `locked` flag (§3.3/§4.2 "toggle edit lock"), same single-target-only
+  pattern as "名前を変更" / "子として作成" / "プロパティ" above — **disabled when the current selection
+  is not a single item**, since a mixed multi-selection (some locked, some not) has no unambiguous
+  single label/action.
+  - Target memo currently unlocked → label "編集ロック" → sets `locked: true`.
+  - Target memo currently locked → label "編集ロック解除" → sets `locked: false`.
 
 ### 5.3 Text Editing (Right Pane) — Elaboration
 

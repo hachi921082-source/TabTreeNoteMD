@@ -20,7 +20,7 @@ import { PermanentUnlockRecoveryDialog } from "../dialogs/PermanentUnlockRecover
 import { validateNameStrict } from "../../shared/nameSanitize";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { formatDateTime } from "../../shared/formatDateTime";
-import { locateNode } from "../../shared/treeOps";
+import { findNode, locateNode } from "../../shared/treeOps";
 import type { UseTreeResult } from "../../state/useTree";
 import type { UseTabLockResult } from "../../state/useTabLock";
 import type { AppSettings, LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
@@ -354,6 +354,7 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
   const buildContextMenuItems = (path: string): ContextMenuItem[] => {
     const singleSelection = selection.selected.size <= 1 || !selection.selected.has(path);
     const selectedPaths = selection.selected.has(path) && selection.selected.size > 0 ? Array.from(selection.selected) : [path];
+    const isLocked = findNode(nodes, path)?.locked === true;
     return [
       { label: "名前を変更", disabled: !singleSelection, onSelect: () => setRenamingPath(path) },
       { label: "削除", danger: true, onSelect: () => setPendingDialog({ kind: "deleteConfirm", paths: selectedPaths }) },
@@ -374,6 +375,9 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
           void tree.getProperties(path).then((props) => setProperties(props));
         },
       },
+      isLocked
+        ? { label: "編集ロック解除", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, false) }
+        : { label: "編集ロック", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, true) },
     ];
   };
 

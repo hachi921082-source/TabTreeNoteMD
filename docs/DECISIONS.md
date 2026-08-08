@@ -406,3 +406,20 @@ not Edit/Write/commit" rule for that path also still applies regardless of this 
   on-demand feature).
 
 Elaborated in `spec.md` §2.3/§3.4/§4.2 and `detailed-spec.md` §3.2/§3.3/§5.3/§5.10.
+
+## Edit Lock: Snapshot-at-Load Read-Only Enforcement Kept As-Is (2026-08-08)
+
+**Decision**: The editor's read-only state for Edit Lock remains a one-time snapshot taken at memo load
+time (`editor_load`'s `edit_locked` flag). If Edit Lock is toggled on/off for a memo that is already open
+in the editor, the open editor does not live-update — locking while open lets typing continue and a
+subsequent save attempt surfaces a generic error rather than a specific "this memo is now locked" message;
+unlocking while open leaves the editor read-only until the user navigates away and back. Elaborated in
+`spec.md` §2.2.
+
+**Rejected alternative**: Live enforcement — the editor listens (event push or poll) for Edit Lock changes
+on the currently-open memo and immediately flips read-only state, with a specific save-failure message.
+
+**Rationale**: This is a UX gap, not a safety gap — the backend already refuses the write when locked
+(`editor_save` step 1), so there is no data-loss/corruption risk either way. Given that, immediate live
+enforcement isn't worth the added complexity right now; the fix is tracked as a follow-up GitHub issue
+instead of being folded into this decision.
