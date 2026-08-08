@@ -66,7 +66,14 @@ type PendingDialog =
   | { kind: "duplicateName"; path: string; suggestedName: string }
   | { kind: "createNew"; suggestedName?: string }
   | { kind: "lockSetup"; tab: TabInfo }
-  | { kind: "unlock"; tab: TabInfo };
+  | { kind: "unlock"; tab: TabInfo }
+  /** Entry point (b) (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.8) — permanently
+   * unlocking a locked tab from the tab bar's context menu, regardless of active-session state
+   * (both entry points route through this same confirmation; only the password stage below is
+   * skipped when a session already exists). */
+  | { kind: "permanentUnlockConfirm"; tab: TabInfo }
+  /** Shown only when `tab` has no active unlock session at confirm time. */
+  | { kind: "permanentUnlockPassword"; tab: TabInfo };
 
 interface ContextMenuState {
   tabId: string;
@@ -354,6 +361,14 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
                   onSelect: () => setPendingDialog({ kind: "unlock", tab: contextTab }),
                 }
               : { label: "タブをロック", onSelect: () => setPendingDialog({ kind: "lockSetup", tab: contextTab }) },
+            ...(contextTab.locked
+              ? [
+                  {
+                    label: "完全にロック解除",
+                    onSelect: () => setPendingDialog({ kind: "permanentUnlockConfirm", tab: contextTab }),
+                  },
+                ]
+              : []),
             {
               label: "タブを削除",
               // `docs/plans/tab-lock/PLAN.md` §4: locked-with-no-session rejects; an active
@@ -466,6 +481,48 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           onSubmit={async (password) => {
             tabLockState.clearLastError();
             const ok = await tabLockState.unlockTab(pendingDialog.tab.id, password);
+            if (ok) setPendingDialog(null);
+          }}
+        />
+      )}
+
+      {pendingDialog?.kind === "permanentUnlockConfirm" && (
+        <ConfirmDialog
+          title="完全にロック解除"
+          message={
+            <>
+              <p>「{pendingDialog.tab.name}」を完全にロック解除すると、暗号化前の通常のタブに戻ります。この操作は取り消せません。</p>
+              <p>念のため、事前にフォルダ全体のバックアップを取っておくことをおすすめします。</p>
+            </>
+          }
+          confirmLabel="完全にロック解除"
+          onCancel={() => setPendingDialog(null)}
+          onConfirm={async () => {
+            const tab = pendingDialog.tab;
+            if (tabLockState.activeSessionRealNames.has(tab.id)) {
+              const ok = await tabLockState.permanentUnlockTab(tab.id, undefined);
+              if (ok) setPendingDialog(null);
+            } else {
+              setPendingDialog({ kind: "permanentUnlockPassword", tab });
+            }
+          }}
+        />
+      )}
+
+      {pendingDialog?.kind === "permanentUnlockPassword" && (
+        <PasswordDialog
+          title={`「${pendingDialog.tab.name}」の完全ロック解除`}
+          mode="unlock"
+          busy={tabLockState.busy}
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
+          submitLabel="完全にロック解除"
+          onCancel={() => {
+            setPendingDialog(null);
+            tabLockState.clearLastError();
+          }}
+          onSubmit={async (password) => {
+            tabLockState.clearLastError();
+            const ok = await tabLockState.permanentUnlockTab(pendingDialog.tab.id, password);
             if (ok) setPendingDialog(null);
           }}
         />
