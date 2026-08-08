@@ -57,15 +57,78 @@
 .ttn-tree-row {
   display: flex;
   align-items: center;
-  gap: 4px;
   /* `--ttn-tree-row-line-height` (`AppSettings.appearance.treeRowLineHeight`, default `1.3`) —
      "basic customization of ... line spacing" (`docs/plans/appearance-theme/PLAN.md` §3). `20px`
      is the base unit so the default `1.3` reproduces this app's original fixed `26px` row height. */
   height: calc(20px * var(--ttn-tree-row-line-height));
+  padding-left: 6px;
   padding-right: 8px;
   cursor: pointer;
   border-left: 3px solid transparent;
   white-space: nowrap;
+}
+
+/* Guide-line segments (indent connector lines; GitHub issue #60,
+   `docs/plans/tree-guide-lines/PLAN.md`) replace the old `paddingLeft: depth * 16 + 6` indent.
+   `.ttn-tree-row-content` carries the `gap` that used to live on `.ttn-tree-row` so no extra gap
+   is introduced between the guides and the toggle/icon/name group. */
+.ttn-tree-guides {
+  display: flex;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+
+.ttn-tree-row-content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ttn-tree-guide {
+  position: relative;
+  width: 16px;
+  flex: 0 0 auto;
+}
+
+.ttn-tree-guide-continue::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--ttn-border);
+}
+
+.ttn-tree-guide-branch::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 0;
+  width: 1px;
+  background: var(--ttn-border);
+}
+
+/* `├─`-style: ancestor/self column continues past this row (more siblings follow). */
+.ttn-tree-guide-branch-mid::before {
+  bottom: 0;
+}
+
+/* `└─`-style: corner only, no continuation below (this row is the last child). */
+.ttn-tree-guide-branch-last::before {
+  height: 50%;
+}
+
+.ttn-tree-guide-branch::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: var(--ttn-border);
 }
 
 .ttn-tree-row:hover {
