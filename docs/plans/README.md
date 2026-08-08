@@ -10,8 +10,9 @@ app-settings persistence) — read those two first, since nearly everything else
 
 A feature folder normally holds a single `PLAN.md`, but may hold a second file when one sub-algorithm
 is large and self-contained enough to warrant separate reading (currently: `tab-lock/CRASH-RECOVERY.md`
-alongside `tab-lock/PLAN.md`, and `tab-lock-permanent-unlock/CRASH-RECOVERY.md` alongside
-`tab-lock-permanent-unlock/PLAN.md`) — the primary `PLAN.md` always points to any companion file. Table
+alongside `tab-lock/PLAN.md`, `tab-lock-permanent-unlock/CRASH-RECOVERY.md` alongside
+`tab-lock-permanent-unlock/PLAN.md`, and `markdown/markdown-preview/RENDERING.md` alongside
+`markdown/markdown-preview/PLAN.md`) — the primary `PLAN.md` always points to any companion file. Table
 of Contents was similarly split out of `markdown-editing/PLAN.md` into its own feature folder,
 `table-of-contents/`, because it is referenced from three other plans (`markdown-editing`, `link`,
 `tab-lock`), not because of size alone.
@@ -41,7 +42,7 @@ note), not a duplicate or a relocation of it.
 | [`markdown-editing/PLAN.md`](markdown-editing/PLAN.md) | CodeMirror 6 decoration extension, live/source toggle, 16-slot toolbar, sanitization allowlist |
 | [`table-of-contents/PLAN.md`](table-of-contents/PLAN.md) | TOC heading scan/slugification/marker-block generation, triggered from the markdown-editing toolbar |
 | [`image-handling/PLAN.md`](image-handling/PLAN.md) | Image paste/insert storage, filename generation, resize markup, no-orphan-cleanup policy |
-| [`markdown/markdown-preview/PLAN.md`](markdown/markdown-preview/PLAN.md) | Split-pane Markdown preview (`paneMode` tri-state toggle, `markdown-it` rendering pipeline, scroll-sync, checkbox/link interaction) |
+| [`markdown/markdown-preview/PLAN.md`](markdown/markdown-preview/PLAN.md) + [`markdown/markdown-preview/RENDERING.md`](markdown/markdown-preview/RENDERING.md) | Split-pane Markdown preview (`paneMode` tri-state toggle, pane layout/toolbar/shortcuts in `PLAN.md`; the `markdown-it` rendering pipeline, scroll-sync, and checkbox/link interaction in `RENDERING.md`) |
 | [`markdown/pdf-export/PLAN.md`](markdown/pdf-export/PLAN.md) | PDF export via hidden-iframe print flow, reusing the preview pane's renderer |
 | [`markdown/image-handling/PLAN.md`](markdown/image-handling/PLAN.md) | Image read-back pipeline (`image_read_bytes`, Blob-URL cache) and live-view real `<img>` rendering — distinct from the top-level `image-handling/PLAN.md` above, which covers the write path only |
 | [`search-index/PLAN.md`](search-index/PLAN.md) | Cross-tab full-text index build/update/query, locked-tab exclusion |
