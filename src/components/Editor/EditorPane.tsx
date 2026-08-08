@@ -66,7 +66,12 @@ import "./Editor.css";
 
 /** Matches `AppSettings::default().editorDefaults` (`model/app_settings.rs`) — used until
  * `appSettings` has loaded from `settings_get`. */
-const FALLBACK_EDITOR_DEFAULTS: EditorDefaults = { wrap: "window", tabWidth: 4, softTab: true, showLineNumbers: true, fontSize: 14, viewMode: "live" };
+const FALLBACK_EDITOR_DEFAULTS: EditorDefaults = { wrap: "window", tabWidth: 4, showLineNumbers: true, fontSize: 14 };
+
+/** Fixed global default Markdown view mode a memo opens in — hardcoded, not user-configurable
+ * (GitHub issue #61 removed the Settings → Editor "display mode" selector). The per-memo
+ * `MemoEditorSettings.viewMode` override below still exists and falls back to this constant. */
+const DEFAULT_VIEW_MODE: "live" | "source" = "live";
 
 /** `docs/plans/editor-save/PLAN.md` §2 "Scroll Position Write Path": debounced so a continuous
  * scroll doesn't fire a metadata write per frame. */
@@ -134,9 +139,10 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // now reflects any previously-persisted toggle). Toggling both flips this local state (so the UI
   // updates immediately, without waiting on the async `setEditorOverride` IPC round-trip) and
   // persists the new value into the memo's per-memo override — same per-memo-only write pattern as
-  // `persistEditorViewState` below (never the global `editorDefaults.viewMode`), so the choice
-  // survives reopening the memo or restarting the app (`docs/detailed-spec.md` §5.10).
-  const resolvedViewMode = memoEditorOverride?.viewMode ?? editorDefaults.viewMode;
+  // `persistEditorViewState` below (never the fixed `DEFAULT_VIEW_MODE` constant, which has no
+  // settings-backed store to write to), so the choice survives reopening the memo or restarting
+  // the app (`docs/detailed-spec.md` §5.10).
+  const resolvedViewMode = memoEditorOverride?.viewMode ?? DEFAULT_VIEW_MODE;
   const [liveViewOverride, setLiveViewOverride] = useState<"live" | "source" | null>(null);
   const liveViewEnabled = (liveViewOverride ?? resolvedViewMode) === "live";
   const onToggleLiveView = useCallback(() => {
