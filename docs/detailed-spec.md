@@ -123,7 +123,7 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
   "theme": "dark",
   "uiFontScale": 1.0,
   "lastOpened": { "tabId": "t1", "memoName": "Shopping list" },
-  "editorDefaults": { "wrap": "window", "tabWidth": 4, "softTab": true, "showLineNumbers": true, "fontSize": 14, "viewMode": "live" },
+  "editorDefaults": { "wrap": "window", "tabWidth": 4, "showLineNumbers": true, "fontSize": 14 },
   "autosave": { "plainDebounceMs": 1500 },
   "links": { "openTrigger": "singleClick", "confirmBeforeOpen": false },
   "encoding": { "defaultSave": "utf-8" },
@@ -153,6 +153,15 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
   array order is slot order, read left-to-right then top-to-bottom (row 1 slots 1–8, then row 2 slots
   1–8). Default value on first launch is the finalized default layout shown above. Exact ID spellings:
   §9.
+- `editorDefaults` has no `softTab` or `viewMode` field (removed, `DECISIONS.md` "Remove Unused Editor
+  Default Settings: Display Mode Selector and Soft-Tab Checkbox", GitHub issue #61). The Settings →
+  Editor dialog no longer shows a "display mode" selector or an "insert tab as spaces" checkbox.
+  - Markdown view mode a memo opens in: fixed to `'live'`, not user-configurable. The per-memo
+    `MemoEditorSettings.viewMode` override (§3.3) is unaffected and still falls back to this fixed
+    `'live'` default when absent — see §5.10.
+  - Tab key: always inserts a literal tab character (`\t`); the soft-tab (spaces) behavior and its
+    per-memo `MemoEditorSettings.softTab` override field are both removed — **behavior change**: prior
+    factory default was `softTab: true` (spaces).
 
 ### 3.3 Tab Metadata JSON — Unlocked Tab
 
@@ -165,7 +174,7 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
       "memoName": "Shopping list",
       "expanded": true,
       "label": { "color": "#4a90d9", "kind": null },
-      "editor": { "wrap": "window", "tabWidth": null, "softTab": null, "showLineNumbers": null, "fontSize": null, "viewMode": null, "scrollPosition": 340 },
+      "editor": { "wrap": "window", "tabWidth": null, "showLineNumbers": null, "fontSize": null, "viewMode": null, "scrollPosition": 340 },
       "locked": false,
       "children": []
     }
@@ -176,9 +185,11 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
 - `memoName` excludes the `.md` extension; the real on-disk file is `<memoName>.md`.
 - `MemoEditorSettings` fields are all optional/nullable: `null` or absent means "follow
   `AppSettings.editorDefaults`" (`[spec §3.4]`). This includes `viewMode` (`'live' | 'source' | null`):
-  a memo with `viewMode: null`/absent opens in whichever mode `AppSettings.editorDefaults.viewMode`
-  currently specifies; a memo with an explicit `viewMode` always opens in that mode regardless of the
-  global default. Confirmed engine choice: CodeMirror 6 (`[spec §4.2]`, `DECISIONS.md`) — see §5.10.
+  a memo with `viewMode: null`/absent opens in the fixed `'live'` default (§3.2); a memo with an
+  explicit `viewMode` always opens in that mode regardless of the default. Confirmed engine choice:
+  CodeMirror 6 (`[spec §4.2]`, `DECISIONS.md`) — see §5.10.
+- `MemoEditorSettings` has no `softTab` field (removed along with `AppSettings.editorDefaults.softTab`,
+  §3.2, GitHub issue #61); Tab-key insertion is fixed at the editor-engine level, not per-memo.
 - `editor.scrollPosition` (integer, **1-indexed document line number** of the line visible at the top
   of the viewport at the time of saving — **not** a raw pixel/scrollTop value, confirmed per
   `DECISIONS.md` "Scroll Position: Document-Position-Based Anchor, Not Raw Pixel Offset") **persists
@@ -445,6 +456,10 @@ signature list — naming convention and exact parameter types are `PLAN.md`-lev
 
 ### 5.3 Text Editing (Right Pane) — Elaboration
 
+- **Tab key**: always inserts a literal tab character (`\t`); fixed, not user-configurable (no
+  Settings → Editor "insert tab as spaces" checkbox, `AppSettings.editorDefaults` has no `softTab`
+  field, GitHub issue #61). Independent of the right-click "Convert" tab↔space transform below, which
+  is an explicit on-demand text conversion, not a Tab-key input mode.
 - **Encoding detection order on load**: (1) check for a UTF-8 BOM; if present, decode as UTF-8 and
   strip the BOM. (2) If no BOM, attempt strict UTF-8 decode; if the byte sequence is invalid UTF-8,
   retry decoding as Shift_JIS (`[spec §2.3]`). If both fail, treat as a hard read error (surface via a
@@ -859,12 +874,12 @@ step for deletion purposes.
   switch, and cursor/scroll position must be preserved across the toggle (mapped through CodeMirror's
   own position system, not recomputed from scratch). This applies however often the user toggles,
   including many times per editing session.
-- **Which mode a memo opens in**: governed by `AppSettings.editorDefaults.viewMode` (global default,
-  `'live'` factory default) with an optional per-memo override in `MemoEditorSettings.viewMode`
-  (`[spec §3.4]`, §3.3 above). The runtime toggle described above writes its new value into the
-  currently-open memo's `MemoEditorSettings.viewMode` override (never the global default), so
-  reopening a memo — or restarting the app — resumes in that memo's last-toggled mode; a memo with
-  no override yet still falls back to the global default (GitHub issue #31).
+- **Which mode a memo opens in**: fixed to `'live'` (not a user-configurable global default; there is
+  no Settings → Editor "display mode" selector, GitHub issue #61), with an optional per-memo override in
+  `MemoEditorSettings.viewMode` (`[spec §3.4]`, §3.3 above). The runtime toggle described above writes
+  its new value into the currently-open memo's `MemoEditorSettings.viewMode` override (never the fixed
+  default), so reopening a memo — or restarting the app — resumes in that memo's last-toggled mode; a
+  memo with no override yet still falls back to the fixed `'live'` default (GitHub issue #31).
 - **Toolbar — finalized 16-slot layout** (`DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed
   Grid Layout"): a floating, freely repositionable (drag anywhere within the window) panel, fixed
   **8 columns × 2 rows = 16 slots, no blanks**:
