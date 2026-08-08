@@ -52,6 +52,7 @@ const SHORTCUT_LABELS: Record<string, string> = {
   "markdown.image": "画像を挿入",
   "markdown.rearrangeToggle": "ツールバー並べ替え",
   "markdown.toggleLiveView": "ライブ/ソース表示切替",
+  "markdown.paneModeCycle": "ペイン表示モードを切り替え",
 };
 
 export function SettingsDialog({ settings, patchSettings, applyFetched, onClose }: SettingsDialogProps) {
@@ -298,6 +299,32 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 max={40}
                 value={settings.editorDefaults.fontSize}
                 onChange={(e) => void patchSettings({ editorDefaults: { fontSize: Number(e.target.value) } })}
+              />
+            </label>
+            <label className="ttn-settings-row">
+              <span>新規メモの既定のペイン表示</span>
+              <select
+                value={settings.editorDefaults.paneMode}
+                onChange={(e) => void patchSettings({ editorDefaults: { paneMode: e.target.value as AppSettings["editorDefaults"]["paneMode"] } })}
+              >
+                <option value="edit">編集のみ</option>
+                <option value="split">分割表示</option>
+                <option value="preview">プレビューのみ</option>
+              </select>
+            </label>
+          </section>
+
+          <section className="ttn-settings-section">
+            <h3>プレビュー</h3>
+            <label className="ttn-settings-row">
+              <span>プレビュー再描画の遅延 (ミリ秒)</span>
+              <input
+                type="number"
+                min={50}
+                max={2000}
+                step={50}
+                value={settings.preview.debounceMs}
+                onChange={(e) => void patchSettings({ preview: { debounceMs: Number(e.target.value) } })}
               />
             </label>
           </section>
