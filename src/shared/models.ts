@@ -157,14 +157,21 @@ export interface TreeNode {
   readonly children: readonly TreeNode[];
 }
 
+/** Which crash-recovery flow `recoveryPending: true` refers to
+ * (`docs/plans/tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3). */
+export type RecoveryKind = "lock" | "permanentUnlock";
+
 export interface TreeSnapshot {
   nodes: TreeNode[];
   tabName: string;
   locked: boolean;
-  /** `true` when a `tab-lock/PLAN.md` crash-mid-lock marker was found — the frontend should
-   * show that feature's recovery dialog instead of the normal tree view (not yet implemented;
-   * this flag is a forward-looking seam). */
+  /** `true` when a `tab-lock/PLAN.md` crash-mid-lock or `tab-lock-permanent-unlock/PLAN.md`
+   * crash-mid-permanent-unlock marker was found — the frontend should show the recovery dialog
+   * identified by `recoveryKind` instead of the normal tree view. */
   recoveryPending: boolean;
+  /** Which recovery dialog to show when `recoveryPending` is `true`. Always present when
+   * `recoveryPending` is `true`, absent otherwise. */
+  recoveryKind?: RecoveryKind;
 }
 
 export interface MemoProperties {
@@ -252,6 +259,33 @@ export interface RecoveryStatus {
    * message instead of the ordinary Finish/Restore choice. */
   anomalous: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Tab Lock — Permanent Unlock domain (`docs/plans/tab-lock-permanent-unlock/PLAN.md`,
+// `docs/plans/tab-lock-permanent-unlock/CRASH-RECOVERY.md`; mirrors Rust
+// `commands/tab_lock.rs`'s `tab_permanent_unlock*` command I/O types).
+// ---------------------------------------------------------------------------
+
+/** UI default-button tie-break for the permanent-unlock crash-recovery dialog
+ * (`CRASH-RECOVERY.md` §4). */
+export type PermanentUnlockRecoveryDefaultAction = "finishUnlocking" | "restoreLock";
+
+/** Return type of `tab_permanent_unlock_recovery_status`. Unlike the lock direction's own
+ * `RecoveryStatus`, classification here may require a password — the marker carries no
+ * `fileMap`/`kdf` of its own (`PLAN.md` §2), so the extra `alreadyFinished`/`passwordRequired`
+ * stages surface that asymmetry to the frontend. */
+export type PermanentUnlockRecoveryStatus =
+  | { kind: "alreadyFinished" }
+  | { kind: "passwordRequired" }
+  | {
+      kind: "classified";
+      restoredCount: number;
+      notRestoredCount: number;
+      anomalousCount: number;
+      total: number;
+      defaultAction: PermanentUnlockRecoveryDefaultAction;
+      anomalous: boolean;
+    };
 
 // ---------------------------------------------------------------------------
 // Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §4-§5; mirrors Rust
