@@ -207,29 +207,16 @@ fn normalize_mailto(value: &str) -> String {
 /// absolute-like for the same reason. Otherwise `value` is joined onto that tab's folder (or
 /// passed through unresolved if there is no known base — see this function's caller's doc
 /// comment).
+///
+/// Body delegates to `fs::path_safety::resolve_relative_within_base`
+/// (`docs/plans/markdown/image-handling/PLAN.md` §3.1) — this function's own signature, error
+/// codes, and doc comment above are unchanged; this is a behavior-preserving internal refactor
+/// only, verified by the `resolve_file_path_*` tests below continuing to pass unmodified.
 fn resolve_file_path(value: &str, current_tab_id: Option<&str>, settings: &AppSettings) -> Result<String, AppErrorPayload> {
-    let path = Path::new(value);
-    if path.is_absolute() {
-        return Ok(value.to_string());
-    }
-    if has_parent_dir_segment(path) {
-        return Err(AppErrorPayload::new(ErrorCode::NameInvalid, "file path contains a '..' segment and was rejected"));
-    }
-    if path.has_root() {
-        return Err(AppErrorPayload::new(ErrorCode::NameInvalid, "file path is rooted without a drive prefix and was rejected"));
-    }
     let base = current_tab_id.and_then(|id| settings.tabs.iter().find(|t| t.id == id)).map(|t| PathBuf::from(&t.folder_path));
-    Ok(match base {
-        Some(folder) => folder.join(path).to_string_lossy().into_owned(),
-        None => value.to_string(),
-    })
-}
-
-/// `true` if any component of `path` is a `..` parent-directory segment (`std::path::Component::
-/// ParentDir` — parses both `/` and `\` separators on Windows, matching
-/// `isSafeRelativeImageSrc`'s `[\\/]`-split segment check).
-fn has_parent_dir_segment(path: &Path) -> bool {
-    path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+    crate::fs::path_safety::resolve_relative_within_base(value, base.as_deref(), crate::fs::path_safety::AbsolutePathPolicy::AllowPassthrough)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|code| AppErrorPayload::new(code, "file path is invalid"))
 }
 
 #[cfg(test)]
