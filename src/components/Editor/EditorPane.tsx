@@ -151,7 +151,18 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       const next: "live" | "source" = currentlyLive ? "source" : "live";
       const name = memoNameRef.current;
       if (name) {
-        void setEditorOverrideRef.current(name, { ...overrideRef.current, viewMode: next });
+        const updated = { ...overrideRef.current, viewMode: next };
+        void setEditorOverrideRef.current(name, updated);
+        // Keep loadedOverrideRef in sync with this mid-session toggle so a later memo-switch's
+        // outgoing flush (persistEditorViewState, which reads loadedOverrideRef -- not the live
+        // overrideRef -- specifically so it targets the OUTGOING memo, see that ref's declaration
+        // comment) doesn't clobber viewMode back to its pre-toggle value (GitHub issue #66).
+        // Guarded on the name still matching the loaded memo so this can never write into the
+        // wrong memo's slot during the brief async-load window after a switch (same class of race
+        // issue #28's loadedMemoNameRef/loadedOverrideRef split was introduced to prevent).
+        if (loadedMemoNameRef.current === name) {
+          loadedOverrideRef.current = updated;
+        }
       }
       return next;
     });
