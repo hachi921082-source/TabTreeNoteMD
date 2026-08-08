@@ -108,6 +108,59 @@ function App() {
     setPendingLinkFocus(null);
   }, [pendingLinkFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
 
+  // Startup auto-open of the last-opened memo (`[spec §2.6]`: "On startup automatically open the
+  // last-opened memo (`AppSettings.lastOpened`). If tab/memo is deleted, do nothing.";
+  // `[detailed-spec §5.6]`). Once both `tabsState`/`settingsState` have finished their initial
+  // load, switch to `lastOpened.tabId` (if it's still in `AppSettings.tabs`) so its tree fetches
+  // and goes through §3.5 reconciliation, then hand off to the effect below via
+  // `pendingStartupOpen` — same two-step "switch tab, wait for its tree, then `focusOnMemo`"
+  // pattern already used above for cross-tab search hits / `memo:` links. Guarded by a ref so it
+  // only ever runs once per app session; a stale/deleted tab or memo silently does nothing (no
+  // error, no fallback memo), matching the spec text exactly.
+  const startupAutoOpenAttempted = useRef(false);
+  const [pendingStartupOpen, setPendingStartupOpen] = useState<{ tabId: string; memoName: string } | null>(null);
+  useEffect(() => {
+    if (startupAutoOpenAttempted.current) return;
+    if (tabsState.loading || settingsState.loading) return;
+    startupAutoOpenAttempted.current = true;
+    const lastOpened = settingsState.settings?.lastOpened;
+    if (!lastOpened) return;
+    if (!tabsState.tabs.some((t) => t.id === lastOpened.tabId)) return;
+    if (tabsState.activeTabId !== lastOpened.tabId) tabsState.selectTab(lastOpened.tabId);
+    setPendingStartupOpen(lastOpened);
+  }, [tabsState.loading, settingsState.loading, tabsState.tabs, tabsState.activeTabId, settingsState.settings, tabsState]);
+  useEffect(() => {
+    if (!pendingStartupOpen) return;
+    if (treeState.activeTabId !== pendingStartupOpen.tabId) return;
+    // Wait for that tab's tree fetch (and §3.5 reconciliation) to actually finish before deciding
+    // — unlike the search/link-focus effects above, this must reach a definitive one-shot
+    // decision (found -> open, not found -> do nothing) rather than keep waiting indefinitely.
+    if (treeState.loading) return;
+    if (treeState.flatOrder.includes(pendingStartupOpen.memoName)) {
+      treeState.focusOnMemo(pendingStartupOpen.memoName);
+    }
+    setPendingStartupOpen(null);
+  }, [pendingStartupOpen, treeState.activeTabId, treeState.loading, treeState.flatOrder, treeState.focusOnMemo]);
+
+  // Persist `AppSettings.lastOpened` whenever a memo becomes the open one (`[spec §2.6]`) — covers
+  // every "open memo" path (row click, arrow-nav preview, `focusOnMemo`, including the startup
+  // auto-open above) since they all funnel through `treeState.openMemoName`. No debounce needed
+  // here (unlike the splitter-drag/toolbar-position patches elsewhere in this file) since this
+  // isn't edited continuously; guarded against redundant writes (`[detailed-spec §5.6]`'s "don't
+  // write if no change") and against firing before settings have loaded. Deliberately does NOT
+  // write when a memo closes (`openMemoName` -> `null`, e.g. tab switch/lock) — `lastOpened` tracks
+  // the *last* opened memo, not the currently-open one, which is exactly what makes it useful for
+  // the startup effect above.
+  useEffect(() => {
+    if (settingsState.loading || !settingsState.settings) return;
+    const tabId = treeState.activeTabId;
+    const memoName = treeState.openMemoName;
+    if (!tabId || !memoName) return;
+    const current = settingsState.settings.lastOpened;
+    if (current && current.tabId === tabId && current.memoName === memoName) return;
+    void settingsState.patch({ lastOpened: { tabId, memoName } });
+  }, [treeState.activeTabId, treeState.openMemoName, settingsState.settings, settingsState.loading, settingsState.patch]);
+
   // Tree pane width/side/hide-toggle (`docs/plans/window-operation/PLAN.md` §2). `previewTreeWidth`
   // holds the live value while dragging the splitter; `settingsState.patch` is only called once, on
   // drag release — same "preview locally, persist on release" split already used elsewhere in this
