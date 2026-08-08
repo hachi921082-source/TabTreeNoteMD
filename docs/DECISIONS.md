@@ -428,3 +428,18 @@ open memo now takes effect immediately, mirroring the legacy app's equivalent li
 `@codemirror/search`'s ready-made `replaceNext`/`replaceAll` commands — it needs custom range-scoped
 match-finding and boundary-tracking across incremental replaces, a moderate implementation cost judged
 not worth it for a niche power-user feature.
+
+## Markdown Preview: Pane-Mode Reached via Single 3-State Cycling Toggle (2026-08-08)
+
+**Decision**: `docs/MDEditor-spec.md`'s pane-mode toggle (formerly described as a binary "preview
+show/hide toggle") is a single button cycling `edit → split → preview → edit → ...`, replacing
+`MemoEditorSettings.previewVisible: boolean | null` with `MemoEditorSettings.paneMode: "edit" | "split" |
+"preview" | null` (and the matching `AppSettings.editorDefaults.paneMode`). The pre-existing live/source
+toggle stays a separate, orthogonal control; it's now also added to the auto-reveal principle
+(`docs/MDEditor-spec.md` §2), auto-switching pane-mode to `split` if clicked while in `preview`.
+
+**Rejected alternatives**: (a) two independent boolean toggles (edit-visible + preview-visible) —
+needs a second new toolbar-header button beyond the two already planned (pane-mode, PDF export) and
+duplicates state-machine complexity for little benefit; (b) deferring "preview only" entirely for this
+pass — rejected because showing preview-only after finishing editing was the original motivating request
+for this whole feature.
