@@ -5,16 +5,17 @@
 > [`image-handling/PLAN.md`](../image-handling/PLAN.md).
 
 **Dependencies**:
-- [`markdown-preview/PLAN.md`](../markdown-preview/PLAN.md)'s `renderMarkdownToHtml` function
-  (`src/editor/preview/previewRenderer.ts`) is reused **verbatim** here, not reimplemented — this plan
-  assumes that function already exists.
+- [`markdown-preview/RENDERING.md`](../markdown-preview/RENDERING.md)'s `renderMarkdownToHtml` function
+  (`src/editor/preview/previewRenderer.ts`, §2 there) is reused **verbatim** here, not reimplemented —
+  this plan assumes that function already exists.
 - [`image-handling/PLAN.md`](../image-handling/PLAN.md)'s shared image-loading pipeline
   (`src/editor/imageLoader.ts`'s cache) is required for the cross-document `blob:` URL fallback below,
   which needs the cache's retained raw bytes.
 
 Sources: `docs/MDEditor-spec.md` §6, §8 (primary/authoritative source for this plan); `docs/spec.md`
-§4.2; `docs/detailed-spec.md` §5.10; `docs/plans/markdown-preview/PLAN.md` (renderer reuse);
-`docs/plans/image-handling/PLAN.md` (shared image cache reuse).
+§4.2; `docs/detailed-spec.md` §5.10; `docs/plans/markdown-preview/PLAN.md` and its companion
+`docs/plans/markdown-preview/RENDERING.md` (renderer reuse); `docs/plans/image-handling/PLAN.md`
+(shared image cache reuse).
 
 ---
 
@@ -50,7 +51,7 @@ export async function exportMemoToPdf(view: EditorView, tabId: string, memoName:
 ```
 
 1. `const { html } = renderMarkdownToHtml(view.state);` — **the exact same renderer call** the
-   on-screen preview uses (`markdown-preview/PLAN.md` §5.2), not a separately-configured render pass.
+   on-screen preview uses (`markdown-preview/RENDERING.md` §2), not a separately-configured render pass.
 2. Build a hidden iframe:
    ```ts
    const iframe = document.createElement("iframe");
@@ -86,7 +87,7 @@ export async function exportMemoToPdf(view: EditorView, tabId: string, memoName:
 
 **Print stylesheet** (`PRINT_STYLESHEET`, a self-contained constant string, independent of the rest of
 the app's CSS): sets margins only (e.g. `@page { margin: 20mm; }`), mirrors the preview's own base
-typography/table/code/image rules (`markdown-preview/PLAN.md` §5.10) so the printed output visually
+typography/table/code/image rules (`markdown-preview/RENDERING.md` §10) so the printed output visually
 matches what the preview showed, and does **not** set an explicit `@page` size — paper size is left to
 the OS/printer default (`docs/MDEditor-spec.md` §6).
 
