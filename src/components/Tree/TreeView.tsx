@@ -510,11 +510,13 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
       ) : (
         <>
           <div className="ttn-tree-rows">
-            {nodes.map((node) => (
+            {nodes.map((node, i) => (
               <TreeRow
                 key={node.memoName}
                 node={node}
                 depth={0}
+                ancestorGuides={[]}
+                isLastChild={i === nodes.length - 1}
                 selectedNames={selection.selected}
                 openMemoName={openMemoName}
                 renamingPath={renamingPath}
