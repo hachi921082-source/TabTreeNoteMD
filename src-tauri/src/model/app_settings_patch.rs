@@ -10,8 +10,8 @@ use serde::{Deserialize, Deserializer};
 
 use super::app_settings::{
     AppSettings, AppearanceSettings, AutosaveSettings, AutostartSettings, EditorDefaults, EncodingSettings,
-    EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, TabSettingsEntry, Theme, ToolbarPosition,
-    TreeSide, WindowSettings, WrapMode,
+    EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, PaneMode, PreviewSettings, TabSettingsEntry,
+    Theme, ToolbarPosition, TreeSide, WindowSettings, WrapMode,
 };
 
 /// Distinguishes "field absent from patch" (outer `None`, leave unchanged)
@@ -49,6 +49,9 @@ pub struct AppSettingsPatch {
     pub editor_defaults: Option<EditorDefaultsPatch>,
     #[serde(default)]
     pub autosave: Option<AutosaveSettingsPatch>,
+    /// Additive field, `docs/plans/markdown/markdown-preview/PLAN.md` §3.
+    #[serde(default)]
+    pub preview: Option<PreviewSettingsPatch>,
     #[serde(default)]
     pub links: Option<LinkSettingsPatch>,
     #[serde(default)]
@@ -119,6 +122,9 @@ pub struct EditorDefaultsPatch {
     pub show_line_numbers: Option<bool>,
     #[serde(default)]
     pub font_size: Option<u32>,
+    /// Additive field, `docs/plans/markdown/markdown-preview/PLAN.md` §3.
+    #[serde(default)]
+    pub pane_mode: Option<PaneMode>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -126,6 +132,15 @@ pub struct EditorDefaultsPatch {
 pub struct AutosaveSettingsPatch {
     #[serde(default)]
     pub plain_debounce_ms: Option<u32>,
+}
+
+/// `docs/plans/markdown/markdown-preview/PLAN.md` §3 — additive top-level settings section patch,
+/// sibling of `AutosaveSettingsPatch`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSettingsPatch {
+    #[serde(default)]
+    pub debounce_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -185,6 +200,9 @@ impl AppSettingsPatch {
         }
         if let Some(autosave_patch) = self.autosave {
             autosave_patch.apply_to(&mut current.autosave);
+        }
+        if let Some(preview_patch) = self.preview {
+            preview_patch.apply_to(&mut current.preview);
         }
         if let Some(links_patch) = self.links {
             links_patch.apply_to(&mut current.links);
@@ -278,6 +296,9 @@ impl EditorDefaultsPatch {
         if let Some(v) = self.font_size {
             current.font_size = v;
         }
+        if let Some(v) = self.pane_mode {
+            current.pane_mode = v;
+        }
     }
 }
 
@@ -285,6 +306,14 @@ impl AutosaveSettingsPatch {
     fn apply_to(self, current: &mut AutosaveSettings) {
         if let Some(v) = self.plain_debounce_ms {
             current.plain_debounce_ms = v;
+        }
+    }
+}
+
+impl PreviewSettingsPatch {
+    fn apply_to(self, current: &mut PreviewSettings) {
+        if let Some(v) = self.debounce_ms {
+            current.debounce_ms = v;
         }
     }
 }
@@ -359,6 +388,39 @@ mod tests {
         let patch: AppSettingsPatch = serde_json::from_str(r#"{"lastOpened":null}"#).unwrap();
         patch.apply_to(&mut current);
         assert!(current.last_opened.is_none());
+    }
+
+    #[test]
+    fn preview_and_pane_mode_patches_merge_per_field_and_leave_siblings_untouched() {
+        // `docs/plans/markdown/markdown-preview/PLAN.md` §3 — `preview.debounceMs` and
+        // `editorDefaults.paneMode` are both additive fields; verify their patches merge like every
+        // other nested-object field above rather than replacing the whole nested object.
+        let mut current = AppSettings::default();
+        assert_eq!(current.preview.debounce_ms, 150);
+        assert_eq!(current.editor_defaults.pane_mode, PaneMode::Edit);
+
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"preview":{"debounceMs":500}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.preview.debounce_ms, 500);
+
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"editorDefaults":{"paneMode":"split"}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.editor_defaults.pane_mode, PaneMode::Split);
+        // Untouched sibling `EditorDefaults` fields must survive the merge.
+        assert_eq!(current.editor_defaults.wrap, WrapMode::Window);
+        assert_eq!(current.editor_defaults.font_size, 14);
+    }
+
+    #[test]
+    fn missing_preview_field_in_a_pre_existing_settings_json_falls_back_to_defaults() {
+        // Simulates loading a `settings.json` written before `AppSettings.preview` existed
+        // (`#[serde(default)]` on that field) — must parse cleanly, same treatment already verified
+        // for `appearance` above.
+        let json = serde_json::to_value(AppSettings::default()).unwrap();
+        let mut without_preview = json.as_object().unwrap().clone();
+        without_preview.remove("preview");
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(without_preview)).unwrap();
+        assert_eq!(parsed.preview, PreviewSettings::default());
     }
 
     #[test]

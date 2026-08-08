@@ -14,3 +14,15 @@ import type { SavedImage } from "../shared/models";
 export async function imageSavePasted(tabId: string, bytes: number[], mimeHint: string | null): Promise<Result<SavedImage>> {
   return invoke<Result<SavedImage>>("image_save_pasted", { tabId, bytes, mimeHint });
 }
+
+/** Reads an image file's raw bytes back from disk (`docs/MDEditor-spec.md` §5). Unlike every other
+ * function in this file (and every other `ipc/*.ts` wrapper in the codebase), this one can
+ * **throw** — `image_read_bytes` returns a raw `tauri::ipc::Response` on the Rust side, which is
+ * incompatible with the `AppResult<T>`/`{ok, value|error}` envelope every other command uses, so a
+ * backend error surfaces as a rejected promise instead
+ * (`docs/plans/markdown/image-handling/PLAN.md` §3.3). Callers (`src/editor/imageLoader.ts`) must
+ * `try/catch`, not check `.ok`. */
+export async function imageReadBytes(tabId: string, relativePath: string): Promise<Uint8Array> {
+  const buffer = await invoke<ArrayBuffer>("image_read_bytes", { tabId, relativePath });
+  return new Uint8Array(buffer);
+}

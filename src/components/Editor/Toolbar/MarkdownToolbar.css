@@ -41,6 +41,38 @@
   cursor: pointer;
 }
 
+/* `docs/plans/markdown/markdown-preview/PLAN.md` §6.3 — pane-mode cycling toggle button. Follows
+ * `.ttn-md-toolbar-view-toggle`'s own styling (same header row, no `margin-left: auto` since it's
+ * not the first flex item pushed to the right — the view-toggle button already claims that). */
+.ttn-md-toolbar-pane-mode {
+  margin-left: 4px;
+  font-size: calc(11px * var(--ui-font-scale));
+  padding: 2px 8px;
+  border: 1px solid var(--ttn-border);
+  border-radius: 3px;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  cursor: pointer;
+}
+
+/* `docs/plans/markdown/pdf-export/PLAN.md` §4 — PDF-export trigger button. Follows
+ * `.ttn-md-toolbar-pane-mode`'s own styling (same header row, sits right after it). */
+.ttn-md-toolbar-pdf-export {
+  margin-left: 4px;
+  font-size: calc(11px * var(--ui-font-scale));
+  padding: 2px 8px;
+  border: 1px solid var(--ttn-border);
+  border-radius: 3px;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  cursor: pointer;
+}
+
+.ttn-md-toolbar-pdf-export:disabled {
+  color: var(--ttn-fg-subtle);
+  cursor: default;
+}
+
 /* Minimize/restore toggle (GitHub issue #26) — sits right after the view toggle; the view toggle's
  * own `margin-left: auto` already pushes both of them flush to the header's right edge. */
 .ttn-md-toolbar-minimize-btn {

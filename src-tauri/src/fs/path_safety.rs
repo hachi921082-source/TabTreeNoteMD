@@ -1,6 +1,15 @@
 //! Name sanitization / validation — strict-vs-lenient rule
 //! (`docs/spec.md` §5.11; `docs/detailed-spec.md` §6.5;
 //! `docs/plans/persistence-fs/PLAN.md` §8).
+//!
+//! Also holds an unrelated-but-thematically-similar concern (`docs/plans/markdown/image-handling/
+//! PLAN.md` §2, §3.1): `has_parent_dir_segment`/`resolve_relative_within_base`, hoisted out of
+//! `commands/link.rs` so `commands/image.rs`'s `image_read_bytes` can reuse the same path-
+//! containment check instead of duplicating it. Both concerns are "is this path safe" checks, but
+//! solve different problems — this file's original `validate_name`/`ValidationMode`/`is_long_path`
+//! content above is untouched by that addition.
+
+use std::path::{Path, PathBuf};
 
 use crate::model::result::ErrorCode;
 use crate::util::name_sanitize::{has_forbidden_char, is_reserved_name};
@@ -56,6 +65,62 @@ pub fn validate_name(name: &str, mode: ValidationMode) -> Result<(), ErrorCode> 
 /// non-blocking warning; this function never blocks the operation itself.
 pub fn is_long_path(full_path: &str) -> bool {
     full_path.chars().count() > LONG_PATH_WARNING_THRESHOLD
+}
+
+// ---------------------------------------------------------------------------
+// Path-containment ("resolve relative-to-base, reject traversal") helpers
+// (`docs/plans/markdown/image-handling/PLAN.md` §3.1) — hoisted out of
+// `commands/link.rs::resolve_file_path`, which now delegates to `resolve_relative_within_base`.
+// ---------------------------------------------------------------------------
+
+/// `true` if any component of `path` is a `..` parent-directory segment (parses both `/` and `\`
+/// separators on Windows). Hoisted verbatim from `commands/link.rs`'s formerly-private
+/// `has_parent_dir_segment`, so `image_read_bytes` (`commands/image.rs`) can reuse the identical
+/// check instead of duplicating it.
+pub fn has_parent_dir_segment(path: &Path) -> bool {
+    path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+/// How `resolve_relative_within_base` treats an absolute `value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbsolutePathPolicy {
+    /// Returned as-is, unresolved against `base` — `link.rs`'s `link_open_external` (`FilePath`
+    /// kind) needs this: a user-typed absolute path is a legitimate, supported open target.
+    AllowPassthrough,
+    /// Rejected (`ErrorCode::NameInvalid`) — any command whose `value` must always resolve to
+    /// somewhere *inside* `base` (e.g. `image_read_bytes`, where an image path is never
+    /// legitimately absolute) needs this instead. Without this policy, an absolute `value` would
+    /// silently discard `base` entirely when joined (`PathBuf::join`'s own semantics on Windows),
+    /// defeating the containment check this function exists for.
+    Reject,
+}
+
+/// Resolves `value` against `base`, rejecting directory traversal. Generalizes the containment
+/// logic that used to be private to `commands/link.rs::resolve_file_path` (that function's own
+/// doc comment, describing the Windows `has_root()`-without-`is_absolute()` edge case in full, is
+/// not repeated here — read it for the complete rationale). Rejects: any `..` component
+/// (`has_parent_dir_segment`), and a "rooted but not absolute" value (leading `\` or `/` with no
+/// drive-letter prefix). A `None` base returns `value` unresolved-but-validated (the "no known tab
+/// context" case, e.g. a `memo:` link typed with no tab currently open) — `image_read_bytes` never
+/// calls this with `None`, since an image read always has a known tab/folder.
+pub fn resolve_relative_within_base(value: &str, base: Option<&Path>, absolute_policy: AbsolutePathPolicy) -> Result<PathBuf, ErrorCode> {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return match absolute_policy {
+            AbsolutePathPolicy::AllowPassthrough => Ok(PathBuf::from(value)),
+            AbsolutePathPolicy::Reject => Err(ErrorCode::NameInvalid),
+        };
+    }
+    if has_parent_dir_segment(path) {
+        return Err(ErrorCode::NameInvalid);
+    }
+    if path.has_root() {
+        return Err(ErrorCode::NameInvalid);
+    }
+    Ok(match base {
+        Some(b) => b.join(path),
+        None => PathBuf::from(value),
+    })
 }
 
 #[cfg(test)]

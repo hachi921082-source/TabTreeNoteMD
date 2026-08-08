@@ -15,14 +15,16 @@ use std::path::{Path, PathBuf};
 
 use image::GenericImageView;
 use rand::RngExt;
+use tauri::ipc::Response;
 use tauri::{AppHandle, State};
 
 use crate::commands::emit_settings_recovery_event;
 use crate::commands::tab_lock::{resolve_tab_access, TabAccess};
+use crate::fs::path_safety::{resolve_relative_within_base, AbsolutePathPolicy};
 use crate::fs::retry::{is_lock_class_error, with_retry};
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::fs::temp_naming::generate_temp_file_name;
-use crate::model::result::{AppResult, ErrorCode};
+use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::LockSessionStore;
 
@@ -107,6 +109,50 @@ pub fn image_save_pasted(
     let relative_path = target.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
 
     AppResult::ok(SavedImage { relative_path, width, height })
+}
+
+/// Reads an image file's raw bytes and returns them as a raw-byte IPC response (Tauri 2.11.5's
+/// `tauri::ipc::Response`), not base64/JSON-wrapped (`docs/MDEditor-spec.md` §5). See
+/// `docs/plans/markdown/image-handling/PLAN.md` §3.3 for why this command's return type deviates
+/// from the project's usual `AppResult<T>` JSON-envelope convention
+/// (`project-architecture/PLAN.md` §3) — a backend `Err` here surfaces as a **rejected** JS
+/// promise from `invoke()`, not as an `{ok: false, error}` value, the opposite of every other
+/// command in this codebase. This narrow, documented exception is the only command in the
+/// codebase that behaves this way; do not generalize the pattern to other commands.
+#[tauri::command]
+pub fn image_read_bytes(
+    app: AppHandle,
+    tab_id: String,
+    relative_path: String,
+    store: State<AppSettingsStore>,
+    registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
+) -> Result<Response, AppErrorPayload> {
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+
+    // Same tab-folder resolution `image_save_pasted` uses (`image-handling/PLAN.md` §3 step 1):
+    // a locked tab with an active session still resolves to the tab's own plain, unobfuscated
+    // folder, since images are out of scope for tab-lock's `.md`-only encryption/obfuscation.
+    let folder = match resolve_tab_access(&settings, &sessions, &tab_id) {
+        Ok(TabAccess::Plain { folder, .. }) => folder,
+        Ok(TabAccess::Session { folder, .. }) => folder,
+        Err(e) => return Err(e),
+    };
+
+    // Server-side path validation, independent of the frontend's own `isSafeRelativeImageSrc`
+    // gate (`docs/MDEditor-spec.md` §5: "an IPC command can be invoked directly, bypassing any
+    // frontend gate"). `AbsolutePathPolicy::Reject` — unlike `link.rs`'s file-path resolution, an
+    // image path is never legitimately absolute.
+    let resolved = resolve_relative_within_base(&relative_path, Some(&folder), AbsolutePathPolicy::Reject)
+        .map_err(|code| AppErrorPayload::new(code, "image path is invalid"))?;
+
+    let bytes = std::fs::read(&resolved).map_err(|err| {
+        tracing::error!(error = %err, path = %resolved.display(), "image_read_bytes: failed to read image file");
+        AppErrorPayload::new(ErrorCode::NotFound, "failed to read image file")
+    })?;
+
+    Ok(Response::new(bytes))
 }
 
 fn generate_image_filename(ext: &str) -> String {
@@ -210,6 +256,53 @@ mod tests {
     fn detect_extension_defaults_to_png_when_nothing_is_known() {
         assert_eq!(detect_extension(b"not an image", None), "png");
         assert_eq!(detect_extension(b"not an image", Some("garbage")), "png");
+    }
+
+    // `image_read_bytes`'s server-side path validation (`AbsolutePathPolicy::Reject`) — the
+    // command itself takes `AppHandle`/`State<...>` params that aren't practical to construct in a
+    // unit test, so these exercise `resolve_relative_within_base` directly with the exact
+    // arguments `image_read_bytes` passes it, mirroring `link.rs`'s own `resolve_file_path_*` tests
+    // for the sibling `AllowPassthrough` policy. Traversal/absolute/rooted rejection here was also
+    // manually verified via live CDP testing (`docs/RESOLVED-ISSUES.md` #75) but had no automated
+    // coverage until now.
+    #[test]
+    fn image_read_bytes_rejects_parent_dir_traversal() {
+        let base = tempdir();
+        let err = resolve_relative_within_base("../secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        let err = resolve_relative_within_base("sub\\..\\..\\secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn image_read_bytes_rejects_absolute_paths() {
+        let base = tempdir();
+        let err = resolve_relative_within_base("C:\\Windows\\System32\\cmd.exe", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        let err = resolve_relative_within_base("C:/Windows/System32/cmd.exe", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn image_read_bytes_rejects_rooted_but_not_absolute_paths() {
+        let base = tempdir();
+        // Leading `\` with no drive-letter prefix — `has_root()` true, `is_absolute()` false on
+        // Windows, so `base.join(...)` would otherwise discard `base` entirely and escape it.
+        let err = resolve_relative_within_base("\\secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        let err = resolve_relative_within_base("/secret.png", Some(&base), AbsolutePathPolicy::Reject).unwrap_err();
+        assert_eq!(err, ErrorCode::NameInvalid);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn image_read_bytes_resolves_valid_relative_paths_within_the_tab_folder() {
+        let base = tempdir();
+        let resolved = resolve_relative_within_base("img_0011223344556677.png", Some(&base), AbsolutePathPolicy::Reject).unwrap();
+        assert_eq!(resolved, base.join("img_0011223344556677.png"));
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

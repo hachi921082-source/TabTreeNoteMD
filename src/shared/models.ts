@@ -17,6 +17,9 @@ export interface AppSettings {
   lastOpened: { tabId: string; memoName: string } | null;
   editorDefaults: EditorDefaults;
   autosave: { plainDebounceMs: number };
+  /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — preview pane re-render debounce, fully
+   * independent of `autosave.plainDebounceMs` above (no disk I/O involved). */
+  preview: { debounceMs: number };
   links: { openTrigger: "ctrlClick" | "singleClick" | "doubleClick"; confirmBeforeOpen: boolean };
   encoding: { defaultSave: "utf-8" };
   eol: { policy: "preserve" | "crlf" | "lf" | "cr" };
@@ -81,7 +84,15 @@ export interface EditorDefaults {
   tabWidth: number;
   showLineNumbers: boolean;
   fontSize: number;
+  /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — default pane layout for a newly-opened
+   * memo with no per-memo override. Default `"edit"` (today's edit-only appearance unchanged). */
+  paneMode: PaneMode;
 }
+
+/** Pane-layout tri-state (`docs/plans/markdown/markdown-preview/PLAN.md` §2/§4) — fully
+ * independent of `viewMode` (live/source); the two toggles never interact except for the one
+ * auto-reveal case documented on `MemoEditorSettings.paneMode` below. */
+export type PaneMode = "edit" | "split" | "preview";
 
 // Deep-partial patch shape accepted by `settings_set`
 // (`docs/plans/persistence-fs/PLAN.md` §6.2). Every field, including nested
@@ -98,6 +109,7 @@ export type AppSettingsPatch = {
   lastOpened?: { tabId: string; memoName: string } | null;
   editorDefaults?: Partial<EditorDefaults>;
   autosave?: Partial<{ plainDebounceMs: number }>;
+  preview?: Partial<{ debounceMs: number }>;
   links?: Partial<{ openTrigger: "ctrlClick" | "singleClick" | "doubleClick"; confirmBeforeOpen: boolean }>;
   encoding?: Partial<{ defaultSave: "utf-8" }>;
   eol?: Partial<{ policy: "preserve" | "crlf" | "lf" | "cr" }>;
@@ -130,6 +142,11 @@ export interface MemoEditorSettings {
   showLineNumbers?: boolean | null;
   fontSize?: number | null;
   viewMode?: "live" | "source" | null;
+  /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — mirrors `viewMode` exactly (per-memo
+   * override, `null`/absent falls back to `AppSettings.editorDefaults.paneMode`). Persisted
+   * immediately on every cycle (no debounce), via the same per-memo override write path
+   * `viewMode` already uses. */
+  paneMode?: PaneMode | null;
   /** 1-indexed document line number visible at the top of the viewport at save time. */
   scrollPosition?: number | null;
   /** CodeMirror `EditorSelection.main.anchor` — character offset into the document, at save

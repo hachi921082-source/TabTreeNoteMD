@@ -428,3 +428,49 @@ open memo now takes effect immediately, mirroring the legacy app's equivalent li
 `@codemirror/search`'s ready-made `replaceNext`/`replaceAll` commands — it needs custom range-scoped
 match-finding and boundary-tracking across incremental replaces, a moderate implementation cost judged
 not worth it for a niche power-user feature.
+
+## Markdown Preview: Pane-Mode Reached via Single 3-State Cycling Toggle (2026-08-08)
+
+**Decision**: `docs/MDEditor-spec.md`'s pane-mode toggle (formerly described as a binary "preview
+show/hide toggle") is a single button cycling `edit → split → preview → edit → ...`, replacing
+`MemoEditorSettings.previewVisible: boolean | null` with `MemoEditorSettings.paneMode: "edit" | "split" |
+"preview" | null` (and the matching `AppSettings.editorDefaults.paneMode`). The pre-existing live/source
+toggle stays a separate, orthogonal control; it's now also added to the auto-reveal principle
+(`docs/MDEditor-spec.md` §2), auto-switching pane-mode to `split` if clicked while in `preview`.
+
+**Rejected alternatives**: (a) two independent boolean toggles (edit-visible + preview-visible) —
+needs a second new toolbar-header button beyond the two already planned (pane-mode, PDF export) and
+duplicates state-machine complexity for little benefit; (b) deferring "preview only" entirely for this
+pass — rejected because showing preview-only after finishing editing was the original motivating request
+for this whole feature.
+
+## Real `<img>` Rendering via Byte-Read IPC Command + Blob-URL Cache (2026-08-08)
+
+**Decision**: Live-view/preview/PDF-export image rendering reads image bytes through a new backend
+command, `image_read_bytes` (returns raw bytes via `tauri::ipc::Response`, not base64/JSON), and the
+frontend builds and caches a `Blob` URL per image path (shared path-keyed cache across the three
+consumers). Elaborated in `docs/MDEditor-spec.md` §5 and `docs/plans/markdown/image-handling/PLAN.md`.
+
+**Rejected alternative**: widening the Tauri `assetProtocol` scope to permit arbitrary runtime-chosen
+tab folders (folders are picked via folder-picker at runtime, not a static build-time glob) — rejected
+because it would weaken this app's existing conservative security posture (no `assetProtocol` scope
+configured today) more broadly than necessary just to serve images.
+
+## Drag-Resize-Handle for Rendered Images in Live View — Deferred (2026-08-09)
+
+**Decision**: The drag-resize-handle interaction (dragging a handle on a rendered image in live view
+to rewrite `![alt](path)` → `<img src width height>`) is deferred, not rejected — tracked as a future
+follow-up, not scheduled now.
+
+**Rationale**: This was already flagged as the highest-risk remaining piece of the original
+Markdown-preview/image-rendering feature work (~6/10 risk vs. ≤4/10 for the features implemented in
+this pass), specifically because it involves CodeMirror decoration/widget click+drag handling. That
+assessment was borne out during implementation: two critical CodeMirror-transaction-safety bugs (raw
+DOM mutation outside a transaction misread by CM6's `DOMObserver` as a user edit, corrupting the
+document) were found and fixed in the closely-related image-widget code during this same effort,
+reinforcing that this risk class deserves its own dedicated design pass rather than being rushed in
+now.
+
+**Note**: When this is eventually picked up, it will need its own UX design (drag mechanics, handle
+placement, aspect-ratio lock, minimum size) before implementation — starting with a `designer-lite`
+consultation, same as any other feature.

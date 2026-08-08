@@ -29,7 +29,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   - §3.7 Constants Inventory — table of concrete numeric defaults (retry counts, TTL, scrypt params, etc.).
 - **§4 Backend Operation Inventory** — logical command list by domain: §4.1 Tab, §4.2 Tree/memo, §4.3 Editor/save, §4.4 Search, §4.5 Settings, §4.6 Link, §4.7 Image.
 - **§5 Feature Behavior Details** — elaboration per feature: §5.1 Tab Management, §5.2 Memo Tree (incl.
-  tree guide lines), §5.3 Text Editing, §5.4 Search/Index, §5.5 Appearance/Theme, §5.6 Persistence/Save Triggers, §5.7 Window/Operation, §5.8 Link Functionality, §5.9 Tab Lock End-to-End Flows (locking/crash-recovery/unlocking/cross-tab DND; permanent unlock and its own crash recovery are now in `docs/tab-lock-detailed-spec.md`), §5.10 Markdown Editing (16-slot toolbar, icon set, sanitization allowlist, TOC).
+  tree guide lines), §5.3 Text Editing, §5.4 Search/Index, §5.5 Appearance/Theme, §5.6 Persistence/Save Triggers, §5.7 Window/Operation, §5.8 Link Functionality, §5.9 Tab Lock End-to-End Flows (locking/crash-recovery/unlocking/cross-tab DND; permanent unlock and its own crash recovery are now in `docs/tab-lock-detailed-spec.md`), §5.10 Markdown Editing (16-slot toolbar, icon set, sanitization allowlist, TOC; the split-pane preview, PDF export, and live-view real-image-rendering details are now in `docs/MDEditor-spec.md`).
 - **§6 Cross-Cutting Mechanism Details** — §6.1 Atomic Write concrete sequence, §6.2 Self-Write Registry, §6.3 Sync Order, §6.4 Conflict Detection & Corruption Recovery, §6.5 other Post-M7 rules (folder-not-found, validation strictness, no native dialogs, Esc rule).
 - **§7 Error Handling — Expanded** — table of every `ErrorCode`: trigger scenario + expected UI response.
 - **§8 Non-Functional Elaboration** — performance qualitative bar, backup/portability acceptance check.
@@ -713,6 +713,10 @@ step for deletion purposes.
   (no "vault" one-way restriction, `[spec §4.1 pt.8]`).
 
 ### 5.10 Markdown Editing — Elaboration
+
+**The split-pane preview, PDF export, and live-view real-image-rendering details are now specified in
+`docs/MDEditor-spec.md`** (split out because that content is large and self-contained — everything else
+in this §5.10 stayed here).
 
 - **Editor engine: CodeMirror 6** (confirmed, `[spec §4.2]`; see `DECISIONS.md` for rationale and
   rejected alternatives). All Markdown editing — live view and source view alike — is built as a

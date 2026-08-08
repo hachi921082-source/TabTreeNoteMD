@@ -19,7 +19,7 @@
 // placeholders, both of which additionally reveal their raw source text whenever the current
 // selection touches the range (`touchesSelection` below) so editing at/inside them is always
 // editing plain visible text, never a hidden decoration boundary.
-import { Facet } from "@codemirror/state";
+import { Facet, StateEffect } from "@codemirror/state";
 import type { EditorState, Extension, Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, PluginValue, ViewUpdate } from "@codemirror/view";
@@ -29,7 +29,20 @@ import { checkboxDecoration } from "./checkboxClick";
 import { findColorSpans, findImageTags } from "./markdownSpanParser";
 import type { DetectedLink, LinkKind } from "./links";
 import { linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens } from "./links";
+import { getOrLoadImage, hasImageLoadFailed } from "./imageLoader";
 import type { AppSettings, ExternalLinkKind } from "../shared/models";
+
+/** Dispatched (as an empty-document-change, effect-only transaction) by `ImageWidget.toDOM()`'s
+ * async load-failure branch below, in place of the raw `contentDOM` mutation this class used to do
+ * (`img.replaceWith(...)`) — that mutation ran outside any CodeMirror transaction, so CM6's
+ * `DOMObserver` (which watches `contentDOM` to reconcile IME/spellcheck/extension-driven external
+ * edits back into document state) misread the placeholder's text content as a user edit and
+ * corrupted the document on the next autosave. Dispatching this effect instead makes
+ * `MarkdownDecorationsPlugin.update()` (below) rebuild the decoration set through CodeMirror's own
+ * transaction-driven path; the rebuilt set consults `hasImageLoadFailed` and emits a real
+ * `ImagePlaceholderWidget` decoration, which CodeMirror itself swaps into `contentDOM` — a change
+ * `DOMObserver` correctly attributes to the editor, not the user. */
+const imageLoadFailedEffect = StateEffect.define<void>();
 
 export interface MarkdownDecorationConfig {
   openTrigger: AppSettings["links"]["openTrigger"];
@@ -52,6 +65,10 @@ export interface MarkdownDecorationConfig {
   /** Shows the shared non-blocking confirm dialog and resolves to whether the user confirmed;
    * only awaited when `confirmBeforeOpen` is true (`docs/plans/link/PLAN.md` §4). */
   requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
+  /** Identifies the currently-open memo for image-cache scoping (§5.4 of
+   * `docs/plans/markdown/image-handling/PLAN.md`). `null` only when no memo is open at all, in
+   * which case no `Image`/`<img>` node can be reached anyway (there is no document to decorate). */
+  memoKey: string | null;
 }
 
 const DEFAULT_CONFIG: MarkdownDecorationConfig = {
@@ -61,6 +78,7 @@ const DEFAULT_CONFIG: MarkdownDecorationConfig = {
   confirmBeforeOpen: false,
   onOpenMemo: () => {},
   requestExternalConfirm: async () => true,
+  memoKey: null,
 };
 
 export const markdownConfigFacet = Facet.define<MarkdownDecorationConfig, MarkdownDecorationConfig>({
@@ -102,19 +120,75 @@ class ImagePlaceholderWidget extends WidgetType {
   }
 
   toDOM(): HTMLElement {
-    // `image-handling/PLAN.md` (paste/resize + `image_save_pasted`) is not implemented yet, so
-    // actual image bytes can't be resolved/displayed here — this placeholder clearly marks that
-    // rather than attempting a broken `<img src>` load. Becomes a real rendered `<img>` once that
-    // plan lands (`docs/plans/markdown-editing/PLAN.md` §2's `imagePaste.ts` cross-reference).
+    // Real `<img>` rendering (`docs/plans/markdown/image-handling/PLAN.md` §6.2, `ImageWidget`
+    // below) now handles the normal case. This widget is reached only as its fallback: a
+    // genuinely missing/unloadable image (`imageLoader.ts`'s `hasImageLoadFailed`) or a null
+    // tab/memo context (`ImageWidget.toDOM()`'s early-return branch) — hence the "not found"
+    // wording rather than a "not implemented yet" placeholder.
     const el = document.createElement("span");
     el.className = "cm-md-image-placeholder";
     el.textContent = `🖼 ${this.alt || this.src}`;
-    el.title = `${this.src} — image preview not implemented yet (see image-handling/PLAN.md)`;
+    el.title = `image not found: ${this.src}`;
     return el;
   }
 
   ignoreEvent(): boolean {
     return false;
+  }
+}
+
+/** Real `<img>` rendering for the live view (`docs/plans/markdown/image-handling/PLAN.md` §6.2),
+ * replacing `ImagePlaceholderWidget` at both of its call sites below. `ImagePlaceholderWidget`
+ * itself is kept (not deleted) as the read-failure/no-context fallback's DOM builder. */
+class ImageWidget extends WidgetType {
+  constructor(
+    readonly src: string,
+    readonly alt: string,
+    readonly tabId: string | null,
+    readonly memoKey: string | null,
+  ) {
+    super();
+  }
+
+  eq(other: ImageWidget): boolean {
+    return other.src === this.src && other.alt === this.alt && other.tabId === this.tabId && other.memoKey === this.memoKey;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    // No tab/memo context at all — nothing to resolve against; render the fallback immediately
+    // rather than attempting a call that can't succeed. This is a synchronous, pre-mount build of
+    // the returned element (no later mutation of an already-attached `contentDOM` node), so it's
+    // unrelated to the transaction-safety concern below.
+    if (!this.tabId || !this.memoKey) {
+      return new ImagePlaceholderWidget(this.src, this.alt).toDOM();
+    }
+    const img = document.createElement("img");
+    img.className = "cm-md-image cm-md-image-loading";
+    img.alt = this.alt;
+    img.title = this.src;
+    const tabId = this.tabId;
+    const memoKey = this.memoKey;
+    const src = this.src;
+    // Lazy by construction: this fetch only starts once CodeMirror actually calls toDOM() for a
+    // widget that entered the viewport, not eagerly during decoration-set build.
+    void getOrLoadImage(tabId, src, memoKey).then((blobUrl) => {
+      if (blobUrl) {
+        // Safe in-place attribute mutation — no text nodes involved, so `DOMObserver` (which
+        // watches `contentDOM` for `childList`/`characterData` changes to reconcile external edits
+        // like IME/spellcheck) has nothing to misinterpret here.
+        img.src = blobUrl;
+        img.classList.remove("cm-md-image-loading");
+      } else {
+        // Read-failure fallback. Deliberately does NOT mutate `img`/`contentDOM` directly here
+        // (that was the corruption bug — see `imageLoadFailedEffect` above): `getOrLoadImage`
+        // resolving to `null` means `imageLoader.ts` already recorded this path as failed
+        // (`failedKeys`), so all that's needed is to ask CodeMirror to rebuild decorations; the
+        // rebuild itself (in `build()` below, via `hasImageLoadFailed`) is what actually swaps in
+        // `ImagePlaceholderWidget`, through CodeMirror's own transaction-driven DOM reconciliation.
+        view.dispatch({ effects: imageLoadFailedEffect.of() });
+      }
+    });
+    return img;
   }
 }
 
@@ -131,6 +205,20 @@ function collectLinkParts(node: SyntaxNodeRef): { marks: Range2[]; url: Range2 |
     child = child.nextSibling;
   }
   return { marks, url };
+}
+
+/** Picks which image widget a decoration should use, consulting `imageLoader.ts`'s known-failed-path
+ * record (`hasImageLoadFailed`) first. A path already known to have failed is given a real
+ * `ImagePlaceholderWidget` decoration directly here — no `ImageWidget`/no fresh async attempt — so
+ * the corrupting-DOM-mutation bug this replaces (see `imageLoadFailedEffect` above) can't recur even
+ * on the very rebuild that's reacting to the failure: by the time `build()` runs again,
+ * `hasImageLoadFailed` is already true for `src`, and this function returns the placeholder outright
+ * rather than constructing another `ImageWidget` that would just fail the same async load again. */
+function buildImageWidget(src: string, alt: string, config: MarkdownDecorationConfig): WidgetType {
+  if (config.currentTabId && config.memoKey && hasImageLoadFailed(config.currentTabId, src, config.memoKey)) {
+    return new ImagePlaceholderWidget(src, alt);
+  }
+  return new ImageWidget(src, alt, config.currentTabId, config.memoKey);
 }
 
 function classifyUrl(target: string): LinkKind {
@@ -151,7 +239,11 @@ class MarkdownDecorationsPlugin implements PluginValue {
   }
 
   update(update: ViewUpdate): void {
-    if (update.docChanged || update.selectionSet || update.viewportChanged) {
+    // `imageLoadFailedEffect` (see above `ImageWidget.toDOM()`) carries no document/selection/
+    // viewport change of its own — it's an empty-change, effect-only transaction dispatched purely
+    // to trigger this rebuild in a transaction-safe way, so it needs its own explicit check here.
+    const imageLoadJustFailed = update.transactions.some((tr) => tr.effects.some((e) => e.is(imageLoadFailedEffect)));
+    if (update.docChanged || update.selectionSet || update.viewportChanged || imageLoadJustFailed) {
       this.decorations = this.build(update.view);
     }
   }
@@ -246,7 +338,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
             if (node.name === "Image") {
               if (!touchesSelection(state, node.from, node.to)) {
                 const altText = state.sliceDoc(labelFrom, labelTo);
-                addReplace(node.from, node.to, Decoration.replace({ widget: new ImagePlaceholderWidget(urlText, altText) }));
+                addReplace(node.from, node.to, Decoration.replace({ widget: buildImageWidget(urlText, altText, config) }));
               }
               break;
             }
@@ -304,7 +396,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
     for (const img of findImageTags(docText)) {
       if (overlapsAny(codeSkipRanges, img.from, img.to)) continue;
       if (!touchesSelection(state, img.from, img.to)) {
-        addReplace(img.from, img.to, Decoration.replace({ widget: new ImagePlaceholderWidget(img.src, "") }));
+        addReplace(img.from, img.to, Decoration.replace({ widget: buildImageWidget(img.src, "", config) }));
       }
     }
 

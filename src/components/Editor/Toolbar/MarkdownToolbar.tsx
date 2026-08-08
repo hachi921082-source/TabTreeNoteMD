@@ -32,7 +32,7 @@ import {
 import { insertImageViaFilePicker } from "../../../editor/imagePaste";
 import { redoCommand, undoCommand } from "../../../editor/textCommands";
 import { tocUpdateCommand } from "../../../editor/tocGenerator";
-import type { AppSettings, AppSettingsPatch } from "../../../shared/models";
+import type { AppSettings, AppSettingsPatch, PaneMode } from "../../../shared/models";
 import type { ErrorCode } from "../../../shared/result";
 import "./MarkdownToolbar.css";
 
@@ -52,6 +52,14 @@ const FONT_SIZE_CHOICES: { label: string; px: string }[] = [
   { label: "大", px: "20px" },
   { label: "特大", px: "28px" },
 ];
+
+/** Pane-mode header button's current-state label (`docs/plans/markdown/markdown-preview/PLAN.md`
+ * §6.3) — a single button showing the *current* state and cycling to the next one on click. */
+const PANE_MODE_LABEL: Record<PaneMode, string> = {
+  edit: "編集のみ",
+  split: "分割表示",
+  preview: "プレビューのみ",
+};
 
 const DEFAULT_POSITION = { x: 24, y: 24 };
 
@@ -110,16 +118,37 @@ export interface MarkdownToolbarProps {
   patchSettings: (patch: AppSettingsPatch) => Promise<void>;
   liveViewEnabled: boolean;
   onToggleLiveView: () => void;
+  /** `docs/plans/markdown/markdown-preview/PLAN.md` §4/§6 — current pane-layout tri-state, and the
+   * single cycling toggle that advances it (`edit -> split -> preview -> edit -> ...`). Drives both
+   * this component's new header button's label and the auto-minimize effect (§6.2). */
+  paneMode: PaneMode;
+  onCyclePaneMode: () => void;
+  /** Reveals the edit pane (switches pane-mode to `"split"`) if it's currently `"preview"`, a no-op
+   * otherwise (`PLAN.md` §4.1/§4.4's auto-reveal principle) — called before every grid action that
+   * mutates the CodeMirror view, so the result of clicking a formatting button while pane-mode is
+   * `"preview"` is actually visible instead of being applied to a hidden pane. */
+  revealSplitIfPreviewOnly: () => void;
   /** `true` while the memo is read-only (edit-locked, or a conflict dialog is open) — disables
    * every content-mutating slot except the rearrange toggle itself (`[spec §2.2]`). */
   readOnly: boolean;
   /** Tab the currently-open memo belongs to — the "Image insert" slot's file-picker save target
    * (`docs/plans/image-handling/PLAN.md` §6). `null` only when no tab is open at all. */
   tabId: string | null;
+  /** Name of the currently-open memo — only used by the PDF-export button's `disabled` check
+   * (`docs/plans/markdown/pdf-export/PLAN.md` §4: "only on whether a memo is open at all", not
+   * `readOnly`). Always truthy in practice by the time this component mounts (`EditorPane.tsx`
+   * doesn't render `<MarkdownToolbar>` at all while `memoName` is null) — kept as an explicit,
+   * defensive prop-driven check rather than relying on that caller-side invariant. */
+  memoName: string | null;
   /** Surfaces an `image_save_pasted` failure via the shared non-blocking error banner
    * (`docs/plans/image-handling/PLAN.md` §6 step 4) — wired to `state/useEditor.ts`'s
    * `reportError` by the caller. */
   onImageError: (code: ErrorCode) => void;
+  /** PDF export trigger (`docs/plans/markdown/pdf-export/PLAN.md` §4, `docs/MDEditor-spec.md` §6) —
+   * same call-through pattern as `onToggleLiveView`/`onCyclePaneMode` above. Deliberately NOT gated
+   * on `readOnly` anywhere in this component (§3's "printing never mutates the document"
+   * availability rule) — only this button's own `disabled={!memoName}` check below applies. */
+  onPdfExport: () => void;
 }
 
 /** Exposes the 16 grid actions for external (keyboard-shortcut) invocation
@@ -132,7 +161,21 @@ export interface MarkdownToolbarHandle {
 }
 
 export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbarProps>(function MarkdownToolbar(
-  { getView, appSettings, patchSettings, liveViewEnabled, onToggleLiveView, readOnly, tabId, onImageError },
+  {
+    getView,
+    appSettings,
+    patchSettings,
+    liveViewEnabled,
+    onToggleLiveView,
+    paneMode,
+    onCyclePaneMode,
+    revealSplitIfPreviewOnly,
+    readOnly,
+    tabId,
+    onImageError,
+    onPdfExport,
+    memoName,
+  },
   ref,
 ) {
   const persistedOrderKey = JSON.stringify(appSettings?.window.toolbarOrder ?? null);
@@ -305,16 +348,41 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minimized]);
 
+  /** The "entering minimized" branch factored out so it can be shared between `toggleMinimized`'s
+   * own click path and the pane-mode auto-minimize effect below
+   * (`docs/plans/markdown/markdown-preview/PLAN.md` §6.2) without duplicating these four
+   * state-setting/patch-settings lines. */
+  const minimizeNow = () => {
+    preMinimizePositionRef.current = basePositionRef.current;
+    pendingMinimizeToggleRef.current = true;
+    setOptimisticMinimized(true);
+    void patchSettings({ window: { toolbarMinimized: true } });
+  };
+
   const toggleMinimized = () => {
     if (rearranging) return; // see item 5 of the GitHub issue #26 write-up: keep this simple by
     // disabling the toggle entirely while a slot reorder is in progress, rather than deciding how a
     // hidden-mid-drag grid should behave.
-    const next = !minimized;
-    if (next) preMinimizePositionRef.current = basePositionRef.current;
+    if (!minimized) {
+      minimizeNow();
+      return;
+    }
     pendingMinimizeToggleRef.current = true;
-    setOptimisticMinimized(next);
-    void patchSettings({ window: { toolbarMinimized: next } });
+    setOptimisticMinimized(false);
+    void patchSettings({ window: { toolbarMinimized: false } });
   };
+
+  // Auto-minimize when pane-mode enters `"preview"` (`PLAN.md` §6.2) — not fully hiding the toolbar
+  // (the header, and its pane-mode toggle button, stay visible) so there's always a visible escape
+  // hatch back to an editable view. Deliberately does NOT auto-restore when pane-mode leaves
+  // `"preview"` — the toolbar's minimize/restore is otherwise a simple one-way manual toggle
+  // everywhere else in this component; forcing a restore here would be an inconsistent special
+  // case with no stated requirement for it. Skipped while a slot reorder is in progress, mirroring
+  // `toggleMinimized`'s own `rearranging` guard above (same "keep this simple" rationale).
+  useEffect(() => {
+    if (paneMode === "preview" && !minimized && !rearranging) minimizeNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneMode]);
 
   const exitRearrangeMode = () => {
     // Clear the drag ref here (not just via the window `mouseup` listener below) because
@@ -425,6 +493,11 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     // grid buttons themselves already show as `disabled`, re-checked here since keyboard-shortcut
     // invocation (`MarkdownToolbarHandle.invokeAction`) doesn't go through the button element.
     if (readOnly) return;
+    // Auto-reveal (`docs/plans/markdown/markdown-preview/PLAN.md` §4.4): every one of these 15
+    // remaining slots (all but `rearrangeToggle`, handled above) ultimately acts on the CodeMirror
+    // view — reveal the edit pane first if it's currently hidden (`paneMode === "preview"`), so the
+    // result is actually visible instead of landing on a hidden pane.
+    revealSplitIfPreviewOnly();
     switch (id) {
       case "undo":
         runOnView(undoCommand);
@@ -499,6 +572,20 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         </span>
         <button type="button" className="ttn-md-toolbar-view-toggle" onClick={onToggleLiveView}>
           {liveViewEnabled ? "ライブ表示" : "ソース表示"}
+        </button>
+        <button
+          type="button"
+          className="ttn-md-toolbar-pane-mode"
+          onClick={onCyclePaneMode}
+          aria-label={`ペイン表示モードを切り替え (現在: ${PANE_MODE_LABEL[paneMode]})`}
+        >
+          {PANE_MODE_LABEL[paneMode]}
+        </button>
+        {/* PDF export (`docs/plans/markdown/pdf-export/PLAN.md` §4) — never gated on `readOnly`
+            (§3's "printing never mutates the document" availability rule); only disabled when no
+            memo is open at all. */}
+        <button type="button" className="ttn-md-toolbar-pdf-export" onClick={onPdfExport} disabled={!memoName}>
+          PDF出力
         </button>
         <button
           type="button"
