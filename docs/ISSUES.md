@@ -21,15 +21,6 @@
   while the memo is already open in the editor, the editor doesn't go read-only immediately — typing
   still works, and a save attempt then surfaces a generic error instead of being blocked client-side.
   No data-loss risk (backend correctly refuses the write).
-- **Not reachable via any shipped UI today** (no context-menu control toggles Edit Lock at all yet).
-- Direction (live-enforce now vs. defer until an Edit-Lock-toggle UI ships) is tracked as an open
-  question in [docs/QA.md](QA.md).
-
-### In-memo replace "selection" mode missing
-
-- **Found by**: `reviewer-lite`, reviewing `docs/plans/editor-save/PLAN.md`.
-- **Symptom**: `spec.md` §2.4 lists replace modes as "single / all / selection / one-by-one"; the
-  implemented `components/Search/SearchPanel.tsx` / `state/useSearch.ts` only has replace-one and
-  replace-all. No "constrain to current selection" mode.
-- Whether this was an intentional drop or needs to be built is tracked as an open question in
-  [docs/QA.md](QA.md).
+- **Now reachable**: issue #64 (PR #67) added an edit-lock/unlock context-menu item, so this can be
+  reproduced by locking a memo while it's already open in the editor.
+- Direction (live-enforce vs. some other mitigation) is tracked as GitHub issue #12.
