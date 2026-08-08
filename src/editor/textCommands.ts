@@ -21,7 +21,6 @@ import { linkOpenExternal } from "../ipc/link";
 export interface ResolvedEditorSettings {
   wrap: "none" | "chars" | "window";
   tabWidth: number;
-  softTab: boolean;
   showLineNumbers: boolean;
   fontSize: number;
 }
@@ -30,7 +29,6 @@ export function resolveEditorSettings(overrides: MemoEditorSettings | undefined,
   return {
     wrap: overrides?.wrap ?? defaults.wrap,
     tabWidth: overrides?.tabWidth ?? defaults.tabWidth,
-    softTab: overrides?.softTab ?? defaults.softTab,
     showLineNumbers: overrides?.showLineNumbers ?? defaults.showLineNumbers,
     fontSize: overrides?.fontSize ?? defaults.fontSize,
   };
@@ -77,24 +75,28 @@ export function whitespaceExtension(show: boolean): Extension {
   return show ? highlightWhitespace() : [];
 }
 
-function makeTabCommand(tabWidth: number, softTab: boolean): Command {
+/** Tab key always inserts a literal tab character — hardcoded, not settings-backed (GitHub issue
+ * #61 removed the "insert tab as spaces" default/override; the right-click "Convert" tab<->space
+ * transform below remains a separate, on-demand feature). */
+function makeTabCommand(): Command {
   return (view) => {
     // A real (non-empty) selection falls through to `defaultKeymap`'s ordinary Tab handling
     // (indent-selection) rather than this plain insert-at-cursor behavior.
     if (!view.state.selection.ranges.every((r) => r.empty)) return false;
-    const insert = softTab ? " ".repeat(tabWidth) : "\t";
-    view.dispatch(view.state.replaceSelection(insert), { scrollIntoView: true });
+    view.dispatch(view.state.replaceSelection("\t"), { scrollIntoView: true });
     return true;
   };
 }
 
-/** Word wrap, tab width, soft tabs, line numbers, and font size are all
+/** Word wrap, tab width, line numbers, and font size are all
  * `MemoEditorSettings`/`EditorDefaults`-backed (`[spec §3.4]`). Auto-indent-on-Enter and
  * cursor-line highlight are always-on, fixed editor behaviors instead — despite
  * `editor-save/PLAN.md` §4 grouping them alongside the settings-backed list above, neither has a
  * corresponding field in the confirmed `AppSettings`/`MemoEditorSettings` schema
  * (`[detailed-spec §3.2, §3.3]`), so they are not user-toggleable today; implementation
- * discretion (`[detailed-spec §9]`), not a spec ambiguity requiring escalation. */
+ * discretion (`[detailed-spec §9]`), not a spec ambiguity requiring escalation. Tab-key insertion
+ * (`makeTabCommand` above) is likewise a fixed, always-`\t` behavior, not settings-backed
+ * (GitHub issue #61 removed the prior `softTab` setting/override). */
 /** Exported so `EditorPane` can also `Compartment.reconfigure(settingsCompartment, ...)` an
  * already-mounted view when the resolved settings change (e.g. a per-memo override write),
  * without tearing down the view / losing undo history. */
@@ -108,7 +110,7 @@ export function buildSettingsExtension(settings: ResolvedEditorSettings): Extens
     exts.push(EditorView.theme({ ".cm-content": { maxWidth: `${CHARS_WRAP_COLUMN}ch` } }));
   }
   exts.push(EditorView.theme({ "&": { fontSize: `${settings.fontSize}px` } }));
-  exts.push(keymap.of([{ key: "Tab", run: makeTabCommand(settings.tabWidth, settings.softTab) }]));
+  exts.push(keymap.of([{ key: "Tab", run: makeTabCommand() }]));
   return exts;
 }
 
