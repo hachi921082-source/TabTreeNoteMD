@@ -232,6 +232,14 @@ later pass can reconcile).
 | `link_resolve` | link | resolve a `memo:` target | `link/PLAN.md` |
 | `link_open_external` | link | open URL/email/file path via OS API | `link/PLAN.md` |
 | `image_save_pasted` | image | write pasted image, return relative path+dims | `image-handling/PLAN.md` |
+| `image_read_bytes` | image | read an image file's raw bytes back off disk | `markdown/image-handling/PLAN.md` |
+
+**`image_read_bytes` is the one exception to this table's implicit `AppResult<T>` convention**
+(§3): it returns `Result<tauri::ipc::Response, AppErrorPayload>` instead, since `tauri::ipc::
+Response` (a raw-byte IPC response) is incompatible with the `{ok, value|error}` JSON envelope — a
+backend error surfaces as a rejected `invoke()` promise rather than an `{ok: false, error}` value.
+See `markdown/image-handling/PLAN.md` §3.3 for the full rationale. Not a template for other
+commands.
 
 Not a Tauri command (frontend-only / OS-window-manager-only, listed here so it's not mistaken for a
 gap): "pin tab to foreground" (`[spec §2.1]`, session-only UI state), in-editor text conversion and
