@@ -24,4 +24,5 @@ export type ErrorCode =
   | "META_CORRUPT"
   | "LONG_PATH"
   | "TAB_LOCKED"
+  | "ANOMALOUS_FILE_STATE"
   | "UNKNOWN";
