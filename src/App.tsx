@@ -56,6 +56,13 @@ function App() {
   );
 
   const openMemoOverride = treeState.openMemoName ? locateNode(treeState.nodes, treeState.openMemoName)?.node.editor : undefined;
+  // Live Edit Lock state for the open memo (GitHub issue #12) — read from the current tree state
+  // (already kept in sync by `useTree.ts`'s `setEditLock` on every successful toggle) rather than
+  // `editor_load`'s load-time snapshot, so locking/unlocking a memo while it's open takes effect
+  // immediately. Mirrors the legacy app's equivalent live `findTreeNodeInScope(...).locked` check.
+  const openMemoLocked = treeState.openMemoName
+    ? (locateNode(treeState.nodes, treeState.openMemoName)?.node.locked ?? false)
+    : false;
 
   // Cross-tab search result -> "open memo" (`docs/plans/search-index/PLAN.md` §5): reuses
   // `treeState.focusOnMemo`, the same "open memo" path a tree click uses. If the hit is in a
@@ -226,6 +233,7 @@ function App() {
               focusEditorToken={treeState.focusEditorToken}
               appSettings={settingsState.settings}
               memoEditorOverride={openMemoOverride}
+              isMemoEditLocked={openMemoLocked}
               setEditorOverride={treeState.setEditorOverride}
               patchSettings={settingsState.patch}
               onOpenMemoLink={openLinkTarget}
