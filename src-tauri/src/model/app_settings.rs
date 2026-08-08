@@ -151,10 +151,8 @@ pub struct LastOpened {
 pub struct EditorDefaults {
     pub wrap: WrapMode,
     pub tab_width: u32,
-    pub soft_tab: bool,
     pub show_line_numbers: bool,
     pub font_size: u32,
-    pub view_mode: ViewMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,10 +246,8 @@ impl Default for AppSettings {
             editor_defaults: EditorDefaults {
                 wrap: WrapMode::Window,
                 tab_width: 4,
-                soft_tab: true,
                 show_line_numbers: true,
                 font_size: 14,
-                view_mode: ViewMode::Live,
             },
             autosave: AutosaveSettings {
                 plain_debounce_ms: 1500,

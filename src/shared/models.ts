@@ -79,10 +79,8 @@ export interface WindowSettings {
 export interface EditorDefaults {
   wrap: "none" | "chars" | "window";
   tabWidth: number;
-  softTab: boolean;
   showLineNumbers: boolean;
   fontSize: number;
-  viewMode: "live" | "source";
 }
 
 // Deep-partial patch shape accepted by `settings_set`
@@ -129,7 +127,6 @@ export interface Label {
 export interface MemoEditorSettings {
   wrap?: "none" | "chars" | "window" | null;
   tabWidth?: number | null;
-  softTab?: boolean | null;
   showLineNumbers?: boolean | null;
   fontSize?: number | null;
   viewMode?: "live" | "source" | null;

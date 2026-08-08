@@ -86,7 +86,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 ### 2.3 Text Editing (Right Pane)
 
 - Undo/Redo (history discarded on memo switch, no cross-memo undo), cut/copy/paste, select all, line-wise operations.
-- Toggle word wrap (none / character count / window width), tab width, soft tabs, auto-indent, line numbers, whitespace/line break visibility, cursor line highlight. Display character/line count and cursor position in status bar.
+- Toggle word wrap (none / character count / window width), tab width, auto-indent, line numbers, whitespace/line break visibility, cursor line highlight. Display character/line count and cursor position in status bar. **Tab key always inserts a literal tab character** (`\t`); no soft-tab (spaces) option (fixed behavior, not configurable — GitHub issue #61).
 - **Character encoding**: Default UTF-8. Load: "UTF-8 (BOM detection) → if invalid byte sequence, retry with Shift_JIS" (2-stage fallback). Manual encoding change command available.
 - **Line endings**: Line ending code detected on load is preserved as-is on save (default). User setting allows unification. If editor engine internally normalizes to LF, implementation must retain original line ending type as metadata and restore before save (§4.2).
 - Right-click: "Convert" (uppercase / lowercase / hiragana / katakana / half-width / full-width / tab ↔ space), "Check" (☐/☑ cycle insert), "Search with Google," "Properties."
@@ -219,7 +219,7 @@ interface AppSettings {
   theme: 'light' | 'dark';
   uiFontScale: number;
   lastOpened: { tabId: string; memoName: string } | null;
-  editorDefaults: { wrap: 'none' | 'chars' | 'window'; tabWidth: number; softTab: boolean; showLineNumbers: boolean; fontSize: number; viewMode: 'live' | 'source' };  // viewMode: default Markdown view mode a memo opens in (§4.2); per-memo override in MemoEditorSettings falls back here when absent
+  editorDefaults: { wrap: 'none' | 'chars' | 'window'; tabWidth: number; showLineNumbers: boolean; fontSize: number };  // No `softTab`/`viewMode` fields: Tab key always inserts a literal tab character, and the default Markdown view mode a memo opens in is fixed to 'live' — neither is a user-configurable global default (GitHub issue #61). Per-memo `viewMode` override in MemoEditorSettings still exists and now falls back to the fixed 'live' default when absent (§4.2)
   autosave: { plainDebounceMs: number };
   links: { openTrigger: 'ctrlClick' | 'singleClick' | 'doubleClick'; confirmBeforeOpen: boolean };
   encoding: { defaultSave: 'utf-8' };
@@ -275,7 +275,7 @@ interface AppSettings {
 ### 4.2 Markdown Editing (CommonMark Full Support)
 
 - **All memos standardized to Markdown (`.md`)** (§1 Q2). Plain text option discontinued.
-- **Edit experience = live view by default** (factory default; user-configurable global default and optional per-memo override, §3.4 `viewMode`). Toggle to source (raw Markdown) also available at any time (runtime toggle, independent of the default setting).
+- **Edit experience = live view by default** (fixed default, not user-configurable; optional per-memo override still available, §3.4 `viewMode` — GitHub issue #61). Toggle to source (raw Markdown) also available at any time (runtime toggle, independent of the default).
 - **Markdown support range = CommonMark equivalent full support**: headings, lists, quotes, code blocks, tables, emphasis (bold/italic), horizontal lines, links, etc.
 - **Toolbar = full-featured and floatable**: heading / list / quote / code block / table / emphasis / link / image insert etc. operated from toolbar. Free-position float panel within window.
 - **Image paste and resize**:

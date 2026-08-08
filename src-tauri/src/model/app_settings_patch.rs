@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer};
 use super::app_settings::{
     AppSettings, AppearanceSettings, AutosaveSettings, AutostartSettings, EditorDefaults, EncodingSettings,
     EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, TabSettingsEntry, Theme, ToolbarPosition,
-    TreeSide, ViewMode, WindowSettings, WrapMode,
+    TreeSide, WindowSettings, WrapMode,
 };
 
 /// Distinguishes "field absent from patch" (outer `None`, leave unchanged)
@@ -116,13 +116,9 @@ pub struct EditorDefaultsPatch {
     #[serde(default)]
     pub tab_width: Option<u32>,
     #[serde(default)]
-    pub soft_tab: Option<bool>,
-    #[serde(default)]
     pub show_line_numbers: Option<bool>,
     #[serde(default)]
     pub font_size: Option<u32>,
-    #[serde(default)]
-    pub view_mode: Option<ViewMode>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -276,17 +272,11 @@ impl EditorDefaultsPatch {
         if let Some(v) = self.tab_width {
             current.tab_width = v;
         }
-        if let Some(v) = self.soft_tab {
-            current.soft_tab = v;
-        }
         if let Some(v) = self.show_line_numbers {
             current.show_line_numbers = v;
         }
         if let Some(v) = self.font_size {
             current.font_size = v;
-        }
-        if let Some(v) = self.view_mode {
-            current.view_mode = v;
         }
     }
 }
