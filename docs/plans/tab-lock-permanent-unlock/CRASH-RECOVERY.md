@@ -3,9 +3,11 @@
 > Status: planning complete, not yet implemented. Companion to [`PLAN.md`](PLAN.md) (read that file
 > first). Mirrors, in the reverse direction, `docs/plans/tab-lock/CRASH-RECOVERY.md` — read that file
 > too; several design points below only make sense in contrast to it. Elaborates
-> `docs/detailed-spec.md` §5.9's "Recovery on tab-folder access (crash mid-permanent-unlock)" and
-> "Tab bar during a pending recovery (either direction)" subsections, and
-> `docs/DECISIONS.md`'s "Tab Lock: Permanent Unlock Operation Added" entries.
+> `docs/tab-lock-detailed-spec.md`'s "Recovery on tab-folder access (crash mid-permanent-unlock)"
+> subsection (split out of `docs/detailed-spec.md` §5.9), that file's "Tab bar during a pending
+> recovery" cross-reference to `docs/detailed-spec.md` §5.9's own "Tab bar during a pending recovery
+> (either direction)" subsection, and `docs/DECISIONS.md`'s "Tab Lock: Permanent Unlock Operation
+> Added" entries.
 
 ---
 
@@ -120,8 +122,8 @@ ever held in the (now-discarded) lock blob and in `AppSettings.tabs[i].name` (no
 that's step 10, unreached). `clear_locked_placeholder(..., None)` still clears `locked`, so the tab
 becomes a fully functional, fully unencrypted tab immediately — only its *displayed name* stays stuck
 at the 🔒 placeholder until the user manually renames it. This is the same class of "settings-cache
-lag" risk `detailed-spec.md` §5.9's "Order rationale" section already calls out as accepted for the
-lock direction's own settings-update step, just landing on the *name* specifically here because that
+lag" risk `docs/tab-lock-detailed-spec.md`'s "Order rationale" section already calls out as accepted for
+the lock direction's own settings-update step, just landing on the *name* specifically here because that
 one field's only other copy (the lock blob) is gone by this point. Memo content is never affected.
 
 ## 4. Recovery Commands (Case A: `lock` field still present)
