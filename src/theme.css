@@ -54,6 +54,7 @@
   --ttn-bg-selected: #dbe9fb;
   --ttn-bg-code: #f0f0f0;
   --ttn-bg-active-line: rgba(0, 0, 0, 0.06);
+  --ttn-bg-image-marker: rgba(74, 144, 217, 0.15);
 
   --ttn-fg: #1a1a1a;
   --ttn-fg-muted: #666666;
@@ -84,6 +85,7 @@
   --ttn-bg-selected: #dbe9fb;
   --ttn-bg-code: #f0f0f0;
   --ttn-bg-active-line: rgba(0, 0, 0, 0.06);
+  --ttn-bg-image-marker: rgba(74, 144, 217, 0.15);
 
   --ttn-fg: #1a1a1a;
   --ttn-fg-muted: #666666;
@@ -114,6 +116,7 @@
   --ttn-bg-selected: #2c4a6e;
   --ttn-bg-code: #2b2b2b;
   --ttn-bg-active-line: rgba(255, 255, 255, 0.09);
+  --ttn-bg-image-marker: rgba(74, 144, 217, 0.25);
 
   --ttn-fg: #e4e4e4;
   --ttn-fg-muted: #a8a8a8;

@@ -26,7 +26,13 @@ import { MarkdownToolbar } from "./Toolbar/MarkdownToolbar";
 import type { MarkdownToolbarHandle } from "./Toolbar/MarkdownToolbar";
 import { PreviewPane } from "./PreviewPane";
 import type { ToolbarActionId } from "../../editor/toolbarSlots";
-import { buildMarkdownExtensions, liveViewCompartment, liveViewExtension } from "../../editor/codeMirrorSetup";
+import {
+  buildMarkdownExtensions,
+  liveViewCompartment,
+  liveViewExtension,
+  sourceImageMarkerCompartment,
+  sourceImageMarkerViewExtension,
+} from "../../editor/codeMirrorSetup";
 import type { MarkdownDecorationConfig } from "../../editor/markdownDecorations";
 import { imagePasteExtension } from "../../editor/imagePaste";
 import { releaseMemoImages } from "../../editor/imageLoader";
@@ -479,6 +485,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   useEffect(() => {
     viewRef.current?.dispatch({ effects: liveViewCompartment.reconfigure(liveViewExtension(liveViewEnabled, markdownConfig)) });
   }, [liveViewEnabled, markdownConfig]);
+
+  // Source-view image marker (`docs/plans/markdown-editing/PLAN.md`, GitHub issue #81) — opposite
+  // polarity from the live-view toggle above (on while `liveViewEnabled` is false), reconfigured
+  // via its own compartment since it has no `markdownConfig` dependency at all.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: sourceImageMarkerCompartment.reconfigure(sourceImageMarkerViewExtension(!liveViewEnabled)) });
+  }, [liveViewEnabled]);
 
   // Destroy the view (and flush its scroll position) on unmount.
   useEffect(() => {

@@ -508,3 +508,82 @@ export function markdownDecorationExtension(config: MarkdownDecorationConfig): E
     }),
   ];
 }
+
+/** Source-view-only "this is an image reference" marker (GitHub issue #81). Source view shows raw
+ * Markdown text with no decoration extension active at all (`liveViewCompartment` swaps in `[]`
+ * there — `codeMirrorSetup.ts`), so there is otherwise no visual hint that a `![alt](src)` span (or
+ * an allowlisted raw `<img>` tag) points at an image. This is intentionally a standalone plugin, not
+ * a branch inside `MarkdownDecorationsPlugin` above: it runs specifically while live view is OFF
+ * (live view already shows the real image via `ImageWidget`, so marking it there too would just
+ * double up), wired through its own `sourceImageMarkerCompartment` (`codeMirrorSetup.ts`) rather
+ * than `liveViewCompartment`. `Decoration.mark` only — never `Decoration.replace` — so the
+ * underlying characters are never hidden/substituted: "source view = raw text" stays intact, and
+ * there is no cursor-position-mapping risk to reason about (nothing is ever inserted into or
+ * removed from the rendered length). Reuses the same `Image` lezer-node detection
+ * (`collectLinkParts`, above) and raw-`<img>`-tag detection (`findImageTags`,
+ * `markdownSpanParser.ts`) that `MarkdownDecorationsPlugin.build()` already uses for live view's
+ * real `<img>` rendering — just building a mark decoration from the same ranges instead of a
+ * replace/widget one. */
+const SOURCE_IMAGE_MARKER_MARK = Decoration.mark({ class: "cm-md-source-image-marker" });
+
+class SourceImageMarkerPlugin implements PluginValue {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = this.build(view.state);
+  }
+
+  update(update: ViewUpdate): void {
+    // No selection/viewport dependency, unlike `MarkdownDecorationsPlugin` above: this decoration
+    // never reveals raw text on selection touch (it doesn't hide anything to begin with) and is a
+    // plain mark rather than a viewport-relevant widget, so only document edits require a rebuild.
+    if (update.docChanged) this.decorations = this.build(update.state);
+  }
+
+  private build(state: EditorState): DecorationSet {
+    const ranges: Range<Decoration>[] = [];
+    // Same code-fence/inline-code exclusion `MarkdownDecorationsPlugin.build()` applies to its
+    // `findImageTags` scan, applied here for the same reason (a literal `<img ...>` shown as example
+    // text inside a code block isn't a real image reference). Not needed for the `Image` lezer-node
+    // case below: the parser never produces an `Image` node inside code-block/inline-code content in
+    // the first place (that content is literal text to it).
+    const codeSkipRanges: Range2[] = [];
+
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        switch (node.name) {
+          case "InlineCode":
+          case "FencedCode":
+          case "CodeBlock":
+            codeSkipRanges.push({ from: node.from, to: node.to });
+            break;
+          case "Image": {
+            const { marks, url } = collectLinkParts(node);
+            if (marks.length < 2 || !url) break; // reference-style / malformed — leave undecorated
+            ranges.push(SOURCE_IMAGE_MARKER_MARK.range(node.from, node.to));
+            break;
+          }
+        }
+      },
+    });
+
+    for (const img of findImageTags(state.doc.toString())) {
+      if (overlapsAny(codeSkipRanges, img.from, img.to)) continue;
+      ranges.push(SOURCE_IMAGE_MARKER_MARK.range(img.from, img.to));
+    }
+
+    // `sort: true` — ranges above are gathered in tree-iteration order followed by regex-scan
+    // order, not necessarily position order (same reasoning as `MarkdownDecorationsPlugin.build()`
+    // above).
+    return Decoration.set(ranges, true);
+  }
+}
+
+/** Source-view marker extension (see `SourceImageMarkerPlugin` above). Takes no config, unlike
+ * `markdownDecorationExtension` — this decoration has no click handling and no tab/memo/settings
+ * dependency; it only needs the document's syntax tree and raw text. */
+export function sourceImageMarkerExtension(): Extension {
+  return ViewPlugin.fromClass(SourceImageMarkerPlugin, {
+    decorations: (plugin) => plugin.decorations,
+  });
+}

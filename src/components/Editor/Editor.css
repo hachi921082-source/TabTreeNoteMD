@@ -232,3 +232,17 @@
 .cm-md-image-loading {
   opacity: 0.5;
 }
+
+/* Source-view-only "this is an image reference" marker (GitHub issue #81,
+   `editor/markdownDecorations.ts`'s `SourceImageMarkerPlugin`). `Decoration.mark` only — the
+   underlying `![alt](src)`/`<img ...>` text stays fully visible/selectable/editable; only a
+   background tint and a leading icon are added on top of it. */
+.cm-md-source-image-marker {
+  background: var(--ttn-bg-image-marker);
+  border-radius: 3px;
+}
+
+.cm-md-source-image-marker::before {
+  content: "🖼";
+  margin-right: 2px;
+}

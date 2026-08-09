@@ -93,6 +93,14 @@ Feature: Table of Contents (TOC)."
   over the test line) — not a decoration-engine defect, just a floating-panel default; the toolbar
   is user-draggable to work around it. Not escalated (no spec statement constrains the default
   position), but worth a reviewer look if it reads as poor UX on first launch.
+- **Source-view image marker (GitHub issue #81)**: `markdownDecorations.ts`'s `sourceImageMarkerExtension()`
+  (a separate `ViewPlugin`, not a branch inside `MarkdownDecorationsPlugin`) applies a `Decoration.mark`
+  (never `replace`) over `![alt](src)`/allowlisted raw `<img>` ranges while source view is active —
+  background tint (`--ttn-bg-image-marker`, `theme.css`) + a leading 🖼 icon (`.cm-md-source-image-marker`,
+  `Editor.css`), reusing the same `Image`-node/`findImageTags` detection `MarkdownDecorationsPlugin`
+  already uses for live view. Wired via its own `sourceImageMarkerCompartment` (`codeMirrorSetup.ts`),
+  opposite polarity from `liveViewCompartment` (on while live view is off) — live view already shows the
+  real image via `ImageWidget`, so this doesn't run there.
 - **Keyboard shortcuts**: all 16 toolbar actions plus the live/source toggle got default bindings in
   `shared/shortcuts.ts` (`docs/detailed-spec.md §5.10`'s confirmed policy). Dispatch reuses
   `MarkdownToolbar`'s own action-invocation logic via a `forwardRef`/`useImperativeHandle` handle
