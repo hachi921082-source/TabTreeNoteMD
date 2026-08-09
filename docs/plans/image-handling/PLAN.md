@@ -93,11 +93,25 @@ surface for "find orphaned images" is in scope either.
 1. User pastes (Ctrl+V with image data on clipboard) or uses the toolbar's image-insert action
    (`markdown-editing/PLAN.md` §4) while the cursor is in the editor.
 2. `imagePaste.ts` reads the clipboard image bytes (or, for toolbar-insert, opens a file picker and
-   reads the chosen file's bytes), calls `image_save_pasted`.
+   reads the chosen file's bytes), downscales via `imageDownscale.ts`'s `downscaleImageIfNeeded`
+   (below) if oversized, then calls `image_save_pasted`.
 3. On success, inserts the returned Markdown/HTML markup at the cursor as a single CodeMirror
    transaction (undoable in one step).
 4. On failure (e.g. `IoLocked` if the folder is momentarily locked by another process), shows a
    non-blocking error toast; no partial insertion occurs.
+
+### 6.1 Paste/Insert Downscaling (GitHub issue #82)
+
+`imageDownscale.ts`'s `downscaleImageIfNeeded(bytes, mimeType)`, called from `saveAndInsertImage`
+(the function shared by both the paste handler and `insertImageViaFilePicker`) before
+`image_save_pasted`:
+- Threshold: 2000px on the longer edge, fixed constant (`MAX_DIMENSION_PX`), not user-configurable
+  in this pass — no `AppSettings` field or Settings UI.
+- Already-small images (both dimensions ≤ threshold) pass through unchanged.
+- `image/gif` is always passed through unchanged (canvas draw would flatten to one frame).
+- Otherwise: `createImageBitmap` → scale to fit threshold (aspect ratio preserved) →
+  `OffscreenCanvas` → `convertToBlob({ type: <original mimeType> })` — same format as the source.
+- Any decode/encode failure falls back to the original bytes (never blocks the paste/insert).
 
 ## Open Items
 
