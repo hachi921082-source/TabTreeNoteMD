@@ -72,6 +72,10 @@ export function TreeRow(props: TreeRowProps) {
           onRowClick(node.memoName, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey });
         }}
         onContextMenu={(e) => {
+          if (isRenaming) {
+            e.stopPropagation();
+            return;
+          }
           e.preventDefault();
           e.stopPropagation();
           onRowContextMenu(node.memoName, e.clientX, e.clientY);
