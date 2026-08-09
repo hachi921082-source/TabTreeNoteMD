@@ -132,6 +132,7 @@ TabTreeNoteMD/
 │       ├── textCommands.ts
 │       ├── eolKeeper.ts
 │       ├── imagePaste.ts
+│       ├── imageDownscale.ts
 │       └── links.ts
 ├── docs/
 ├── package.json
