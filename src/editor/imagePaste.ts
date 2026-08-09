@@ -22,6 +22,7 @@
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import { imageSavePasted } from "../ipc/image";
+import { downscaleImageIfNeeded } from "./imageDownscale";
 import type { ErrorCode } from "../shared/result";
 
 export interface ImagePasteConfig {
@@ -54,7 +55,11 @@ async function readFileBytes(file: File): Promise<number[]> {
  * was actually pointing — not recomputed after the await, since the selection may have moved by
  * then. `![alt](url)` with an empty `alt` (`PLAN.md` §4: "`alt` may be empty... not mandated"). */
 async function saveAndInsertImage(view: EditorView, tabId: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
-  const result = await imageSavePasted(tabId, bytes, mimeHint);
+  // Downscale oversized source images before saving (GitHub issue #82) — shared by both call
+  // sites below since they both funnel through this function. No-op (returns `bytes` unchanged)
+  // for already-small images, `image/gif`, missing `mimeHint`, or any decode/encode failure.
+  const downscaledBytes = await downscaleImageIfNeeded(bytes, mimeHint);
+  const result = await imageSavePasted(tabId, downscaledBytes, mimeHint);
   if (!result.ok) {
     onError(result.error.code);
     return;
