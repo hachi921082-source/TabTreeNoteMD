@@ -262,19 +262,15 @@ const onCyclePaneMode = useCallback(() => {
 
 /** Reveal helper used by §4.4's auto-reveal principle and by the live/source toggle's own
  * auto-reveal case (§4.4): forces pane-mode to `split` if (and only if) it is currently `preview`,
- * otherwise leaves it untouched (e.g. `edit` is never disturbed by an auto-reveal). */
+ * otherwise leaves it untouched (e.g. `edit` is never disturbed by an auto-reveal).
+ * Session-local only (`setPaneModeOverride`) — does NOT write through to the persisted override.
+ * Persisting a pane-mode change is exclusive to the explicit toolbar toggle (`onCyclePaneMode`
+ * above); auto-reveal is a display safety net, not an intentional user choice (issue #79). */
 const revealSplitIfPreviewOnly = useCallback(() => {
   setPaneModeOverride((current) => {
     const currentMode = current !== null ? current : resolvedPaneMode;
     if (currentMode !== "preview") return current;
-    const next: PaneMode = "split";
-    const name = memoNameRef.current;
-    if (name) {
-      const updated = { ...overrideRef.current, paneMode: next };
-      void setEditorOverrideRef.current(name, updated);
-      if (loadedMemoNameRef.current === name) loadedOverrideRef.current = updated;
-    }
-    return next;
+    return "split";
   });
 }, [resolvedPaneMode]);
 ```
