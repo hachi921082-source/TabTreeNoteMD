@@ -29,7 +29,21 @@ Feature: Table of Contents (TOC)."
   length mismatch" cursor-mapping bug for that whole category rather than mitigating it after the
   fact. `Decoration.replace`/widgets are used only for task checkboxes and the two allowlisted
   `<span>`/`<img>` HTML fragments, both of which reveal raw source text whenever the current
-  selection touches their range. All 5 of §9's required scenarios were exercised via `tauri dev` +
+  selection touches their range — except a rendered image's own click (GitHub issue #80 fix,
+  `markdownDecorations.ts`'s `handleImageMouseDown`), which special-cases plain vs. double/triple
+  click via the native `MouseEvent.detail` (click-count) property inside a single `mousedown`
+  handler: a plain click (`detail === 1`) leaves the selection untouched entirely (the image is only
+  ever click-eligible while the selection already doesn't touch it, so not moving the cursor
+  provably keeps it that way), while a double/triple click (`detail >= 2`) moves the cursor to the
+  image's own left edge (`img.from`), which `touchesSelection()`'s closed-interval touch test always
+  reports as touching, reliably revealing the raw text for editing. (An earlier version of this fix
+  moved the cursor to `img.to` on every mousedown and used a separate `dblclick` handler to override
+  it back to `img.from` for a double-click; that regressed because `img.to` is *also* inside
+  `touchesSelection()`'s closed interval, so the first mousedown of a double-click already
+  re-revealed the image and reflowed the surrounding text before the second click/dblclick ran,
+  sometimes landing the cursor on unrelated, since-shifted content. The `event.detail` approach
+  removes the mousedown/dblclick ordering dependency entirely.) Keyboard-driven cursor movement into
+  the range is unaffected either way. All 5 of §9's required scenarios were exercised via `tauri dev` +
   WebView2 CDP (real `EditorView`, real `Input.insertText`/`Input.dispatchMouseEvent`, not just unit
   logic) and passed; one real bug was found and fixed in the process (see below).
 - **Bug found and fixed during self-verification**: a `<span style="color:...">` wrapping a
