@@ -9,7 +9,7 @@ import { Compartment } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { markdownDecorationExtension } from "./markdownDecorations";
+import { markdownDecorationExtension, sourceImageMarkerExtension } from "./markdownDecorations";
 import type { MarkdownDecorationConfig } from "./markdownDecorations";
 
 /** Always-on language support: CommonMark plus GitHub-Flavored-Markdown's table/task-list/
@@ -33,8 +33,24 @@ export function liveViewExtension(enabled: boolean, config: MarkdownDecorationCo
   return enabled ? markdownDecorationExtension(config) : [];
 }
 
+/** Holds either `sourceImageMarkerExtension()` (source view) or `[]` (live view) — GitHub issue
+ * #81's inline image marker. Deliberately a separate compartment from `liveViewCompartment` rather
+ * than a branch folded into `liveViewExtension`/`markdownDecorationExtension`: it's the OPPOSITE
+ * polarity (on while live view is off) and has no config dependency at all, so keeping it in its
+ * own compartment avoids coupling its reconfigure to `markdownConfig` changes that have nothing to
+ * do with it. */
+export const sourceImageMarkerCompartment = new Compartment();
+
+export function sourceImageMarkerViewExtension(sourceViewActive: boolean): Extension {
+  return sourceViewActive ? sourceImageMarkerExtension() : [];
+}
+
 /** Convenience composer for `EditorPane.tsx`: the language support (always on) plus the initial
- * live-view compartment content. */
+ * live-view and source-image-marker compartment contents. */
 export function buildMarkdownExtensions(liveViewEnabled: boolean, config: MarkdownDecorationConfig): Extension[] {
-  return [markdownLanguageExtension(), liveViewCompartment.of(liveViewExtension(liveViewEnabled, config))];
+  return [
+    markdownLanguageExtension(),
+    liveViewCompartment.of(liveViewExtension(liveViewEnabled, config)),
+    sourceImageMarkerCompartment.of(sourceImageMarkerViewExtension(!liveViewEnabled)),
+  ];
 }
