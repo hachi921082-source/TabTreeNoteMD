@@ -190,6 +190,10 @@ class ImageWidget extends WidgetType {
     });
     return img;
   }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
 }
 
 /** Collects a `Link`/`Image` node's `LinkMark` children (in document order) and its `URL` child,
@@ -233,6 +237,13 @@ const HEADING_CLASS: Record<number, string> = { 1: "cm-md-h1", 2: "cm-md-h2", 3:
 class MarkdownDecorationsPlugin implements PluginValue {
   decorations: DecorationSet;
   private links: DetectedLink[] = [];
+  // Ranges of currently-*rendered* images (`Image` lezer nodes and raw `<img>` tags alike) —
+  // populated in `build()` below only in the `!touchesSelection` branch, i.e. only while the widget
+  // decoration is actually active. Consulted by `handleImageMouseDown` (GitHub issue #80) so a
+  // plain click can special-case "the cursor landed on a rendered image" without affecting clicks
+  // on the same span once it's already showing raw text for editing (at that point this list
+  // simply omits the range, so normal cursor placement applies).
+  private imageRanges: Range2[] = [];
 
   constructor(view: EditorView) {
     this.decorations = this.build(view);
@@ -253,6 +264,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
     const config = state.facet(markdownConfigFacet);
     const ranges: Range<Decoration>[] = [];
     const links: DetectedLink[] = [];
+    const imageRanges: Range2[] = [];
     // Ranges to exclude the color-span/image-tag regex scans from (fenced/indented code, inline
     // code) — so a `<span>`/`<img>` shown literally as example text inside a code block isn't
     // treated as a live decoration. Deliberately does NOT include Link/Image node ranges: a
@@ -339,6 +351,7 @@ class MarkdownDecorationsPlugin implements PluginValue {
               if (!touchesSelection(state, node.from, node.to)) {
                 const altText = state.sliceDoc(labelFrom, labelTo);
                 addReplace(node.from, node.to, Decoration.replace({ widget: buildImageWidget(urlText, altText, config) }));
+                imageRanges.push({ from: node.from, to: node.to });
               }
               break;
             }
@@ -397,11 +410,13 @@ class MarkdownDecorationsPlugin implements PluginValue {
       if (overlapsAny(codeSkipRanges, img.from, img.to)) continue;
       if (!touchesSelection(state, img.from, img.to)) {
         addReplace(img.from, img.to, Decoration.replace({ widget: buildImageWidget(img.src, "", config) }));
+        imageRanges.push({ from: img.from, to: img.to });
       }
     }
 
     links.sort((a, b) => a.from - b.from);
     this.links = links;
+    this.imageRanges = imageRanges;
     // `sort: true` — ranges above are gathered in tree-iteration + regex-scan order, not
     // necessarily position order; `Decoration.set` handles the from/side ordering rules that a
     // manual `RangeSetBuilder` would otherwise require the caller to get exactly right, which
@@ -424,6 +439,45 @@ class MarkdownDecorationsPlugin implements PluginValue {
     void openDetectedLink(view, link, config);
     return true;
   }
+
+  // GitHub issue #80 (and its follow-up regression): CodeMirror's default click-to-cursor behavior
+  // places the cursor at a boundary of the clicked `Decoration.replace` range, which immediately
+  // satisfies `touchesSelection()` (a *closed*-interval touch test — see its definition above, both
+  // `from` and `to` count as touching) and reveals the raw `![alt](src)`/`<img ...>` text on the
+  // very next rebuild — so a plain click to just look at a rendered image had the same effect as
+  // intentionally starting to edit it.
+  //
+  // The original #80 fix tried to dodge this by moving the cursor to `img.to` ("just past" the
+  // image) on every mousedown, on the theory that `to` sits outside the range. It doesn't:
+  // `touchesSelection()` treats `to` as touching just like `from`, so that dispatch re-revealed the
+  // image on its own — on a double-click's *first* mousedown, before the second mousedown/dblclick
+  // ever ran. That reveal can reflow the surrounding text (raw Markdown source is usually wider
+  // than the rendered widget), shifting later lines under the still-stationary physical pointer, so
+  // by the time the second click/dblclick fired it could land on unrelated content (e.g. a heading
+  // that scrolled into the click point) — this was the reported "cursor ends up on a following
+  // heading" bug. A separate `dblclick` handler trying to "undo" `mousedown`'s move afterward only
+  // added an ordering dependency on top of the underlying reveal bug.
+  //
+  // Fixed by using `event.detail` (native click-count: 1 for a plain click, >=2 for a double/triple
+  // click) to decide the outcome in this single handler, with no dispatch at all for a plain click:
+  // `img` is only ever in `imageRanges` while the current selection does NOT touch it (`build()`
+  // above only pushes into `imageRanges` inside the `!touchesSelection` branch), so simply leaving
+  // the selection untouched provably keeps it that way — there is no position, including `img.to`,
+  // that's guaranteed to stay outside the closed-interval touch test, so "don't move it" is the only
+  // reliably-safe choice. `img.from` for a double-click is unambiguous: it's the image's own left
+  // edge, always inside the closed interval, so it always reveals. This removes the mousedown/
+  // dblclick ordering dependency entirely — no separate `dblclick` handler for images is needed.
+  handleImageMouseDown(event: MouseEvent, view: EditorView): boolean {
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+    if (pos == null) return false;
+    const img = this.imageRanges.find((r) => pos >= r.from && pos <= r.to);
+    if (!img) return false;
+    event.preventDefault();
+    if (event.detail >= 2) {
+      view.dispatch({ selection: { anchor: img.from } });
+    }
+    return true;
+  }
 }
 
 /** The Markdown live-view decoration extension bundle — pass `config` and reconfigure the
@@ -436,9 +490,18 @@ export function markdownDecorationExtension(config: MarkdownDecorationConfig): E
       decorations: (plugin) => plugin.decorations,
       eventHandlers: {
         mousedown(event, view) {
+          // Checked first: an image click is never also a link click (`Image` nodes and `<img>`
+          // tags never populate `this.links`), so there's no ordering conflict — this just avoids
+          // an unnecessary `this.links` scan on every image click. `handleImageMouseDown` itself
+          // uses `event.detail` to distinguish single vs. double/triple click, so both cases for
+          // images are decided right here — no separate image handling on `dblclick` below.
+          if (this.handleImageMouseDown(event, view)) return true;
           return this.handleMouseEvent(event, view, "click");
         },
         dblclick(event, view) {
+          // Link-only at this point (see `mousedown` above): an image click never reaches here with
+          // anything left to do, since `handleImageMouseDown` already consumed both mousedowns of a
+          // double-click via `event.detail` and called `preventDefault()` on each.
           return this.handleMouseEvent(event, view, "dblclick");
         },
       },
