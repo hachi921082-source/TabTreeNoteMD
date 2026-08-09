@@ -222,14 +222,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     setPaneModeOverride((current) => {
       const currentMode = current !== null ? current : resolvedPaneMode;
       if (currentMode !== "preview") return current;
-      const next: PaneMode = "split";
-      const name = memoNameRef.current;
-      if (name) {
-        const updated = { ...overrideRef.current, paneMode: next };
-        void setEditorOverrideRef.current(name, updated);
-        if (loadedMemoNameRef.current === name) loadedOverrideRef.current = updated;
-      }
-      return next;
+      // Session-local only: makes the just-focused editor pane visible right now, but must NOT
+      // persist through `setEditorOverrideRef`/`loadedOverrideRef` — this is a display safety net,
+      // not an intentional user choice. Persisting a pane-mode change is exclusive to the explicit
+      // toolbar toggle (`onCyclePaneMode` above). See issue #79.
+      return "split";
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedPaneMode]);
