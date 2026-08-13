@@ -63,6 +63,7 @@
 
   --ttn-border: #d0d0d0;
   --ttn-border-strong: #b0b0b0;
+  --ttn-border-strongest: #8a8a8a;
 
   --ttn-accent: #4a90d9;
   --ttn-accent-bg: #cfe0f5;
@@ -74,6 +75,16 @@
 
   --ttn-overlay: rgba(0, 0, 0, 0.35);
   --ttn-shadow: rgba(0, 0, 0, 0.2);
+
+  /* `Toolbar/MarkdownToolbar.css`'s `.ttn-md-toolbar` "strong" contrast tier (GitHub issue #85)
+   * only, single use. `--ttn-toolbar-bg-strong` reuses `--ttn-bg-muted` unchanged in light (the
+   * fix there is the border/shadow below, not background) but reuses `--ttn-bg-hover-chrome`'s
+   * dark value in dark (see that block) since a dark-on-dark shadow barely reads no matter how
+   * deep — lightening the panel itself is the elevation cue instead. `--ttn-toolbar-shadow-strong`
+   * mirrors that split: light deepens the shadow, dark keeps the original depth and adds a 1px
+   * inset top rim-light instead. */
+  --ttn-toolbar-bg-strong: var(--ttn-bg-muted);
+  --ttn-toolbar-shadow-strong: 0 4px 14px var(--ttn-shadow);
 }
 
 :root[data-theme="light"] {
@@ -94,6 +105,7 @@
 
   --ttn-border: #d0d0d0;
   --ttn-border-strong: #b0b0b0;
+  --ttn-border-strongest: #8a8a8a;
 
   --ttn-accent: #4a90d9;
   --ttn-accent-bg: #cfe0f5;
@@ -105,6 +117,10 @@
 
   --ttn-overlay: rgba(0, 0, 0, 0.35);
   --ttn-shadow: rgba(0, 0, 0, 0.2);
+
+  /* See the bare `:root` block above for the rationale — same single use, light values. */
+  --ttn-toolbar-bg-strong: var(--ttn-bg-muted);
+  --ttn-toolbar-shadow-strong: 0 4px 14px var(--ttn-shadow);
 }
 
 :root[data-theme="dark"] {
@@ -125,6 +141,7 @@
 
   --ttn-border: #444444;
   --ttn-border-strong: #5a5a5a;
+  --ttn-border-strongest: #707070;
 
   --ttn-accent: #4a90d9;
   --ttn-accent-bg: #2c4a6e;
@@ -136,4 +153,13 @@
 
   --ttn-overlay: rgba(0, 0, 0, 0.55);
   --ttn-shadow: rgba(0, 0, 0, 0.5);
+
+  /* See the bare `:root` block above for the rationale. Dark-only: the panel is lightened to
+   * `--ttn-bg-hover-chrome`'s value (an existing hover-state token, repurposed here as a resting
+   * background — a dark-on-dark shadow can't carry the elevation cue no matter how deep) and the
+   * shadow keeps its original (non-deepened) depth with an added 1px inset top rim-light. */
+  --ttn-toolbar-bg-strong: var(--ttn-bg-hover-chrome);
+  --ttn-toolbar-shadow-strong:
+    0 2px 8px var(--ttn-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }

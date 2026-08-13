@@ -1,10 +1,15 @@
+/* GitHub issue #85 — "strong" contrast tier so the panel doesn't blend into the editor pane
+ * behind it. `--ttn-toolbar-bg-strong`/`--ttn-toolbar-shadow-strong`/`--ttn-border-strongest`
+ * (see `theme.css`) carry the light/dark-specific split: light gets a heavier border + deeper
+ * shadow, dark gets a lightened panel + inset rim-light instead of a deeper shadow (dark-on-dark
+ * shadows barely read). */
 .ttn-md-toolbar {
   position: absolute;
   z-index: 30;
-  background: var(--ttn-bg-muted);
-  border: 1px solid var(--ttn-border);
+  background: var(--ttn-toolbar-bg-strong);
+  border: 1.5px solid var(--ttn-border-strongest);
   border-radius: 6px;
-  box-shadow: 0 2px 8px var(--ttn-shadow);
+  box-shadow: var(--ttn-toolbar-shadow-strong);
   user-select: none;
 }
 
