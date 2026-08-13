@@ -243,12 +243,6 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     if (optimisticMinimized !== null && optimisticMinimized === settingsMinimized) setOptimisticMinimized(null);
   }, [settingsMinimized, optimisticMinimized]);
   const minimized = optimisticMinimized ?? settingsMinimized;
-  // Snapshot of `basePosition` taken immediately before minimizing, so un-minimizing restores the
-  // panel to where the user actually left it rather than to some recomputed default. Deliberately
-  // a ref, not a persisted setting: only this in-memory session needs it, and losing it across an
-  // app restart (falling back to `DEFAULT_POSITION` — see the layout effect below) is an acceptable
-  // edge case for something this minor.
-  const preMinimizePositionRef = useRef<Position | null>(null);
   // Set right before `setOptimisticMinimized` in `toggleMinimized` below, so the layout effect that
   // reacts to `minimized` changing can tell "the user just clicked the toggle" (snap/restore the
   // position) apart from "`minimized` changed because settings were reloaded from elsewhere" (in
@@ -336,15 +330,13 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
   useLayoutEffect(() => {
     if (!pendingMinimizeToggleRef.current) return;
     pendingMinimizeToggleRef.current = false;
-    if (minimized) {
-      // Any point past the pane's bottom-right corner resolves, via `clampToolbarPosition`'s
-      // per-axis clamp, to the true bottom-right corner for the current (now header-only) size.
-      clampAndApply({ x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY }, "immediate");
-    } else {
-      const restoreTo = preMinimizePositionRef.current ?? DEFAULT_POSITION;
-      preMinimizePositionRef.current = null;
-      clampAndApply(restoreTo, "immediate");
-    }
+    // Any point past the pane's bottom-right corner resolves, via `clampToolbarPosition`'s
+    // per-axis clamp, to the true bottom-right corner for the current size — the header-only box on
+    // minimize, or the full grid box on restore. Restore deliberately snaps to bottom-right rather
+    // than back to wherever the panel was before minimizing: minimize is reached from anywhere (drag,
+    // auto-minimize on preview pane-mode), so "restore to prior position" would sometimes just
+    // reproduce a spot the panel had been dragged out of the way from.
+    clampAndApply({ x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY }, "immediate");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minimized]);
 
@@ -353,7 +345,6 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
    * (`docs/plans/markdown/markdown-preview/PLAN.md` §6.2) without duplicating these four
    * state-setting/patch-settings lines. */
   const minimizeNow = () => {
-    preMinimizePositionRef.current = basePositionRef.current;
     pendingMinimizeToggleRef.current = true;
     setOptimisticMinimized(true);
     void patchSettings({ window: { toolbarMinimized: true } });
