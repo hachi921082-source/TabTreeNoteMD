@@ -401,8 +401,12 @@ class MarkdownDecorationsPlugin implements PluginValue {
     for (const span of findColorSpans(docText)) {
       if (overlapsAny(codeSkipRanges, span.openFrom, span.closeTo)) continue;
       if (span.style) addMark(span.contentFrom, span.contentTo, Decoration.mark({ attributes: { style: span.style } }));
-      if (!touchesSelection(state, span.openFrom, span.closeTo)) {
+      // Check open/close tag ranges independently — a cursor merely sitting inside the styled
+      // content (not touching either tag) must not reveal the tags. See issue #89.
+      if (!touchesSelection(state, span.openFrom, span.openTo)) {
         addReplace(span.openFrom, span.openTo, Decoration.replace({}));
+      }
+      if (!touchesSelection(state, span.closeFrom, span.closeTo)) {
         addReplace(span.closeFrom, span.closeTo, Decoration.replace({}));
       }
     }
