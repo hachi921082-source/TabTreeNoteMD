@@ -62,6 +62,7 @@
      border-right separator convention. */
   border-right: 1px solid var(--ttn-border);
   background: transparent;
+  color: var(--ttn-fg);
   width: 36px;
   font-size: calc(16px * var(--ui-font-scale));
   cursor: pointer;
