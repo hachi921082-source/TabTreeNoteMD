@@ -211,7 +211,10 @@ function currentSelectionOrLineText(view: EditorView): { from: number; to: numbe
 
 export function copyCommand(view: EditorView): boolean {
   const { text } = currentSelectionOrLineText(view);
-  void navigator.clipboard.writeText(text).catch((err) => console.warn("copy failed", err));
+  void navigator.clipboard
+    .writeText(text)
+    .catch((err) => console.warn("copy failed", err))
+    .finally(() => view.focus());
   return true;
 }
 
@@ -220,7 +223,8 @@ export function cutCommand(view: EditorView): boolean {
   void navigator.clipboard
     .writeText(text)
     .then(() => view.dispatch({ changes: { from, to, insert: "" } }))
-    .catch((err) => console.warn("cut failed", err));
+    .catch((err) => console.warn("cut failed", err))
+    .finally(() => view.focus());
   return true;
 }
 
@@ -228,7 +232,8 @@ export function pasteCommand(view: EditorView): boolean {
   void navigator.clipboard
     .readText()
     .then((text) => view.dispatch(view.state.replaceSelection(text)))
-    .catch((err) => console.warn("paste failed", err));
+    .catch((err) => console.warn("paste failed", err))
+    .finally(() => view.focus());
   return true;
 }
 
