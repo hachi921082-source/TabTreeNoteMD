@@ -76,15 +76,16 @@ export function scanHeadings(state: EditorState): HeadingInfo[] {
 
 // ---------------------------------------------------------------------------
 // TOC block generation (`docs/plans/table-of-contents/PLAN.md` §2) — nested Markdown list of
-// `[heading text](#slug)`, nesting depth following absolute heading level (an `##`/H2 heading always
-// indents one level relative to `#`/H1, regardless of which levels are actually present in this
-// particular document — the plan's own example, "an `##` heading nests one level under the preceding
-// `#` heading," reads as absolute-level nesting rather than nesting relative to this document's
-// shallowest heading).
+// `[heading text](#slug)`, nesting depth relative to the document's own shallowest heading level
+// (GitHub-style), not absolute heading level — a document whose shallowest heading is `##` gets that
+// `##` heading flat at the TOC's top level, with deeper headings indenting under it. A document that
+// already starts at `#`/H1 is unaffected (`minLevel` is 1, so the formula reduces to the old absolute
+// behavior). See `DECISIONS.md` "Table of Contents: Relative Heading-Nesting Indentation".
 // ---------------------------------------------------------------------------
 
 export function generateTocList(headings: HeadingInfo[]): string {
-  return headings.map((h) => `${"  ".repeat(h.level - 1)}- [${h.text}](#${h.slug})`).join("\n");
+  const minLevel = headings.length ? Math.min(...headings.map((h) => h.level)) : 1;
+  return headings.map((h) => `${"  ".repeat(h.level - minLevel)}- [${h.text}](#${h.slug})`).join("\n");
 }
 
 /** Exact marker text is this plan's own call (`docs/plans/table-of-contents/PLAN.md` §2) — any HTML

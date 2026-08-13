@@ -29,11 +29,11 @@ Feature: Table of Contents (TOC)", "Code-Fence Awareness in Markdown Scanning".
   slugs get `-1`, `-2`, ... suffixes as specified; both `tocUpdateCommand` (generation) and
   `resolveAndScrollToHeadingAnchor` (resolution) call this same `scanHeadings`/`slugifyHeading` pair, so
   the two can never disagree.
-- **Nesting depth is absolute heading level** (`generateTocList`), i.e. an H2 always indents one level
-  relative to H1 regardless of which levels are actually present in a given document — not indentation
-  relative to the document's own shallowest heading. The plan's own example ("an `##` heading nests one
-  level under the preceding `#` heading") reads as absolute-level nesting; this is implementation
-  discretion since the plan doesn't explicitly address a document whose first heading isn't H1.
+- **Nesting depth is relative to the document's own shallowest heading level** (`generateTocList`),
+  GitHub-style: a document whose shallowest heading is `##` gets that heading flat at the TOC's top
+  level, not indented one level as if a missing `#` preceded it. A document that already starts at `#`
+  is unaffected. Resolved via `docs/QA.md` → `DECISIONS.md` "Table of Contents: Relative Heading-Nesting
+  Indentation" (GitHub issue #84); originally shipped as absolute-level nesting, since revised.
 - **Marker text**: `<!-- TOC start -->` / `<!-- TOC end -->`, exactly as the plan's own example — no
   reason to deviate.
 - **Bug found and fixed during self-verification**: the first implementation inserted the new

@@ -824,8 +824,10 @@ in this §5.10 stayed here).
     part of a word). On duplicate slugs within the same document, append `-1`, `-2`, etc. to each
     later occurrence (first occurrence keeps the bare slug) — the same convention as re-used by the
     heading-anchor click resolution in §4.6/§5.8, so generation and resolution stay consistent.
-  - **TOC block generation**: a nested Markdown list of `[heading text](#slug)` links, nesting to match
-    heading-level hierarchy (e.g. an `##` heading nests one level under the preceding `#` heading).
+  - **TOC block generation**: a nested Markdown list of `[heading text](#slug)` links, nesting relative
+    to the document's shallowest heading level (e.g. if the shallowest heading is `##`, it becomes the
+    flat top-level TOC entry, and a following `###` nests one level under it) — see `docs/DECISIONS.md`
+    "Table of Contents: Relative Heading-Nesting Indentation".
   - **Marker-delimited block**: the generated TOC is wrapped in a pair of HTML-comment markers, e.g.
     `<!-- TOC start -->` / `<!-- TOC end -->` — exact marker text is `developer-lite`'s call (§9), as
     long as it stays inert/invisible in live-view rendering (HTML comments already render as nothing
