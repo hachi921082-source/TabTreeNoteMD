@@ -44,7 +44,11 @@ export function TreeSplitter({ treeWidth, collapsed, side, onPreview, onCommit, 
       // The tree pane sits on the "start" side of the splitter; dragging away from it grows it
       // when the tree is on the left, shrinks it when the tree is on the right.
       const signedDelta = side === "left" ? delta : -delta;
-      const next = Math.min(MAX_TREE_WIDTH, Math.max(MIN_TREE_WIDTH, origin.originWidth + signedDelta));
+      // Rounded to an integer: `WindowSettings.tree_width` is a Rust `u32` (`app_settings.rs`), so
+      // a fractional width committed on pointer-up fails `settings_set`'s IPC deserialization
+      // silently (GitHub issue #108) — only the always-integer `MIN`/`MAX_TREE_WIDTH` bounds
+      // happened to mask this when the drag ended exactly at either clamp.
+      const next = Math.round(Math.min(MAX_TREE_WIDTH, Math.max(MIN_TREE_WIDTH, origin.originWidth + signedDelta)));
       origin.lastWidth = next;
       onPreview(next);
     },
