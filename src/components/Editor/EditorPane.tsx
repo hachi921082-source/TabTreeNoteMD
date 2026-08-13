@@ -151,7 +151,14 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
   const editorDefaults = appSettings?.editorDefaults ?? FALLBACK_EDITOR_DEFAULTS;
   const resolvedSettings = useMemo(() => resolveEditorSettings(memoEditorOverride, editorDefaults), [memoEditorOverride, editorDefaults]);
-  const readOnly = Boolean(ed.content?.editLocked) || isMemoEditLocked || ed.conflict !== null;
+  // `isMemoEditLocked` is the live, always-current lock state (issue #12 — `App.tsx` derives it from
+  // `treeState.nodes`, refreshed on every `setEditLock` toggle). `ed.content?.editLocked` used to be
+  // OR'd in too, but it's only a one-time snapshot from `editor_load` time, never refreshed after —
+  // unlocking an already-open memo flipped the live term to `false` while the stale term stayed
+  // `true`, keeping the editor read-only until a reload (memo switch) happened to refresh it
+  // (GitHub issue #109; locking was unaffected since stale-`false` OR live-`true` still resolved
+  // correctly). `isMemoEditLocked` alone is authoritative, so the stale term is dropped entirely.
+  const readOnly = isMemoEditLocked || ed.conflict !== null;
 
   // Live/source view mode (`docs/plans/markdown-editing/PLAN.md` §3; persistence added for
   // GitHub issue #31 "Persist the Markdown toolbar's source/live view toggle per memo").
