@@ -129,18 +129,11 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
   // user's overrides actually change.
   const shortcuts = useMemo(() => resolveShortcuts(appSettings?.shortcuts), [appSettings?.shortcuts]);
 
-  // ---- F2 rename (default) / arrow-key nav: only while the tree container has focus, must not
-  // steal focus from a future editor pane (`[spec §2.2]`) --------
+  // ---- arrow-key nav: only while the tree container has focus, must not steal focus from a
+  // future editor pane (`[spec §2.2]`) --------
   const handleContainerKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (renamingPath) return; // let the inline rename input's own handler deal with it
-      if (comboFromEvent(e) === shortcuts["tree.rename"]) {
-        if (selection.selected.size === 1) {
-          e.preventDefault();
-          setRenamingPath(Array.from(selection.selected)[0]);
-        }
-        return;
-      }
       if (e.key === "ArrowDown") {
         e.preventDefault();
         tree.handleArrowNav("down");
@@ -149,7 +142,7 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
         tree.handleArrowNav("up");
       }
     },
-    [renamingPath, selection.selected, tree, shortcuts],
+    [renamingPath, tree],
   );
 
   // ---- force-delete (default Ctrl+Delete): global, regardless of current focus target --------
@@ -163,6 +156,11 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
     [tree],
   );
 
+  // ---- F2 rename (default): also global, regardless of current focus target — a plain click that
+  // opens a different memo auto-focuses the editor (`[spec §2.2]`, `[spec §9.1 item 3]`), so a tree
+  // container-scoped F2 handler would miss an F2 pressed right after that (GitHub issue #106);
+  // mirrors force-delete's own already-global pattern above rather than trying to special-case
+  // "was the editor auto-focused by the click that just opened this row" -------------------------
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (comboFromEvent(e) === shortcuts["tree.forceDelete"]) {
@@ -170,11 +168,19 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
         if (selected.length === 0) return;
         e.preventDefault();
         void requestDelete(selected);
+        return;
+      }
+      if (comboFromEvent(e) === shortcuts["tree.rename"]) {
+        if (renamingPath) return; // already renaming; let the inline input handle its own keys
+        if (selection.selected.size === 1) {
+          e.preventDefault();
+          setRenamingPath(Array.from(selection.selected)[0]);
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selection.selected, requestDelete, shortcuts]);
+  }, [selection.selected, requestDelete, shortcuts, renamingPath]);
 
   // ---- row interaction wiring --------------------------------------------
   const handleRowClick = useCallback(
