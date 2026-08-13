@@ -374,13 +374,24 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
 
   // Auto-minimize when pane-mode enters `"preview"` (`PLAN.md` §6.2) — not fully hiding the toolbar
   // (the header, and its pane-mode toggle button, stay visible) so there's always a visible escape
-  // hatch back to an editable view. Deliberately does NOT auto-restore when pane-mode leaves
-  // `"preview"` — the toolbar's minimize/restore is otherwise a simple one-way manual toggle
-  // everywhere else in this component; forcing a restore here would be an inconsistent special
-  // case with no stated requirement for it. Skipped while a slot reorder is in progress, mirroring
-  // `toggleMinimized`'s own `rearranging` guard above (same "keep this simple" rationale).
+  // hatch back to an editable view. Also auto-restores, unconditionally, on the `"preview"` ->
+  // non-`"preview"` transition (GitHub issue #105) — regardless of whether the toolbar reached
+  // minimized via this same effect or a manual `toggleMinimized` click beforehand; no separate
+  // "was this an auto-minimize" flag is tracked. Both directions are skipped while a slot reorder
+  // is in progress, mirroring `toggleMinimized`'s own `rearranging` guard above.
+  const prevPaneModeRef = useRef(paneMode);
   useEffect(() => {
-    if (paneMode === "preview" && !minimized && !rearranging) minimizeNow();
+    const prevPaneMode = prevPaneModeRef.current;
+    prevPaneModeRef.current = paneMode;
+    if (paneMode === "preview" && !minimized && !rearranging) {
+      minimizeNow();
+    } else if (prevPaneMode === "preview" && paneMode !== "preview" && minimized && !rearranging) {
+      // Same restore path `toggleMinimized`'s own restore branch uses — the `clampAndApply`
+      // snap-to-`preMinimizePositionRef` logic in the layout effect above applies unchanged.
+      pendingMinimizeToggleRef.current = true;
+      setOptimisticMinimized(false);
+      void patchSettings({ window: { toolbarMinimized: false } });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneMode]);
 
