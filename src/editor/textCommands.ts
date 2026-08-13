@@ -187,8 +187,20 @@ export function buildPlainTextExtensions(opts: BuildExtensionsOptions): Extensio
 // one module rather than reaching into `@codemirror/commands` directly.
 // ---------------------------------------------------------------------------
 
-export const undoCommand: Command = undo;
-export const redoCommand: Command = redo;
+/** Wraps `@codemirror/commands`' bare `undo`/`redo` to restore focus afterward — both the toolbar
+ * button and the context-menu entry that invoke these steal DOM focus onto themselves, and unlike
+ * `decorationCommands.ts`'s own functions (which already call `view.focus()` as their last step),
+ * the upstream commands don't (GitHub issue #114). */
+export const undoCommand: Command = (view) => {
+  const result = undo(view);
+  view.focus();
+  return result;
+};
+export const redoCommand: Command = (view) => {
+  const result = redo(view);
+  view.focus();
+  return result;
+};
 export const selectAllCommand: Command = selectAll;
 export const moveLineUpCommand: Command = moveLineUp;
 export const moveLineDownCommand: Command = moveLineDown;
