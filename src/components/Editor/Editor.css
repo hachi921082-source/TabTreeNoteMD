@@ -53,9 +53,24 @@
   flex: 1 1 50%;
   min-width: 0;
   overflow-y: auto;
-  padding: 8px 16px;
   box-sizing: border-box;
   border-left: 1px solid var(--ttn-border);
+}
+
+.ttn-editor-preview-pane-content {
+  padding: 8px 16px;
+}
+
+/* Preview-only pane mode (GitHub issue #115): constrains the rendered column to roughly A4's
+   170mm content width (210mm minus the 20mm margins `pdfExport.ts`'s `PRINT_STYLESHEET` already
+   uses for its `@page` rule), centered, so on-screen wrap points approximate what PDF export would
+   produce. Best-effort only — the app deliberately never fixes PDF export's own paper size
+   (`docs/MDEditor-spec.md` §6: "left to the OS/printer's own default"), so this can't be an exact
+   match for every user; split pane mode is unaffected (`.ttn-editor-preview-pane-content` alone,
+   no modifier, keeps using the full available pane width). */
+.ttn-editor-preview-pane-content-page {
+  max-width: 170mm;
+  margin: 0 auto;
 }
 
 .ttn-editor-preview-pane img {
