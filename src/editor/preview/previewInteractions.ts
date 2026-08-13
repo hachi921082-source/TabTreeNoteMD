@@ -126,7 +126,11 @@ export function attachPreviewInteractions(container: HTMLElement, config: Previe
       return;
     }
     const img = target.closest("img") as HTMLImageElement | null;
-    if (img && container.contains(img)) {
+    // `img.src` is only ever set once `getOrLoadImage` resolves successfully (`PreviewPane.tsx`'s
+    // async image-resolution effect) — before that (still carrying `data-relative-src` only) or
+    // after a permanent failure (`ttn-preview-image-failed`, `src` never set), `img.src` is empty.
+    // No-op rather than opening a lightbox with nothing to show (GitHub issue #103).
+    if (img && container.contains(img) && img.src && !img.classList.contains("ttn-preview-image-failed")) {
       config.onImageClick(img.src);
     }
   };
