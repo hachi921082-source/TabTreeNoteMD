@@ -46,7 +46,18 @@ export interface UseEditorResult {
   flushSaveNow: () => Promise<void>;
 }
 
-export function useEditor(tabId: string | null, memoName: string | null, appSettings: AppSettings | null): UseEditorResult {
+export function useEditor(
+  tabId: string | null,
+  memoName: string | null,
+  appSettings: AppSettings | null,
+  /** Live Edit Lock state for the open memo (`EditorPane.tsx`'s `isMemoEditLocked`, sourced from
+   * live tree state, issue #12/#109) — kept in sync into `editLockedRef` by a dedicated effect
+   * below, replacing the load-time-snapshot `content.editLocked` this ref used to mirror (GitHub
+   * issue #110: that snapshot never refreshed after an in-session unlock, so `flushSave` kept
+   * silently dropping saves for a window after unlocking, same staleness class #109 fixed for
+   * `readOnly`). */
+  isMemoEditLocked: boolean,
+): UseEditorResult {
   const [loading, setLoading] = useState(false);
   const [content, setContent] = useState<MemoContent | null>(null);
   const [loadGeneration, setLoadGeneration] = useState(0);
@@ -66,6 +77,12 @@ export function useEditor(tabId: string | null, memoName: string | null, appSett
   const debounceTimerRef = useRef<number | null>(null);
   const appSettingsRef = useRef<AppSettings | null>(appSettings);
   appSettingsRef.current = appSettings;
+
+  // Kept live rather than only set from `editor_load`'s load-time snapshot (GitHub issue #110) —
+  // see the constructor param's own doc comment above for the staleness bug this replaces.
+  useEffect(() => {
+    editLockedRef.current = isMemoEditLocked;
+  }, [isMemoEditLocked]);
 
   const clearLastError = useCallback(() => setLastErrorCode(null), []);
   const reportError = useCallback((code: ErrorCode) => setLastErrorCode(code), []);
@@ -148,7 +165,6 @@ export function useEditor(tabId: string | null, memoName: string | null, appSett
         textRef.current = result.value.text;
         lastSavedTextRef.current = result.value.text;
         lastSavedHashRef.current = result.value.hash;
-        editLockedRef.current = result.value.editLocked;
         setContent(result.value);
         setLoadGeneration((g) => g + 1);
       } else {
@@ -289,7 +305,6 @@ export function useEditor(tabId: string | null, memoName: string | null, appSett
       textRef.current = result.value.text;
       lastSavedTextRef.current = result.value.text;
       lastSavedHashRef.current = result.value.hash;
-      editLockedRef.current = result.value.editLocked;
       setContent(result.value);
       setLoadGeneration((g) => g + 1);
     } else {

@@ -130,7 +130,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   { tabId, memoName, focusEditorToken, appSettings, memoEditorOverride, isMemoEditLocked, setEditorOverride, patchSettings, onOpenMemoLink },
   ref,
 ) {
-  const ed = useEditor(tabId, memoName, appSettings);
+  const ed = useEditor(tabId, memoName, appSettings, isMemoEditLocked);
   useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow }));
   const search = useSearch();
 
