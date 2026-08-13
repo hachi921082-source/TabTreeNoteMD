@@ -73,6 +73,11 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
       e.preventDefault();
       if (e.key === "Escape") {
         e.stopPropagation();
+      } else if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) {
+        // A bare modifier keydown (e.g. `Ctrl` pressed on its own, on the way to `Ctrl+I`) is not a
+        // complete combo — keep the listener alive and keep waiting for the actual non-modifier key
+        // instead of committing prematurely (GitHub issue #111).
+        return;
       } else {
         const combo = comboFromEvent(e);
         void patchSettings({ shortcuts: { ...settings.shortcuts, [actionId]: combo } });
