@@ -34,6 +34,11 @@ export interface PreviewInteractionsConfig {
   confirmBeforeOpen: boolean;
   requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
   onOpenMemoLink: (tabId: string, memoName: string | null) => void;
+  /** Click-to-enlarge lightbox (issue #83, preview pane only — live-view's own image click
+   * behavior, #80, is untouched by this). Called with the clicked `<img>`'s current `src`, which by
+   * click time is already the resolved `blob:` URL from `getOrLoadImage`'s cache (`PreviewPane.tsx`'s
+   * async image-resolution effect populates it before the user can click) — no new loading needed. */
+  onImageClick: (src: string) => void;
 }
 
 /** GFM task-marker shape, matched against the start of a source line immediately after its
@@ -118,6 +123,11 @@ export function attachPreviewInteractions(container: HTMLElement, config: Previe
     const anchor = target.closest("a") as HTMLAnchorElement | null;
     if (anchor && container.contains(anchor)) {
       handleAnchorClick(e, anchor, container, config);
+      return;
+    }
+    const img = target.closest("img") as HTMLImageElement | null;
+    if (img && container.contains(img)) {
+      config.onImageClick(img.src);
     }
   };
   container.addEventListener("click", handler);
