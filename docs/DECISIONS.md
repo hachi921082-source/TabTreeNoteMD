@@ -474,3 +474,14 @@ now.
 **Note**: When this is eventually picked up, it will need its own UX design (drag mechanics, handle
 placement, aspect-ratio lock, minimum size) before implementation — starting with a `designer-lite`
 consultation, same as any other feature.
+
+## Table of Contents: Relative Heading-Nesting Indentation (GitHub issue #84, 2026-08-13)
+
+**Decision**: `generateTocList` (`src/editor/tocGenerator.ts`) indents each TOC entry relative to the
+document's own shallowest heading level, not absolute heading level — the shallowest heading becomes the
+TOC's flat top-level item regardless of its actual `#`-count, GitHub-style. A document that already
+starts at `#`/H1 is unaffected (identical output to the prior absolute-indentation behavior).
+
+**Rejected alternative**: keeping absolute-level indentation (the original v1 implementation) — rejected
+because a document whose shallowest heading isn't `#` then produces a TOC with no flat top-level item at
+all, which reads as visually broken.
