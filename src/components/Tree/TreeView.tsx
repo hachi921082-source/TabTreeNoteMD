@@ -375,6 +375,7 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
           void tree.getProperties(path).then((props) => setProperties(props));
         },
       },
+      { label: "ファイルの場所を開く", disabled: !singleSelection, onSelect: () => void tree.openLocation(path) },
       isLocked
         ? { label: "編集ロック解除", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, false) }
         : { label: "編集ロック", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, true) },
