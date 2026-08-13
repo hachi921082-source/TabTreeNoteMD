@@ -64,11 +64,38 @@
      look" PDF export prints verbatim, so it uses the full available column width. */
   max-width: 100%;
   height: auto;
+  /* Click-to-enlarge lightbox (issue #83, preview pane only) — the cursor is the only visible
+     affordance; live-view's own `.cm-md-image` is untouched (out of scope, #80). */
+  cursor: zoom-in;
 }
 
 .ttn-editor-preview-pane img.ttn-preview-image-failed {
   opacity: 0.5;
   border: 1px dashed var(--ttn-border-strong);
+}
+
+/* Click-to-enlarge lightbox (issue #83, preview pane only) — `Dialog`'s own `.ttn-dialog` caps at
+   `max-width: 480px`, too narrow for an enlarged image, so this widens the box to fit the image's
+   own `90vw` cap instead. */
+.ttn-lightbox-dialog {
+  max-width: 90vw;
+  padding: 0;
+  line-height: 0;
+}
+
+.ttn-lightbox-dialog .ttn-dialog-title {
+  display: none;
+}
+
+.ttn-lightbox-dialog .ttn-dialog-body {
+  margin-bottom: 0;
+}
+
+.ttn-lightbox-image {
+  display: block;
+  max-width: 90vw;
+  max-height: 80vh;
+  object-fit: contain;
 }
 
 .ttn-preview-table-wrap {

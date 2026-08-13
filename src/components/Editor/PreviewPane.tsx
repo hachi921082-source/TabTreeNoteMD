@@ -28,6 +28,7 @@ import { scrollPreviewToLine } from "../../editor/preview/scrollSync";
 import { getOrLoadImage } from "../../editor/imageLoader";
 import { computeTopVisibleLine } from "../../editor/textCommands";
 import type { AppSettings, ExternalLinkKind } from "../../shared/models";
+import { Dialog } from "../dialogs/Dialog";
 import "./Editor.css";
 
 export interface PreviewPaneProps {
@@ -63,6 +64,11 @@ export function PreviewPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState("");
 
+  // Click-to-enlarge lightbox (issue #83, preview pane only). Same wiring shape as
+  // `EditorPane.tsx`'s `requestExternalConfirm`/`pendingExternalLink`, minus the Promise-resolver
+  // part — an image click needs no confirmation, so it's a plain state write.
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
   // Debounced re-render on every doc change (`RENDERING.md` §4) — two independent debounce knobs
   // in this app (`AppSettings.preview.debounceMs` here vs. `AppSettings.autosave.plainDebounceMs`)
   // are never tied together; this one is a plain doc-changed timer, not a save-completion event.
@@ -86,8 +92,18 @@ export function PreviewPane({
     confirmBeforeOpen,
     requestExternalConfirm,
     onOpenMemoLink,
+    onImageClick: setLightboxSrc,
   });
-  configRef.current = { getView, tabId, readOnly, openTrigger, confirmBeforeOpen, requestExternalConfirm, onOpenMemoLink };
+  configRef.current = {
+    getView,
+    tabId,
+    readOnly,
+    openTrigger,
+    confirmBeforeOpen,
+    requestExternalConfirm,
+    onOpenMemoLink,
+    onImageClick: setLightboxSrc,
+  };
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -107,6 +123,9 @@ export function PreviewPane({
       },
       requestExternalConfirm: (kind, value) => configRef.current.requestExternalConfirm(kind, value),
       onOpenMemoLink: (targetTabId, memoName) => configRef.current.onOpenMemoLink(targetTabId, memoName),
+      // `setLightboxSrc` is a React state setter — referentially stable across renders, so (unlike
+      // the props-derived fields above) it needs no `configRef` indirection to stay fresh.
+      onImageClick: (src) => setLightboxSrc(src),
     });
   }, []);
 
@@ -164,24 +183,31 @@ export function PreviewPane({
   }, [renderTick]);
 
   return (
-    <div
-      className="ttn-editor-preview-pane"
-      ref={containerRef}
-      // Fully suppressed (`docs/MDEditor-spec.md` §2: "right-click shows no context menu at all...
-      // fully suppressed, not auto-reveal-then-show"). `stopPropagation` is required in addition to
-      // `preventDefault` — without it, the click would still bubble to `EditorPane.tsx`'s own
-      // `.ttn-editor-pane` container, whose `onContextMenu` handler opens this app's OWN
-      // Convert/Check/Search-with-Google/Properties context menu (not the native one) regardless of
-      // this pane's `preventDefault` call, contradicting the spec's "no context menu at all"
-      // (deviates from `RENDERING.md` §4.3's literal `onContextMenu={(e) => e.preventDefault()}`
-      // snippet, which alone would leave that outer app-level menu still showing — see this
-      // feature's implementation report).
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <div
+        className="ttn-editor-preview-pane"
+        ref={containerRef}
+        // Fully suppressed (`docs/MDEditor-spec.md` §2: "right-click shows no context menu at all...
+        // fully suppressed, not auto-reveal-then-show"). `stopPropagation` is required in addition to
+        // `preventDefault` — without it, the click would still bubble to `EditorPane.tsx`'s own
+        // `.ttn-editor-pane` container, whose `onContextMenu` handler opens this app's OWN
+        // Convert/Check/Search-with-Google/Properties context menu (not the native one) regardless of
+        // this pane's `preventDefault` call, contradicting the spec's "no context menu at all"
+        // (deviates from `RENDERING.md` §4.3's literal `onContextMenu={(e) => e.preventDefault()}`
+        // snippet, which alone would leave that outer app-level menu still showing — see this
+        // feature's implementation report).
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {lightboxSrc && (
+        <Dialog title="画像" className="ttn-lightbox-dialog" onClose={() => setLightboxSrc(null)}>
+          <img className="ttn-lightbox-image" src={lightboxSrc} alt="" />
+        </Dialog>
+      )}
+    </>
   );
 }
