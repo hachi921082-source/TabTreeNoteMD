@@ -689,6 +689,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
             getView={() => viewRef.current}
             renderTick={renderTick}
             debounceMs={appSettings?.preview.debounceMs ?? FALLBACK_PREVIEW_DEBOUNCE_MS}
+            paneMode={paneMode}
             tabId={tabId}
             memoKey={memoKey ?? ""}
             readOnly={readOnly}

@@ -27,7 +27,7 @@ import type { PreviewInteractionsConfig } from "../../editor/preview/previewInte
 import { scrollPreviewToLine } from "../../editor/preview/scrollSync";
 import { getOrLoadImage } from "../../editor/imageLoader";
 import { computeTopVisibleLine } from "../../editor/textCommands";
-import type { AppSettings, ExternalLinkKind } from "../../shared/models";
+import type { AppSettings, ExternalLinkKind, PaneMode } from "../../shared/models";
 import { Dialog } from "../dialogs/Dialog";
 import "./Editor.css";
 
@@ -37,6 +37,11 @@ export interface PreviewPaneProps {
    * re-render trigger rather than duplicating a second doc-change listener. */
   renderTick: number;
   debounceMs: number;
+  /** `"preview"` constrains the rendered content to a page-like column (GitHub issue #115) so its
+   * wrap points roughly approximate PDF export's own paper width — `"split"` (the only other value
+   * this component is ever mounted for) keeps stretching to the full available pane width,
+   * unchanged. */
+  paneMode: PaneMode;
   tabId: string | null;
   /** Image-cache scoping key (`docs/plans/markdown/image-handling/PLAN.md` §5.4) — `""` in the
    * (defensive-only; a memo is always open by the time this component mounts) case where no tab is
@@ -53,6 +58,7 @@ export function PreviewPane({
   getView,
   renderTick,
   debounceMs,
+  paneMode,
   tabId,
   memoKey,
   readOnly,
@@ -186,7 +192,6 @@ export function PreviewPane({
     <>
       <div
         className="ttn-editor-preview-pane"
-        ref={containerRef}
         // Fully suppressed (`docs/MDEditor-spec.md` §2: "right-click shows no context menu at all...
         // fully suppressed, not auto-reveal-then-show"). `stopPropagation` is required in addition to
         // `preventDefault` — without it, the click would still bubble to `EditorPane.tsx`'s own
@@ -200,9 +205,18 @@ export function PreviewPane({
           e.preventDefault();
           e.stopPropagation();
         }}
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      >
+        {/* Outer div above is the scroll container (full pane width/background regardless of pane
+            mode); this inner div is the actual content column — only it gets width-constrained in
+            preview-only mode (GitHub issue #115), so the pane's own background/scrollbar still span
+            the full width either way. */}
+        <div
+          className={`ttn-editor-preview-pane-content${paneMode === "preview" ? " ttn-editor-preview-pane-content-page" : ""}`}
+          ref={containerRef}
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </div>
       {lightboxSrc && (
         <Dialog title="画像" className="ttn-lightbox-dialog" onClose={() => setLightboxSrc(null)}>
           <img className="ttn-lightbox-image" src={lightboxSrc} alt="" />
