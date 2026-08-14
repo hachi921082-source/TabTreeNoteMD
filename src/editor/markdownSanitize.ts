@@ -38,6 +38,27 @@ export function filterStyleDeclarations(style: string): string {
     .join("; ");
 }
 
+/** Returns `style` with `prop`'s declaration replaced by `value` (added if absent), every other
+ * declaration left untouched — used to merge a newly-applied color/font-size into an existing
+ * `<span style="...">` instead of nesting a second span around it (GitHub issue #87, `nested
+ * <span>`s aren't part of the allowlisted shape `markdownSpanParser.ts`'s `SPAN_RE` parses). Does
+ * not itself allowlist-filter `style` — callers pass an already-filtered value (`ParsedColorSpan`'s
+ * `style` field, produced by `filterStyleDeclarations` above), and `prop`/`value` are always one of
+ * this module's own two allowed properties, supplied by the toolbar's closed color/size palettes. */
+export function mergeStyleDeclaration(style: string, prop: "color" | "font-size", value: string): string {
+  const kept = style
+    .split(";")
+    .map((decl) => decl.trim())
+    .filter(Boolean)
+    .filter((decl) => {
+      const colon = decl.indexOf(":");
+      if (colon === -1) return true;
+      return decl.slice(0, colon).trim().toLowerCase() !== prop;
+    });
+  kept.push(`${prop}: ${value}`);
+  return kept.join("; ");
+}
+
 /** `true` if `src` is safe under the allowlist: relative (no scheme, no leading `/`), and contains
  * no `..` path-traversal segment. Rejects `file://`, `http(s)://`, `javascript:`, protocol-relative
  * `//host/...`, absolute Windows/POSIX paths, and any segment equal to `..`. */
