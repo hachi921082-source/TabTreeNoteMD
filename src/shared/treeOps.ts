@@ -37,3 +37,12 @@ export function subtreeNames(node: TreeNode): string[] {
   for (const child of node.children) out.push(...subtreeNames(child));
   return out;
 }
+
+/** `true` if `node` or any descendant carries the per-memo Edit Lock (GitHub issue #156) — used to
+ * proactively disable "名前を変更"/"削除" in the UI (the backend independently rejects the same
+ * cases too, `memo_rename`/`memo_delete`), since deleting a node deletes its entire subtree
+ * (`[spec §2.2]`) and would otherwise silently destroy a locked descendant along with it. */
+export function subtreeHasLocked(node: TreeNode): boolean {
+  if (node.locked === true) return true;
+  return node.children.some(subtreeHasLocked);
+}
