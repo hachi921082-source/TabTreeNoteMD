@@ -146,6 +146,17 @@ function bareLinkCoreRule(state: StateCore): void {
   }
 }
 
+/** `linkify-it`'s `fuzzyLink: true` (set below for bare `www.`-token parity with the live view,
+ * per this module's own header comment) also fuzzy-matches any bare `word.tld` shape where `tld`
+ * is a *recognized* top-level domain — and every 2-letter country-code TLD is recognized by
+ * default, `.md` (Moldova) included. In a Markdown notes app, bare mentions of `*.md` filenames in
+ * prose are extremely common, so this false-positives constantly (GitHub issue #155). Scoped to
+ * exactly the fuzzy (schema-less, `match.schema === ""`) case — an explicit `[text](url)`
+ * link, a `<http://...>` autolink, or a genuine scheme-ful bare URL are untouched. */
+function isUnwantedMdFilenameFuzzyMatch(match: { schema: string; raw: string }): boolean {
+  return match.schema === "" && /^[^\s:/]+\.md$/i.test(match.raw) && !/^www\./i.test(match.raw);
+}
+
 /** Builds a fresh configured instance. Stateless across calls to `render`/`parse` — it retains no
  * per-document data, so `previewRenderer.ts` is free to call `.parse`/`.renderer.render` on the
  * same shared instance repeatedly (once per debounced re-render). */
@@ -153,6 +164,21 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
   const md = new MarkdownIt("default", { html: false, linkify: true, breaks: false });
   md.use(taskLists, { enabled: true });
   md.linkify.set({ fuzzyLink: true, fuzzyEmail: true });
+  // GitHub issue #155: filter out the "*.md" fuzzy-link false positive (see
+  // `isUnwantedMdFilenameFuzzyMatch` above) at the source — `md.linkify.match` is what
+  // markdown-it's built-in `linkify` core rule calls to find fuzzy-link candidates, so this stays
+  // in effect no matter which core rule consumes the result.
+  // Must return `[]`, never `null`, when every match got filtered out: markdown-it's own
+  // `linkify` core rule first calls `.test()` (untouched, still `true`) to decide whether to call
+  // `.match()` at all, then indexes straight into `.match()`'s result assuming a non-null array
+  // whenever `.test()` said yes — an empty array satisfies that same assumption (the `links.length
+  // > 0` check downstream just no-ops), but `null` crashes it.
+  const originalMatch = md.linkify.match.bind(md.linkify);
+  md.linkify.match = (text: string) => {
+    const matches = originalMatch(text);
+    if (!matches) return matches;
+    return matches.filter((m) => !isUnwantedMdFilenameFuzzyMatch(m));
+  };
   md.renderer.rules.table_open = wrapTableOpen;
   md.renderer.rules.table_close = wrapTableClose;
   md.renderer.rules.image = renderImageWithDeferredSrc;
