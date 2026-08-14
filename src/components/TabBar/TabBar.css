@@ -54,6 +54,12 @@
 }
 
 .ttn-tab-brand-word {
+  /* Without this, the 2px border-bottom adds to (rather than eats into) this element's `height:
+     100%` of its 30px-tall `.ttn-tab-brand` parent, overflowing it by 2px — which, since
+     `.ttn-tab-bar` only sets `overflow-x: auto` and leaves `overflow-y` at its `visible` default,
+     CSS's overflow-axis-pairing rule then silently promotes to `auto` too, producing a spurious
+     vertical scrollbar past the window controls (spotted live, not merged yet). */
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   height: 100%;
