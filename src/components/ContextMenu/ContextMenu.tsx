@@ -21,14 +21,27 @@ export interface ContextMenuItem {
    * a scroll fallback (see `useLayoutEffect` below), so this accordion approach doesn't need
    * per-submenu-flyout overflow handling of its own.
    */
-  submenu?: ContextMenuItem[];
+  submenu?: ContextMenuEntry[];
+}
+
+/** A thin divider between role-category groups (GitHub issue #117) — a plain marker item, not a
+ * `ContextMenuItem` variant, so existing item arrays/builders don't need a discriminated-union
+ * migration. Rendered in place of a button wherever it appears in `items`/`submenu`. */
+export interface ContextMenuSeparator {
+  type: "separator";
+}
+
+export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator;
+
+function isSeparator(entry: ContextMenuEntry): entry is ContextMenuSeparator {
+  return "type" in entry && entry.type === "separator";
 }
 
 export interface ContextMenuProps {
   /** Viewport coordinates (CSS pixels) of the triggering right-click. */
   x: number;
   y: number;
-  items: ContextMenuItem[];
+  items: ContextMenuEntry[];
   onClose: () => void;
 }
 
@@ -100,48 +113,56 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         maxHeight: position.maxHeight,
       }}
     >
-      {items.map((item, i) => (
-        <div key={i}>
-          <button
-            type="button"
-            role="menuitem"
-            aria-haspopup={item.submenu ? "true" : undefined}
-            aria-expanded={item.submenu ? expandedIndex === i : undefined}
-            className={`ttn-context-menu-item${item.danger ? " ttn-context-menu-item-danger" : ""}${item.submenu ? " ttn-context-menu-item-parent" : ""}`}
-            disabled={item.disabled}
-            onClick={() => {
-              if (item.submenu) {
-                setExpandedIndex((current) => (current === i ? null : i));
-                return;
-              }
-              onClose();
-              item.onSelect?.();
-            }}
-          >
-            {item.label}
-            {item.submenu && <span className="ttn-context-menu-caret">{expandedIndex === i ? "▾" : "▸"}</span>}
-          </button>
-          {item.submenu && expandedIndex === i && (
-            <div className="ttn-context-menu-submenu" role="menu">
-              {item.submenu.map((sub, j) => (
-                <button
-                  key={j}
-                  type="button"
-                  role="menuitem"
-                  className={`ttn-context-menu-item${sub.danger ? " ttn-context-menu-item-danger" : ""}`}
-                  disabled={sub.disabled}
-                  onClick={() => {
-                    onClose();
-                    sub.onSelect?.();
-                  }}
-                >
-                  {sub.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
+      {items.map((entry, i) => {
+        if (isSeparator(entry)) return <div key={i} className="ttn-context-menu-separator" role="separator" />;
+        const item = entry;
+        return (
+          <div key={i}>
+            <button
+              type="button"
+              role="menuitem"
+              aria-haspopup={item.submenu ? "true" : undefined}
+              aria-expanded={item.submenu ? expandedIndex === i : undefined}
+              className={`ttn-context-menu-item${item.danger ? " ttn-context-menu-item-danger" : ""}${item.submenu ? " ttn-context-menu-item-parent" : ""}`}
+              disabled={item.disabled}
+              onClick={() => {
+                if (item.submenu) {
+                  setExpandedIndex((current) => (current === i ? null : i));
+                  return;
+                }
+                onClose();
+                item.onSelect?.();
+              }}
+            >
+              {item.label}
+              {item.submenu && <span className="ttn-context-menu-caret">{expandedIndex === i ? "▾" : "▸"}</span>}
+            </button>
+            {item.submenu && expandedIndex === i && (
+              <div className="ttn-context-menu-submenu" role="menu">
+                {item.submenu.map((sub, j) =>
+                  isSeparator(sub) ? (
+                    <div key={j} className="ttn-context-menu-separator" role="separator" />
+                  ) : (
+                    <button
+                      key={j}
+                      type="button"
+                      role="menuitem"
+                      className={`ttn-context-menu-item${sub.danger ? " ttn-context-menu-item-danger" : ""}`}
+                      disabled={sub.disabled}
+                      onClick={() => {
+                        onClose();
+                        sub.onSelect?.();
+                      }}
+                    >
+                      {sub.label}
+                    </button>
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
