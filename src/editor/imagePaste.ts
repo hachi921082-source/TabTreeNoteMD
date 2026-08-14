@@ -29,6 +29,9 @@ export interface ImagePasteConfig {
   /** Tab the currently-open memo belongs to; `null` only when no tab is open at all (in which
    * case paste/insert is a no-op — there is nowhere to save the image). */
   tabId: string | null;
+  /** The currently-open memo — GitHub issue #139's per-memo image subfolder is named after this.
+   * `null` only when no memo is open (in which case, like `tabId`, paste/insert is a no-op). */
+  memoName: string | null;
   /** Reports a save failure so the caller can surface it as a non-blocking error
    * (`docs/plans/image-handling/PLAN.md` §6 step 4). Never called on success. */
   onError: (code: ErrorCode) => void;
@@ -54,12 +57,12 @@ async function readFileBytes(file: File): Promise<number[]> {
  * *before* the async `image_save_pasted` round-trip (at paste/pick time), matching where the user
  * was actually pointing — not recomputed after the await, since the selection may have moved by
  * then. `![alt](url)` with an empty `alt` (`PLAN.md` §4: "`alt` may be empty... not mandated"). */
-async function saveAndInsertImage(view: EditorView, tabId: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
+async function saveAndInsertImage(view: EditorView, tabId: string, memoName: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
   // Downscale oversized source images before saving (GitHub issue #82) — shared by both call
   // sites below since they both funnel through this function. No-op (returns `bytes` unchanged)
   // for already-small images, `image/gif`, missing `mimeHint`, or any decode/encode failure.
   const downscaledBytes = await downscaleImageIfNeeded(bytes, mimeHint);
-  const result = await imageSavePasted(tabId, downscaledBytes, mimeHint);
+  const result = await imageSavePasted(tabId, memoName, downscaledBytes, mimeHint);
   if (!result.ok) {
     onError(result.error.code);
     return;
@@ -80,13 +83,14 @@ export function imagePasteExtension(config: ImagePasteConfig): Extension {
   return EditorView.domEventHandlers({
     paste(event, view) {
       const imageItem = extractImageItem(event.clipboardData);
-      if (!imageItem || !config.tabId) return false;
+      if (!imageItem || !config.tabId || !config.memoName) return false;
       const file = imageItem.getAsFile();
       if (!file) return false;
       event.preventDefault();
       const tabId = config.tabId;
+      const memoName = config.memoName;
       const insertPos = view.state.selection.main.from;
-      void readFileBytes(file).then((bytes) => saveAndInsertImage(view, tabId, insertPos, bytes, file.type || null, config.onError));
+      void readFileBytes(file).then((bytes) => saveAndInsertImage(view, tabId, memoName, insertPos, bytes, file.type || null, config.onError));
       return true;
     },
   });
@@ -99,8 +103,8 @@ export function imagePasteExtension(config: ImagePasteConfig): Extension {
  * save-then-insert path as paste. No-op if no tab is open. Fire-and-forget (matches how the
  * toolbar's other actions dispatch synchronously; the actual save+insert completes asynchronously
  * once the user finishes the picker). */
-export function insertImageViaFilePicker(view: EditorView, tabId: string | null, onError: (code: ErrorCode) => void): void {
-  if (!tabId) return;
+export function insertImageViaFilePicker(view: EditorView, tabId: string | null, memoName: string | null, onError: (code: ErrorCode) => void): void {
+  if (!tabId || !memoName) return;
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/png,image/jpeg,image/gif,image/webp,image/bmp";
@@ -133,7 +137,7 @@ export function insertImageViaFilePicker(view: EditorView, tabId: string | null,
     const file = input.files?.[0];
     cleanup();
     if (!file) return;
-    void readFileBytes(file).then((bytes) => saveAndInsertImage(view, tabId, insertPos, bytes, file.type || null, onError));
+    void readFileBytes(file).then((bytes) => saveAndInsertImage(view, tabId, memoName, insertPos, bytes, file.type || null, onError));
   });
   input.addEventListener("cancel", onCancel);
   window.addEventListener("focus", onFocus);
