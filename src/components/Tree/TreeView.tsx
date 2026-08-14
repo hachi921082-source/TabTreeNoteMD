@@ -167,7 +167,9 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
         const selected = Array.from(selection.selected);
         if (selected.length === 0) return;
         e.preventDefault();
-        void requestDelete(selected);
+        // Same confirmation dialog as the right-click "削除" entry (GitHub issue #142) —
+        // Ctrl+Delete used to call `requestDelete` directly, skipping it entirely.
+        setPendingDialog({ kind: "deleteConfirm", paths: selected });
         return;
       }
       if (comboFromEvent(e) === shortcuts["tree.rename"]) {
