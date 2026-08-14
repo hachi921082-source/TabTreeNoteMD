@@ -399,6 +399,22 @@ pub fn memo_rename(
         return AppResult::err_code(code, "failed to rename memo file");
     }
 
+    // GitHub issue #139: follow-rename the memo's per-memo image subfolder, if it has one — a
+    // memo with no attachments has no such folder, so this is skipped rather than erroring. Best-
+    // effort: the `.md` rename above already succeeded, so a failure here (e.g. an orphaned
+    // folder from a previously-deleted, differently-attached memo already occupying `new_path`'s
+    // name — orphan folders are never auto-cleaned, `image-handling/PLAN.md` §5) is logged and the
+    // memo rename still completes rather than rolling back a successful file rename over it.
+    let old_image_folder = folder.join(&path);
+    let new_image_folder = folder.join(trimmed);
+    if old_image_folder.is_dir() {
+        registry.register(&old_image_folder);
+        registry.register(&new_image_folder);
+        if let Err(err) = with_retry(|| std::fs::rename(&old_image_folder, &new_image_folder)) {
+            tracing::warn!(error = %err, "memo_rename: failed to rename memo's image folder; images may now be orphaned under the old name");
+        }
+    }
+
     if let Some(node) = find_node_mut(&mut loaded.tree, &path) {
         node.memo_name = trimmed.to_string();
     }
