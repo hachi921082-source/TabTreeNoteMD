@@ -119,6 +119,16 @@
   overflow-x: auto;
 }
 
+/* GitHub issue #169: the live-view's `.cm-md-blockquote` (`markdownDecorations.ts`) gets a left
+   border/muted color, but the preview pane had no rule for the rendered `<blockquote>` element at
+   all, leaving it visually indistinguishable from a plain paragraph. Mirrors that live-view style. */
+.ttn-editor-preview-pane blockquote {
+  margin: 0;
+  border-left: 3px solid var(--ttn-border);
+  padding-left: 8px;
+  color: var(--ttn-fg-muted);
+}
+
 .ttn-editor-preview-pane pre,
 .ttn-editor-preview-pane code {
   font-family: "Consolas", "Cascadia Code", monospace;
