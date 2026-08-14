@@ -1,7 +1,11 @@
-//! Image save command (`docs/plans/image-handling/PLAN.md` §3). Images are saved directly under
-//! the tab's folder, sibling to `.md` files (`[spec §4.2]`) — they are never scanned as memos,
-//! never subject to tab-lock filename obfuscation, and never indexed by full-text search
-//! (`PLAN.md` §1). This command's write path is deliberately simpler than
+//! Image save command (`docs/plans/image-handling/PLAN.md` §3). For a plain (non-locked) tab,
+//! images are saved under a per-memo subfolder of the tab's folder (`<tab_folder>/<memo_name>/`,
+//! GitHub issue #139) rather than flat alongside `.md` files; a locked tab with an active unlock
+//! session keeps the old flat, anonymously-named scheme instead (see `image_save_pasted`'s own
+//! doc comment for why). Either way, images are never scanned as memos (only direct-child `.md`
+//! files are, `[spec §3.1]`), never subject to tab-lock's own `.md`-body obfuscation, and never
+//! indexed by full-text search (`PLAN.md` §1). This command's write path is deliberately simpler
+//! than
 //! `fs/atomic_write.rs`'s temp -> bak -> target dance: a freshly-generated image filename has no
 //! prior version to protect against losing, so this only needs temp -> target (no `.bak`
 //! rotation) — the "reasonable middle ground" `PLAN.md` §3 step 3 leaves to `developer-lite`,
@@ -20,7 +24,7 @@ use tauri::{AppHandle, State};
 
 use crate::commands::emit_settings_recovery_event;
 use crate::commands::tab_lock::{resolve_tab_access, TabAccess};
-use crate::fs::path_safety::{resolve_relative_within_base, AbsolutePathPolicy};
+use crate::fs::path_safety::{resolve_relative_within_base, validate_name, AbsolutePathPolicy, ValidationMode};
 use crate::fs::retry::{is_lock_class_error, with_retry};
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::fs::temp_naming::generate_temp_file_name;
@@ -32,22 +36,41 @@ use crate::store::lock_session_store::LockSessionStore;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedImage {
-    /// Filename only, relative to the tab folder — the Markdown body always references images
-    /// relatively (`[spec §4.2]`).
+    /// `<memo_name>/<NNN>.<ext>` for a plain tab (GitHub issue #139), or a flat, anonymous
+    /// `img_<hex>.<ext>` for a locked tab's active unlock session — relative to the tab folder
+    /// either way. The Markdown body always references images relatively (`[spec §4.2]`).
     pub relative_path: String,
     pub width: u32,
     pub height: u32,
 }
 
-/// Astronomically unlikely to ever loop (128 bits of randomness across the 8-byte suffix), but
-/// bounded defensively rather than looping forever (`PLAN.md` §2).
+/// Defensive bound on `next_sequence_number` re-scans below — in practice this command's calls
+/// are effectively serialized per-memo (a single desktop user pasting into one editor), so a
+/// freshly computed "one past the max" number is already guaranteed free; this only guards
+/// against looping forever in some unanticipated race (`PLAN.md` §2's collision-retry precedent).
 const MAX_FILENAME_COLLISION_ATTEMPTS: u32 = 10;
 
-/// `docs/plans/image-handling/PLAN.md` §3.
+/// GitHub issue #139: for a **plain** (non-locked) tab, images now live in a per-memo subfolder
+/// (`<tab_folder>/<memo_name>/`) instead of flat/random-hex directly under the tab folder, named
+/// sequentially (`001.png`, `002.png`, ...) so a memo's attachments are identifiable in the
+/// filesystem. The memo body itself stays flat (unaffected, out of scope — see the issue's
+/// resolution comment on why: it would conflict with `[spec §3.2]`'s flat-rebuild-on-metadata-loss
+/// crash recovery guarantee).
+///
+/// A **locked tab with an active unlock session** deliberately keeps the old flat/random-hex
+/// scheme instead: during a session the frontend deals in real memo names (`[spec §4.1]` point 4:
+/// "retain real tab name, structure... in memory as a lock session"), and `.md` bodies themselves
+/// are stored under obfuscated random-hex tokens specifically so nothing about a locked tab's
+/// real names is ever recoverable from the plain filesystem without the password
+/// (`session_rename_memo`'s own "the obfuscated token filename never reflects `memoName`" — same
+/// invariant `search_index` upholds by excluding locked/session tabs entirely, `[spec §2.4]`). A
+/// folder literally named after the real memo name would leak exactly that. `docs/plans/image-
+/// handling/PLAN.md` §3.
 #[tauri::command]
 pub fn image_save_pasted(
     app: AppHandle,
     tab_id: String,
+    memo_name: String,
     bytes: Vec<u8>,
     mime_hint: Option<String>,
     store: State<AppSettingsStore>,
@@ -57,17 +80,33 @@ pub fn image_save_pasted(
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
 
-    // Step 1: resolve the tab's target folder. A locked tab with an active session still saves
-    // the image as a plaintext, unobfuscated file directly in the folder — images are out of
-    // scope for tab-lock's `.md`-only encryption/obfuscation mechanism (`PLAN.md` §3 step 1) — so
-    // both branches below resolve to the same plain folder path. A locked tab with no session is
-    // not reachable here (the editor for that tab isn't open at all), so `resolve_tab_access`'s
-    // `Err(TabLocked)` case is simply propagated like any other command needs no special casing.
-    let folder = match resolve_tab_access(&settings, &sessions, &tab_id) {
-        Ok(TabAccess::Plain { folder, .. }) => folder,
-        Ok(TabAccess::Session { folder, .. }) => folder,
+    // `memo_name` is used as a filesystem path component below (plain-tab branch) — an IPC
+    // command can be invoked directly, bypassing the frontend's own memo-open state
+    // (`docs/MDEditor-spec.md` §5), so it needs the same server-side validation
+    // `memo_create`/`memo_rename` apply to memo names.
+    if validate_name(&memo_name, ValidationMode::Strict).is_err() {
+        return AppResult::err_code(ErrorCode::NameInvalid, "invalid memo name");
+    }
+
+    // Step 1: resolve the tab's target folder and whether it's the plain (per-memo subfolder) or
+    // locked-session (flat/anonymous, see this function's doc comment) case. A locked tab with no
+    // session is not reachable here (the editor for that tab isn't open at all), so
+    // `resolve_tab_access`'s `Err(TabLocked)` case is simply propagated like any other command
+    // needs no special casing.
+    let (folder, use_memo_subfolder) = match resolve_tab_access(&settings, &sessions, &tab_id) {
+        Ok(TabAccess::Plain { folder, .. }) => (folder, true),
+        Ok(TabAccess::Session { folder, .. }) => (folder, false),
         Err(e) => return AppResult::err(e),
     };
+
+    let save_dir = if use_memo_subfolder { folder.join(&memo_name) } else { folder.clone() };
+    if use_memo_subfolder {
+        if let Err(err) = fs::create_dir_all(&save_dir) {
+            tracing::error!(error = %err, path = %save_dir.display(), "image_save_pasted: failed to create the memo's image folder");
+            let code = if is_lock_class_error(&err) { ErrorCode::IoLocked } else { ErrorCode::Unknown };
+            return AppResult::err_code(code, "failed to create the memo's image folder");
+        }
+    }
 
     // Step 2: sniff the image format from the actual bytes first (magic-number detection); fall
     // back to the frontend-supplied MIME hint; default to `png` if neither yields an answer
@@ -84,17 +123,19 @@ pub fn image_save_pasted(
         }
     };
 
-    // Step 3 (filename): generate `img_<16 lowercase hex chars>.<ext>`, regenerating on the
-    // (astronomically unlikely) collision.
-    let mut target: Option<PathBuf> = None;
+    // Step 3 (filename): sequential `NNN.<ext>` (one past the largest existing number in
+    // `save_dir`, regardless of extension) for the plain-tab case; the old anonymous
+    // `img_<16 hex>.<ext>` for the locked-session case (this function's doc comment).
+    let mut target: Option<(PathBuf, String)> = None;
     for _ in 0..MAX_FILENAME_COLLISION_ATTEMPTS {
-        let candidate = folder.join(generate_image_filename(&ext));
+        let filename = if use_memo_subfolder { format!("{:03}.{ext}", next_sequence_number(&save_dir)) } else { generate_image_filename(&ext) };
+        let candidate = save_dir.join(&filename);
         if !candidate.exists() {
-            target = Some(candidate);
+            target = Some((candidate, filename));
             break;
         }
     }
-    let Some(target) = target else {
+    let Some((target, filename)) = target else {
         return AppResult::err_code(ErrorCode::Unknown, "failed to generate a unique image filename");
     };
 
@@ -105,10 +146,39 @@ pub fn image_save_pasted(
         return AppResult::err_code(code, "failed to save the pasted image");
     }
 
-    // Step 5: relative (filename-only) path, since images always live directly in the tab folder.
-    let relative_path = target.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+    // Step 5: relative path — `<memo_name>/<filename>` for the plain-tab case (always
+    // `/`-separated regardless of platform: this is embedded directly into `![](...)` Markdown,
+    // not used as a filesystem path again until `image_read_bytes`/`resolve_relative_within_base`
+    // re-parses it, which already accepts `/` on Windows too), or just `<filename>` (flat, as
+    // before) for the locked-session case.
+    let relative_path = if use_memo_subfolder { format!("{memo_name}/{filename}") } else { filename };
 
     AppResult::ok(SavedImage { relative_path, width, height })
+}
+
+fn generate_image_filename(ext: &str) -> String {
+    let mut bytes = [0u8; 8];
+    rand::rng().fill(&mut bytes);
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("img_{hex}.{ext}")
+}
+
+/// Scans `dir` for filenames whose stem is entirely ASCII digits (any extension), and returns one
+/// past the largest found — or `1` if the folder has none yet (GitHub issue #139).
+fn next_sequence_number(dir: &Path) -> u32 {
+    let max = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let stem = entry.path().file_stem()?.to_str()?.to_string();
+            if stem.is_empty() || !stem.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            stem.parse::<u32>().ok()
+        })
+        .max();
+    max.map_or(1, |m| m + 1)
 }
 
 /// Reads an image file's raw bytes and returns them as a raw-byte IPC response (Tauri 2.11.5's
@@ -153,13 +223,6 @@ pub fn image_read_bytes(
     })?;
 
     Ok(Response::new(bytes))
-}
-
-fn generate_image_filename(ext: &str) -> String {
-    let mut bytes = [0u8; 8];
-    rand::rng().fill(&mut bytes);
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("img_{hex}.{ext}")
 }
 
 /// Magic-number sniff first (`image::guess_format`), MIME-hint fallback, `png` default
@@ -239,6 +302,31 @@ mod tests {
     #[test]
     fn generated_filenames_differ() {
         assert_ne!(generate_image_filename("png"), generate_image_filename("png"));
+    }
+
+    #[test]
+    fn next_sequence_number_starts_at_one_for_an_empty_folder() {
+        let dir = tempdir();
+        assert_eq!(next_sequence_number(&dir), 1);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn next_sequence_number_is_one_past_the_existing_max_regardless_of_extension() {
+        let dir = tempdir();
+        fs::write(dir.join("001.png"), b"").unwrap();
+        fs::write(dir.join("003.jpg"), b"").unwrap();
+        assert_eq!(next_sequence_number(&dir), 4);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn next_sequence_number_ignores_non_numeric_stems() {
+        let dir = tempdir();
+        fs::write(dir.join("001.png"), b"").unwrap();
+        fs::write(dir.join("notes.md"), b"").unwrap();
+        assert_eq!(next_sequence_number(&dir), 2);
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
