@@ -26,7 +26,7 @@ import type { DecorationSet, PluginValue, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNodeRef } from "@lezer/common";
 import { checkboxDecoration } from "./checkboxClick";
-import { findColorSpans, findImageTags } from "./markdownSpanParser";
+import { findColorSpans, findImageTags, findMarkSpans } from "./markdownSpanParser";
 import type { DetectedLink, LinkKind } from "./links";
 import { linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens } from "./links";
 import { getOrLoadImage, hasImageLoadFailed } from "./imageLoader";
@@ -403,6 +403,17 @@ class MarkdownDecorationsPlugin implements PluginValue {
       if (span.style) addMark(span.contentFrom, span.contentTo, Decoration.mark({ attributes: { style: span.style } }));
       // Check open/close tag ranges independently — a cursor merely sitting inside the styled
       // content (not touching either tag) must not reveal the tags. See issue #89.
+      if (!touchesSelection(state, span.openFrom, span.openTo)) {
+        addReplace(span.openFrom, span.openTo, Decoration.replace({}));
+      }
+      if (!touchesSelection(state, span.closeFrom, span.closeTo)) {
+        addReplace(span.closeFrom, span.closeTo, Decoration.replace({}));
+      }
+    }
+    for (const span of findMarkSpans(docText)) {
+      if (overlapsAny(codeSkipRanges, span.openFrom, span.closeTo)) continue;
+      addMark(span.contentFrom, span.contentTo, Decoration.mark({ class: "cm-md-mark", attributes: span.style ? { style: span.style } : undefined }));
+      // Same open/close-tag-only reveal-on-touch behavior as the color-span loop above (issue #89).
       if (!touchesSelection(state, span.openFrom, span.openTo)) {
         addReplace(span.openFrom, span.openTo, Decoration.replace({}));
       }
