@@ -4,12 +4,14 @@
 }
 
 /* GitHub issue #153: `.ttn-tab-bar` itself keeps its original `align-items: stretch`/height so
- * `.ttn-tab-brand`/`.ttn-tab-bar-toolbar`/`<TitleBarControls>` (unrelated to this redesign) stay
- * exactly as tall as before — only `.ttn-tab`/`.ttn-tab-create` opt out via their own `align-self:
- * flex-end` + fixed height below, leaving the 6px gap above them that makes the rounded-top shape
- * read as tabs "poking up" rather than flush rectangles. `::after` replaces the old `border-bottom`
- * (which would otherwise cut straight across underneath the active tab too) with a bar spanning the
- * full width that the active tab's own bottom border punches a gap through (see `.ttn-tab-active`). */
+ * `.ttn-tab-bar-toolbar`/`<TitleBarControls>` (unrelated to this redesign) stay exactly as tall as
+ * before — `.ttn-tab`/`.ttn-tab-create` opt out via their own `align-self: flex-end` + fixed height
+ * below, leaving the 6px gap above them that makes the rounded-top shape read as tabs "poking up"
+ * rather than flush rectangles (`.ttn-tab-brand` below now opts into the same `flex-end` sizing too,
+ * for its own, deliberately different, bottom-edge treatment — GitHub issue #173). `::after` replaces
+ * the old `border-bottom` (which would otherwise cut straight across underneath the active tab too)
+ * with a bar spanning the full width that the active tab's own bottom border punches a gap through
+ * (see `.ttn-tab-active`). */
 .ttn-tab-bar {
   display: flex;
   align-items: stretch;
@@ -32,16 +34,48 @@
 
 /* App-name label (GitHub issue #153 follow-up) — this app's own UI never actually rendered its
  * name anywhere before; what looked like one in a screenshot was the OS window title, not this
- * component. Purely decorative, `flex: none` so it never shrinks the tabs. */
+ * component. Purely decorative, `flex: none` so it never shrinks the tabs.
+ *
+ * GitHub issue #173: the original plain-text version sat at the same height/weight/padding as the
+ * tabs beside it and was routinely misclicked as the first tab. Redistinguished on two axes at
+ * once rather than one: typography (small letterspaced uppercase caption instead of tab-sized
+ * text, plus a divider rule before the first real tab) *and* structure (a bottom-edge "shelf" line
+ * instead of a top-edge one — the exact inverse of `.ttn-tab-active`'s own top accent stripe below,
+ * so "accent on top" reads as "selectable/active" and "line on bottom" reads as "static heading"). */
 .ttn-tab-brand {
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  font-weight: 650;
-  font-size: calc(12px * var(--ui-font-scale));
-  color: var(--ttn-fg-muted);
-  white-space: nowrap;
+  align-self: flex-end;
+  height: 30px;
+  padding: 0 14px;
+  gap: 14px;
   flex: none;
+  white-space: nowrap;
+}
+
+.ttn-tab-brand-word {
+  /* Without this, the 2px border-bottom adds to (rather than eats into) this element's `height:
+     100%` of its 30px-tall `.ttn-tab-brand` parent, overflowing it by 2px — which, since
+     `.ttn-tab-bar` only sets `overflow-x: auto` and leaves `overflow-y` at its `visible` default,
+     CSS's overflow-axis-pairing rule then silently promotes to `auto` too, producing a spurious
+     vertical scrollbar past the window controls (spotted live, not merged yet). */
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  font-size: calc(10.5px * var(--ui-font-scale));
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ttn-fg-subtle);
+  border-bottom: 2px solid var(--ttn-border-strong);
+}
+
+.ttn-tab-brand-rule {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--ttn-border-strong);
 }
 
 .ttn-tab {
