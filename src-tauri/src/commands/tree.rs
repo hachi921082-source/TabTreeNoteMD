@@ -28,6 +28,7 @@ use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::fs::trash;
 use crate::model::app_settings::AppSettings;
 use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
+use crate::util::unique_name::resolve_unique_name;
 use crate::model::tab_meta::{TabMetaFile, TAB_META_FILE_NAME, TAB_META_SCHEMA_VERSION};
 use crate::model::tree::{Label, LabelColor, MemoEditorSettings, MetaTreeNode, NodePath};
 use crate::search::index::SearchIndex;
@@ -303,22 +304,22 @@ fn memo_create_impl(
     };
 
     let mut loaded = load_and_reconcile(&folder);
-    if contains_name(&loaded.tree, trimmed) {
-        return AppResult::err_code(ErrorCode::NameDuplicate, "a memo with this name already exists in this tab");
-    }
     if let Some(p) = parent {
         if find_node(&loaded.tree, p).is_none() {
             return AppResult::err_code(ErrorCode::NotFound, "parent memo not found");
         }
     }
+    // GitHub issue #97: creation auto-numbers past a duplicate name (`trimmed`, `trimmed(1)`, ...)
+    // instead of blocking — rename operations are unaffected (`memo_rename` below still blocks).
+    let resolved = resolve_unique_name(trimmed, |candidate| contains_name(&loaded.tree, candidate));
 
-    let file_path = folder.join(format!("{trimmed}.md"));
+    let file_path = folder.join(format!("{resolved}.md"));
     if let Err(err) = atomic_write(&file_path, b"", registry) {
         tracing::error!(error = %err, path = %file_path.display(), "memo_create: failed to create memo file");
         return AppResult::err_code(ErrorCode::Unknown, "failed to create memo file");
     }
 
-    let node = MetaTreeNode::default_for_new_file(trimmed.to_string());
+    let node = MetaTreeNode::default_for_new_file(resolved.clone());
     if let Err(code) = insert_node_at_end(&mut loaded.tree, parent, node) {
         return AppResult::err_code(code, "failed to insert memo into tree");
     }
@@ -330,7 +331,7 @@ fn memo_create_impl(
 
     // A brand-new file has no content yet, so this legitimately upserts an empty body
     // (`search-index/PLAN.md` §1's in-app update path).
-    search_index.upsert(tab_id, trimmed, "");
+    search_index.upsert(tab_id, &resolved, "");
 
     AppResult::ok(TreeSnapshot {
         nodes: loaded.tree,

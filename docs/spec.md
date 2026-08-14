@@ -337,7 +337,8 @@ Write, rename, delete operations each have short retries (e.g. 3–5 times, 50�
 | App settings JSON corruption | Same recovery. Re-generate with defaults and notify if total loss |
 | Decryption failure (tab lock) | `DECRYPT_FAILED` "Password incorrect". Return no contents |
 | External edit conflict | Detect via mtime + size + hash. If editing: `evt:conflict`, auto-save/input lock during resolution dialog |
-| Name duplicate/forbidden chars | Detect before file operation, block (`NAME_DUPLICATE` / `NAME_INVALID`). Never touch real files |
+| Name duplicate (create) | Memo/tab **creation** auto-numbers past a duplicate name (`name` → `name(1)` → `name(2)` ...) instead of blocking (GitHub issue #97) |
+| Name duplicate (rename) / forbidden chars | Detect before file operation, block (`NAME_DUPLICATE` / `NAME_INVALID`). Never touch real files |
 | Locked tab operation | Reject with `TAB_LOCKED` (§4.1) |
 | Long path | `LONG_PATH` warning. No formal support |
 | Unexpected exception | Always catch at boundary, convert to `{ok:false, code:'UNKNOWN'}`. Send renderer `code` / `message` / `path?` only; details logged internally in main process only |
@@ -356,7 +357,7 @@ Write, rename, delete operations each have short retries (e.g. 3–5 times, 50�
 
 ### 5.11 Name Sanitization / Validation
 
-Detect Windows forbidden characters, reserved names, leading/trailing spaces, trailing periods. Real-time validation display, replacement suggestions for `/` etc. Tab names must be unique, memo names unique within same tab's `.md` namespace. Long paths (260+ chars) trigger `LONG_PATH` warning.
+Detect Windows forbidden characters, reserved names, leading/trailing spaces, trailing periods. Real-time validation display, replacement suggestions for `/` etc. Tab names must be unique, memo names unique within same tab's `.md` namespace — **creating** a new tab/memo under an already-used name auto-numbers to the next free `name(N)` instead of being blocked (GitHub issue #97); **renaming** an existing tab/memo to an already-used name is still blocked (`NAME_DUPLICATE`, out of scope for #97). Long paths (260+ chars) trigger `LONG_PATH` warning.
 
 `[Base: 00-core-principles.md]`
 
