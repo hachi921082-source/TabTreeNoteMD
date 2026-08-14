@@ -160,6 +160,11 @@ export interface MemoEditorSettings {
   cursorAnchor?: number | null;
   /** CodeMirror `EditorSelection.main.head` — character offset into the document, at save time. */
   cursorHead?: number | null;
+  /** GitHub issue #149 — while `true`, `paneMode` is pinned at effectively `"preview"`: every
+   * auto-reveal call site (`EditorPane.tsx`'s `revealSplitIfPreviewOnly`) and the manual
+   * pane-mode-cycle toggle (`onCyclePaneMode`) itself become no-ops until this is explicitly
+   * cleared again. `null`/absent means unlocked (the default, pre-existing behavior). */
+  previewLocked?: boolean | null;
 }
 
 /** Runtime/UI-only reconciled tree element, returned by `tree_open`

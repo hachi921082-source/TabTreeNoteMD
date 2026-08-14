@@ -11,7 +11,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { EditorView } from "@codemirror/view";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Lock, Maximize2, Minimize2, Unlock } from "lucide-react";
 import { DEFAULT_TOOLBAR_ORDER, TOOLBAR_ACTIONS, normalizeToolbarOrder } from "../../../editor/toolbarSlots";
 import type { ToolbarActionId } from "../../../editor/toolbarSlots";
 import {
@@ -128,6 +128,11 @@ export interface MarkdownToolbarProps {
    * mutates the CodeMirror view, so the result of clicking a formatting button while pane-mode is
    * `"preview"` is actually visible instead of being applied to a hidden pane. */
   revealSplitIfPreviewOnly: () => void;
+  /** GitHub issue #149 — while `true`, pins the memo at effectively `"preview"`: the pane-mode
+   * button below renders disabled (unlocking is required first) and every auto-reveal trigger
+   * elsewhere becomes a no-op (`EditorPane.tsx`'s own guards). */
+  previewLocked: boolean;
+  onTogglePreviewLock: () => void;
   /** `true` while the memo is read-only (edit-locked, or a conflict dialog is open) — disables
    * every content-mutating slot except the rearrange toggle itself (`[spec §2.2]`). */
   readOnly: boolean;
@@ -170,6 +175,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     paneMode,
     onCyclePaneMode,
     revealSplitIfPreviewOnly,
+    previewLocked,
+    onTogglePreviewLock,
     readOnly,
     tabId,
     onImageError,
@@ -587,9 +594,24 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           type="button"
           className="ttn-md-toolbar-pane-mode"
           onClick={onCyclePaneMode}
+          disabled={previewLocked}
           aria-label={`ペイン表示モードを切り替え (現在: ${PANE_MODE_LABEL[paneMode]})`}
         >
           {PANE_MODE_LABEL[paneMode]}
+        </button>
+        {/* Preview-lock (GitHub issue #149) — pins the memo at effectively `"preview"`, disabling
+            the pane-mode button above and every auto-reveal trigger elsewhere until unlocked again
+            from here. Always clickable (unlike the pane-mode button, never itself disabled) so
+            there's always a way back out. */}
+        <button
+          type="button"
+          className="ttn-md-toolbar-preview-lock"
+          onClick={onTogglePreviewLock}
+          aria-pressed={previewLocked}
+          title={previewLocked ? "プレビュー固定を解除" : "プレビューに固定"}
+          aria-label={previewLocked ? "プレビュー固定を解除" : "プレビューに固定"}
+        >
+          {previewLocked ? <Lock size={14} /> : <Unlock size={14} />}
         </button>
         {/* PDF export (`docs/plans/markdown/pdf-export/PLAN.md` §4) — never gated on `readOnly`
             (§3's "printing never mutates the document" availability rule); only disabled when no

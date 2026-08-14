@@ -209,7 +209,33 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const resolvedPaneMode = memoEditorOverride?.paneMode ?? editorDefaults.paneMode;
   const [paneModeOverride, setPaneModeOverride] = useState<PaneMode | null>(null);
   const paneMode = paneModeOverride ?? resolvedPaneMode;
+
+  // Preview-lock (`GitHub issue #149`): pins the memo at effectively `"preview"`, overriding every
+  // auto-reveal call site and the manual cycle toggle below — same per-memo-override write path and
+  // reset-to-null-on-memo-switch treatment as `paneModeOverride`/`liveViewOverride` above, but a
+  // plain boolean rather than a 3-state cycle.
+  const resolvedPreviewLocked = memoEditorOverride?.previewLocked ?? false;
+  const [previewLockOverride, setPreviewLockOverride] = useState<boolean | null>(null);
+  const previewLocked = previewLockOverride ?? resolvedPreviewLocked;
+  const onTogglePreviewLock = useCallback(() => {
+    setPreviewLockOverride((current) => {
+      const currentLocked = current !== null ? current : resolvedPreviewLocked;
+      const next = !currentLocked;
+      const name = memoNameRef.current;
+      if (name) {
+        const updated = { ...overrideRef.current, previewLocked: next };
+        void setEditorOverrideRef.current(name, updated);
+        if (loadedMemoNameRef.current === name) loadedOverrideRef.current = updated;
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedPreviewLocked]);
+
   const onCyclePaneMode = useCallback(() => {
+    // While locked, the pane-mode-cycle toggle itself is a no-op — must be explicitly unlocked
+    // first (`onTogglePreviewLock` above), not bypassable through this button/shortcut.
+    if (previewLocked) return;
     setPaneModeOverride((current) => {
       const currentMode = current !== null ? current : resolvedPaneMode;
       const next = PANE_MODE_CYCLE[currentMode];
@@ -222,7 +248,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedPaneMode]);
+  }, [resolvedPaneMode, previewLocked]);
   /** Reveal helper (§4.4's auto-reveal principle): forces pane-mode to `split` if (and only if) it
    * is currently `preview`, otherwise leaves it untouched (e.g. `edit` is never disturbed). Called
    * by every action that expects to focus/scroll/mutate the CodeMirror view while pane-mode is
@@ -230,8 +256,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
    * auto-reveal call sites listed in the plan (Ctrl+F, tree-row click, cross-tab search jump,
    * `memo:` link navigation, toolbar formatting buttons) already only ever act on the CodeMirror
    * view, which stays fully mounted (just `display:none`) even while pane-mode is `preview`, per
-   * §4.2 — no separate reveal call was needed at those other sites for this initial cut. */
+   * §4.2 — no separate reveal call was needed at those other sites for this initial cut.
+   * GitHub issue #149: a complete no-op while `previewLocked` — the whole point of the lock is that
+   * these auto-reveal triggers stop forcing `split` open at all. */
   const revealSplitIfPreviewOnly = useCallback(() => {
+    if (previewLocked) return;
     setPaneModeOverride((current) => {
       const currentMode = current !== null ? current : resolvedPaneMode;
       if (currentMode !== "preview") return current;
@@ -242,7 +271,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       return "split";
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedPaneMode]);
+  }, [resolvedPaneMode, previewLocked]);
   const handleToggleLiveView = useCallback(() => {
     revealSplitIfPreviewOnly();
     onToggleLiveView();
@@ -434,6 +463,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // (if any) is the one that wins, not clobbered by this reset running after it.
     setLiveViewOverride(null);
     setPaneModeOverride(null);
+    setPreviewLockOverride(null);
     if (focusEditorTokenRef.current !== consumedFocusTokenRef.current) {
       consumedFocusTokenRef.current = focusEditorTokenRef.current;
       view.focus();
@@ -719,6 +749,8 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         paneMode={paneMode}
         onCyclePaneMode={onCyclePaneMode}
         revealSplitIfPreviewOnly={revealSplitIfPreviewOnly}
+        previewLocked={previewLocked}
+        onTogglePreviewLock={onTogglePreviewLock}
         readOnly={readOnly}
         tabId={tabId}
         onImageError={ed.reportError}

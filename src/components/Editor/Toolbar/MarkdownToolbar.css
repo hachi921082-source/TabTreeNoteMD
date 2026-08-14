@@ -60,6 +60,44 @@
   cursor: pointer;
 }
 
+.ttn-md-toolbar-pane-mode:disabled {
+  color: var(--ttn-fg-subtle);
+  cursor: default;
+}
+
+/* Preview-lock toggle (GitHub issue #149) — same compact icon-button treatment as
+ * `.ttn-md-toolbar-minimize-btn`, sitting right after `.ttn-md-toolbar-pane-mode`. `aria-pressed`
+ * (locked) gets the same "active" accent fill `.ttn-toolbar-btn-active` uses elsewhere in the app's
+ * chrome (`TabBar.css`), so a locked memo's header reads as visibly different at a glance. */
+.ttn-md-toolbar-preview-lock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ttn-fg);
+  cursor: pointer;
+}
+
+.ttn-md-toolbar-preview-lock:hover {
+  background: var(--ttn-bg-chrome);
+  border-color: var(--ttn-border);
+}
+
+.ttn-md-toolbar-preview-lock[aria-pressed="true"] {
+  background: var(--ttn-accent-bg);
+  border-color: var(--ttn-border);
+}
+
+.ttn-md-toolbar-preview-lock[aria-pressed="true"]:hover {
+  background: var(--ttn-accent-bg-hover);
+}
+
 /* `docs/plans/markdown/pdf-export/PLAN.md` §4 — PDF-export trigger button. Follows
  * `.ttn-md-toolbar-pane-mode`'s own styling (same header row, sits right after it). */
 .ttn-md-toolbar-pdf-export {

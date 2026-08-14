@@ -133,6 +133,12 @@ pub struct MemoEditorSettings {
     /// CodeMirror `EditorSelection.main.head` — character offset into the document, at save time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_head: Option<u32>,
+    /// GitHub issue #149 — while `true`, `pane_mode` is pinned at effectively `"preview"`: every
+    /// auto-reveal call site and the manual pane-mode-cycle toggle itself become no-ops on the
+    /// frontend (`EditorPane.tsx`) until this is explicitly cleared again. Absent/`None` means
+    /// unlocked (the default, pre-existing behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_locked: Option<bool>,
 }
 
 #[cfg(test)]
