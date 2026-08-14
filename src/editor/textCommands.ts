@@ -229,7 +229,16 @@ export const redoCommand: Command = (view) => {
   view.focus();
   return result;
 };
-export const selectAllCommand: Command = selectAll;
+// GitHub issue #148: unlike the sibling commands above, `selectAll` alone never refocuses the
+// view. Triggered from the right-click menu, the view is never focused to begin with by that
+// point — CodeMirror then only paints the resulting selection as the unfocused/inactive style
+// (no real native DOM Selection), so a later right-click anywhere collapses it back to a caret
+// before "Copy" ever runs, copying just the current line instead of the whole document.
+export const selectAllCommand: Command = (view) => {
+  const result = selectAll(view);
+  view.focus();
+  return result;
+};
 export const moveLineUpCommand: Command = moveLineUp;
 export const moveLineDownCommand: Command = moveLineDown;
 export const duplicateLineCommand: Command = copyLineDown;
