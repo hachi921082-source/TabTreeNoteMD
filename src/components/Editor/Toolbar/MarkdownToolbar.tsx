@@ -296,26 +296,34 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persistedPositionKey]);
 
-  // Window-resize clamp (GitHub issue #24): shrinking the window can leave a previously-in-bounds
-  // toolbar stranded outside the (now smaller) pane; growing the window intentionally leaves the
-  // toolbar's position untouched (`clampAndApply` only moves it when the clamp actually changes the
-  // value). `requestAnimationFrame`-coalesced since `resize` fires on every tick of an interactive
-  // window-drag-resize, not just once at the end — the visual clamp (`setBasePosition`, inside
-  // `clampAndApply`) still applies on every coalesced tick, but the settings write itself is
-  // additionally debounced (`"debounced"`) since even rAF-coalescing alone (~60/s) is far more
-  // frequent than this app's settings-write budget tolerates (see `clampAndApply`'s doc comment).
+  // Pane-resize clamp (GitHub issue #24, generalized): shrinking the editor pane can leave a
+  // previously-in-bounds toolbar stranded outside it, reproducing #24's duplicate-scrollbar /
+  // title-bar-scrolled-out-of-view symptom; growing it intentionally leaves the toolbar's position
+  // untouched (`clampAndApply` only moves it when the clamp actually changes the value). A
+  // `ResizeObserver` on the pane itself (not `window`'s own `resize` event, #24's original
+  // mechanism) is a strict superset: it also fires when the pane shrinks for a reason OTHER than
+  // the window itself resizing — e.g. `components/Layout/TreeSplitter.tsx`'s tree-pane drag, which
+  // changes the editor pane's flex-computed width via a sibling element's inline style, never
+  // dispatching a `window` `resize` event at all (GitHub issue #138's regression report: dragging
+  // the tree pane to its max width could strand the toolbar with the same symptom #24 already
+  // fixed for window resizing specifically). `requestAnimationFrame`-coalesced for the same reason
+  // the old listener was — `ResizeObserver` can fire faster than every animation frame during a
+  // continuous drag — with the settings write itself additionally debounced (`"debounced"`, see
+  // `clampAndApply`'s doc comment).
   useEffect(() => {
+    const pane = panelRef.current?.offsetParent as HTMLElement | null;
+    if (!pane) return;
     let raf = 0;
-    const handleResize = () => {
+    const observer = new ResizeObserver(() => {
       if (raf) return;
       raf = window.requestAnimationFrame(() => {
         raf = 0;
         clampAndApply(basePositionRef.current, "debounced");
       });
-    };
-    window.addEventListener("resize", handleResize);
+    });
+    observer.observe(pane);
     return () => {
-      window.removeEventListener("resize", handleResize);
+      observer.disconnect();
       if (raf) window.cancelAnimationFrame(raf);
       if (resizePersistTimerRef.current !== null) window.clearTimeout(resizePersistTimerRef.current);
     };
