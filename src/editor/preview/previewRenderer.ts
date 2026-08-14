@@ -6,7 +6,7 @@
 import type { EditorState } from "@codemirror/state";
 import DOMPurify from "dompurify";
 import { createPreviewMarkdownIt } from "./markdownIt";
-import { findColorSpans, findImageTags } from "../markdownSpanParser";
+import { findColorSpans, findImageTags, findMarkSpans } from "../markdownSpanParser";
 import { scanHeadings } from "../tocGenerator";
 
 // One shared instance — stateless across `parse`/`render` calls (see `markdownIt.ts`'s own doc
@@ -100,6 +100,17 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
       fragment: `<span data-source-line="${lineNo0}"${styleAttr}>${innerText}</span>`,
     });
   }
+  for (const span of findMarkSpans(text)) {
+    if (overlapsAny(codeSkipRanges, span.openFrom, span.closeTo)) continue;
+    const innerText = escapeHtml(text.slice(span.contentFrom, span.contentTo));
+    const lineNo0 = state.doc.lineAt(span.openFrom).number - 1;
+    const styleAttr = span.style ? ` style="${escapeHtml(span.style)}"` : "";
+    matches.push({
+      from: span.openFrom,
+      to: span.closeTo,
+      fragment: `<mark data-source-line="${lineNo0}"${styleAttr}>${innerText}</mark>`,
+    });
+  }
   for (const img of findImageTags(text)) {
     if (overlapsAny(codeSkipRanges, img.from, img.to)) continue;
     const widthAttr = img.width != null ? ` width="${img.width}"` : "";
@@ -175,8 +186,8 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
   const clean = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [
       "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "hr",
-      "table", "thead", "tbody", "tr", "th", "td", "a", "strong", "em", "del", "s", "span", "img",
-      "input", "div", "br",
+      "table", "thead", "tbody", "tr", "th", "td", "a", "strong", "em", "del", "s", "span", "mark",
+      "img", "input", "div", "br",
     ],
     ALLOWED_ATTR: [
       "data-source-line", "id", "href", "style", "src", "alt", "width", "height",
