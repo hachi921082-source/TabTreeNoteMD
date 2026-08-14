@@ -22,6 +22,10 @@ pub enum ErrorCode {
     MetaCorrupt,
     LongPath,
     TabLocked,
+    /// Per-memo Edit Lock (`TreeNode.locked`, distinct from `TabLocked`'s whole-tab password
+    /// lock) blocks `memo_rename`/`memo_delete` on the locked memo, or on any memo inside a
+    /// requested delete's subtree (GitHub issue #156).
+    MemoEditLocked,
     /// An entry was found in the "both or neither exist" anomalous state while permanently
     /// unlocking a tab (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §3) — surfaced during the
     /// *ordinary* (non-recovery) permanent-unlock loop, a case the lock direction's own ordinary
