@@ -565,7 +565,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         runOnView(tableCommand);
         break;
       case "image":
-        runOnView((v) => insertImageViaFilePicker(v, tabId, onImageError));
+        runOnView((v) => insertImageViaFilePicker(v, tabId, memoName, onImageError));
         break;
     }
   };
