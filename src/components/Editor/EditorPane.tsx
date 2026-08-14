@@ -17,7 +17,7 @@ import type { AppSettings, AppSettingsPatch, EditorDefaults, ExternalLinkKind, M
 import { errorMessageFor } from "../../shared/errorMessages";
 import { formatDateTime } from "../../shared/formatDateTime";
 import { ContextMenu } from "../ContextMenu/ContextMenu";
-import type { ContextMenuItem } from "../ContextMenu/ContextMenu";
+import type { ContextMenuEntry } from "../ContextMenu/ContextMenu";
 import { Dialog } from "../dialogs/Dialog";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { SearchPanel } from "../Search/SearchPanel";
@@ -612,13 +612,17 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     if (view) fn(view);
   };
 
-  const buildMenuItems = (): ContextMenuItem[] => [
+  // Separators group the menu by role (GitHub issue #117): history / clipboard-selection / line
+  // & text ops / markdown checkbox / search / display toggle / properties.
+  const buildMenuItems = (): ContextMenuEntry[] => [
     { label: "元に戻す", onSelect: () => runOnView(undoCommand), disabled: readOnly },
     { label: "やり直す", onSelect: () => runOnView(redoCommand), disabled: readOnly },
+    { type: "separator" },
     { label: "切り取り", onSelect: () => runOnView(cutCommand), disabled: readOnly },
     { label: "コピー", onSelect: () => runOnView(copyCommand) },
     { label: "貼り付け", onSelect: () => runOnView(pasteCommand), disabled: readOnly },
     { label: "すべて選択", onSelect: () => runOnView(selectAllCommand) },
+    { type: "separator" },
     {
       label: "行操作",
       submenu: [
@@ -641,10 +645,14 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         { label: "スペースをタブに", onSelect: () => runOnView(convertSpacesToTabs(resolvedSettings.tabWidth)), disabled: readOnly },
       ],
     },
+    { type: "separator" },
     { label: "チェック（☐/☑）", onSelect: () => runOnView(cycleCheckbox), disabled: readOnly },
+    { type: "separator" },
     { label: "Googleで検索", onSelect: () => runOnView(searchSelectionWithGoogle) },
     { label: "検索と置換", onSelect: () => search.open() },
+    { type: "separator" },
     { label: showWhitespace ? "空白/改行の表示を消す" : "空白/改行を表示", onSelect: () => setShowWhitespace((v) => !v) },
+    { type: "separator" },
     {
       label: "プロパティ",
       onSelect: () => {
