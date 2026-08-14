@@ -377,8 +377,13 @@ pub fn memo_rename(
     };
 
     let mut loaded = load_and_reconcile(&folder);
-    if find_node(&loaded.tree, &path).is_none() {
+    let Some(existing) = find_node(&loaded.tree, &path) else {
         return AppResult::err_code(ErrorCode::NotFound, "memo not found");
+    };
+    // GitHub issue #156: an edit-locked memo must not be renamed either, not just have its body
+    // protected from edits.
+    if existing.locked == Some(true) {
+        return AppResult::err_code(ErrorCode::MemoEditLocked, "memo is edit-locked");
     }
     if !path.eq_ignore_ascii_case(trimmed) && contains_name(&loaded.tree, trimmed) {
         return AppResult::err_code(ErrorCode::NameDuplicate, "a memo with this name already exists in this tab");
@@ -469,6 +474,14 @@ pub fn memo_delete(
     }
     if all_names.is_empty() {
         return AppResult::err_code(ErrorCode::NotFound, "no matching memo to delete");
+    }
+    // GitHub issue #156: reject the whole batch if edit-locked memo is anywhere in scope — either
+    // directly selected or a descendant of a selected node (deleting a node deletes its entire
+    // subtree, so a locked descendant would otherwise be silently destroyed too). All-or-nothing
+    // rather than silently excluding just the locked ones, so a multi-select delete never produces
+    // a partial, surprising result.
+    if all_names.iter().any(|n| find_node(&loaded.tree, n).and_then(|node| node.locked) == Some(true)) {
+        return AppResult::err_code(ErrorCode::MemoEditLocked, "one or more memos in this delete are edit-locked");
     }
 
     // Sync order (`[detailed-spec §6.3]`): file operation first. On any
