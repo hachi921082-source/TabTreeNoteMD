@@ -1,6 +1,7 @@
-// Small, targeted parser for exactly the two allowlisted inline HTML fragments the Markdown
+// Small, targeted parser for exactly the allowlisted inline HTML fragments the Markdown
 // decoration layer supports (`docs/plans/markdown-editing/PLAN.md` §2/§6):
 //   <span style="color:...;font-size:...">...</span>
+//   <mark>...</mark> / <mark style="color:...;font-size:...">...</mark>  (GitHub issue #112)
 //   <img src="relative/path.png" width=".." height="..">
 // This is intentionally NOT a general HTML parser and must not be extended to accept anything
 // outside this allowlist without a spec change (`[spec §4.2]`). The Lezer Markdown parser
@@ -28,6 +29,23 @@ export interface ParsedColorSpan {
   style: string;
 }
 
+export interface ParsedMarkSpan {
+  /** Offset of the `<mark` opening tag's `<`. */
+  openFrom: number;
+  /** Offset just past the opening tag's `>`. */
+  openTo: number;
+  contentFrom: number;
+  contentTo: number;
+  /** Offset of the `</mark>` closing tag's `<`. */
+  closeFrom: number;
+  /** Offset just past the closing tag's `>`. */
+  closeTo: number;
+  /** Already filtered to only `color`/`font-size` declarations (`markdownSanitize.ts`), same
+   * allowlist `<span style="...">` reuses. Empty string for a plain `<mark>` (no `style`
+   * attribute) or one whose `style` had nothing allowlisted survive. */
+  style: string;
+}
+
 export interface ParsedImageTag {
   /** Offset of the `<img` tag's `<`. */
   from: number;
@@ -42,6 +60,11 @@ export interface ParsedImageTag {
  * spans on the same line don't get merged into one match. Does not support nested `<span>`s (not
  * part of the allowlisted shape). */
 const SPAN_RE = /<span\s+style="([^"]*)"\s*>([\s\S]*?)<\/span>/gi;
+
+/** Matches one `<mark>...</mark>` or `<mark style="...">...</mark>` pair — `style` is optional,
+ * unlike `SPAN_RE`, since a plain unstyled `<mark>` (relying on its default highlight styling) is
+ * itself a valid allowlisted use (GitHub issue #112). */
+const MARK_RE = /<mark(?:\s+style="([^"]*)")?\s*>([\s\S]*?)<\/mark>/gi;
 
 /** Matches a single, self-contained `<img ...>` tag (no closing tag expected). Attribute order is
  * not assumed. */
@@ -83,6 +106,34 @@ export function findColorSpans(text: string): ParsedColorSpan[] {
       closeFrom,
       closeTo,
       style: filterStyleDeclarations(styleRaw),
+    });
+    void inner;
+  }
+  return results;
+}
+
+/** Scans `text` for every allowlisted `<mark>`/`<mark style="...">` pair. Same code-fence-exclusion
+ * contract as `findColorSpans` above. */
+export function findMarkSpans(text: string): ParsedMarkSpan[] {
+  const results: ParsedMarkSpan[] = [];
+  let m: RegExpExecArray | null;
+  MARK_RE.lastIndex = 0;
+  while ((m = MARK_RE.exec(text))) {
+    const [full, styleRaw, inner] = m;
+    const openTagMatch = /^<mark(?:\s+style="[^"]*")?\s*>/i.exec(full);
+    const openLen = openTagMatch ? openTagMatch[0].length : 0;
+    const openFrom = m.index;
+    const openTo = openFrom + openLen;
+    const closeTo = openFrom + full.length;
+    const closeFrom = closeTo - "</mark>".length;
+    results.push({
+      openFrom,
+      openTo,
+      contentFrom: openTo,
+      contentTo: closeFrom,
+      closeFrom,
+      closeTo,
+      style: styleRaw ? filterStyleDeclarations(styleRaw) : "",
     });
     void inner;
   }
