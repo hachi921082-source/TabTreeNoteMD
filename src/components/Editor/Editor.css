@@ -207,6 +207,17 @@
   padding: 0 2px;
 }
 
+/* `<mark>...</mark>` highlight (GitHub issue #112) — matches the browser default `<mark>`
+   appearance (dark text on a yellow background) so the live view and an inline `style="color:..."`
+   override (if present, via the `attributes.style` on the same decoration) both read consistently
+   with the preview pane's plain `<mark>` element. */
+.cm-md-mark {
+  background: #fff3a0;
+  color: #1a1a1a;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .cm-md-list-mark { font-weight: 700; color: var(--ttn-fg-muted); }
 .cm-md-quote-mark { color: var(--ttn-fg-subtle); }
 
