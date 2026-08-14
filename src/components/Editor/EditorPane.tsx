@@ -208,15 +208,20 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // site below, not inside `onToggleLiveView` itself).
   const resolvedPaneMode = memoEditorOverride?.paneMode ?? editorDefaults.paneMode;
   const [paneModeOverride, setPaneModeOverride] = useState<PaneMode | null>(null);
-  const paneMode = paneModeOverride ?? resolvedPaneMode;
 
-  // Preview-lock (`GitHub issue #149`): pins the memo at effectively `"preview"`, overriding every
-  // auto-reveal call site and the manual cycle toggle below — same per-memo-override write path and
+  // Preview-lock (`GitHub issue #149`): pins the memo at effectively `"preview"` regardless of the
+  // underlying `paneModeOverride`/`resolvedPaneMode` — overriding every auto-reveal call site and
+  // the manual cycle toggle below too — same per-memo-override write path and
   // reset-to-null-on-memo-switch treatment as `paneModeOverride`/`liveViewOverride` above, but a
   // plain boolean rather than a 3-state cycle.
   const resolvedPreviewLocked = memoEditorOverride?.previewLocked ?? false;
   const [previewLockOverride, setPreviewLockOverride] = useState<boolean | null>(null);
   const previewLocked = previewLockOverride ?? resolvedPreviewLocked;
+  // `previewLocked` wins over whatever `paneModeOverride`/`resolvedPaneMode` happen to already be
+  // — e.g. issue #165's edit-lock coupling engages the lock without changing the memo's own
+  // paneMode field at all, so without this the toolbar would show a *disabled* "編集のみ"/"分割表示"
+  // button instead of visibly landing on preview.
+  const paneMode = previewLocked ? "preview" : (paneModeOverride ?? resolvedPaneMode);
   const onTogglePreviewLock = useCallback(() => {
     setPreviewLockOverride((current) => {
       const currentLocked = current !== null ? current : resolvedPreviewLocked;
@@ -231,6 +236,14 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedPreviewLocked]);
+  // GitHub issue #165: `memo_set_edit_lock` now also drives the persisted `previewLocked` value
+  // server-side. If the user had already manually toggled the preview-lock button for the
+  // currently-open memo (leaving `previewLockOverride` non-null), that stale local override would
+  // otherwise mask the server-driven change until the next memo switch — re-sync to the persisted
+  // value whenever the live edit-lock state changes for whichever memo is open right now.
+  useEffect(() => {
+    setPreviewLockOverride(null);
+  }, [isMemoEditLocked]);
 
   const onCyclePaneMode = useCallback(() => {
     // While locked, the pane-mode-cycle toggle itself is a no-op — must be explicitly unlocked
