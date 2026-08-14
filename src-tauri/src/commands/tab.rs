@@ -24,6 +24,7 @@ use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::model::tab_meta::TabMetaFile;
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::LockSessionStore;
+use crate::util::unique_name::resolve_unique_name;
 
 /// Tab-bar list entry (`docs/plans/tab-management/PLAN.md` §2 `tab_list`).
 /// For a locked tab, `name` is already the 🔒-placeholder stored in
@@ -155,29 +156,29 @@ pub fn tab_create_new(app: AppHandle, name: String, store: State<AppSettingsStor
         return AppResult::err_code(ErrorCode::Unknown, "failed to prepare the default tabs folder");
     }
 
-    let folder_path = tabs_root.join(&trimmed);
-    if folder_path.exists() {
-        return AppResult::err(
-            AppErrorPayload::new(ErrorCode::NameDuplicate, "a folder with this name already exists").with_path(folder_path.to_string_lossy().to_string()),
-        );
-    }
+    // GitHub issue #97: creation auto-numbers past a duplicate name (`trimmed`, `trimmed(1)`, ...)
+    // instead of blocking — rename operations are unaffected (`tab_rename` below still blocks).
+    let resolved = resolve_unique_name(&trimmed, |candidate| tabs_root.join(candidate).exists());
+    let folder_path = tabs_root.join(&resolved);
 
     if let Err(err) = std::fs::create_dir(&folder_path) {
         tracing::error!(error = %err, path = %folder_path.display(), "tab_create_new: failed to create the new tab folder");
         return AppResult::err_code(ErrorCode::Unknown, "failed to create the new tab folder");
     }
 
-    match register_tab_at_path(&app, folder_path.clone(), Some(trimmed), &store, &registry) {
+    match register_tab_at_path(&app, folder_path.clone(), Some(resolved), &store, &registry) {
         Ok(info) => AppResult::ok(info),
         Err(payload) => {
             // Don't leave an orphaned folder on disk if registration failed after we already
-            // created it (e.g. a tab-name collision against a *different* folder). Must be
-            // `remove_dir_all`, not `remove_dir`: by this point `register_tab_at_path` has
-            // already written `.tabtreenote.json` into `folder_path` (its own "initialize meta
-            // file" step runs before its duplicate-name check), so the folder is never actually
-            // empty here — `remove_dir` (empty-directories-only) silently no-ops with an
-            // "ディレクトリが空ではありません" IO error in this exact case, verified via manual
-            // reproduction during implementation.
+            // created it (e.g. the locked-placeholder-name exemption path below, or an
+            // unexpected settings-persistence error — a display-name collision against another
+            // registered tab no longer lands here, issue #97, since `register_tab_at_path` now
+            // auto-numbers past it too). Must be `remove_dir_all`, not `remove_dir`: by this
+            // point `register_tab_at_path` has already written `.tabtreenote.json` into
+            // `folder_path` (its own "initialize meta file" step runs first), so the folder is
+            // never actually empty here — `remove_dir` (empty-directories-only) silently no-ops
+            // with an "ディレクトリが空ではありません" IO error in this exact case, verified via
+            // manual reproduction during implementation.
             if let Err(err) = std::fs::remove_dir_all(&folder_path) {
                 tracing::error!(error = %err, path = %folder_path.display(), "tab_create_new: failed to clean up orphaned folder after a failed registration");
             }
@@ -235,36 +236,35 @@ fn register_tab_at_path(
     }
 
     let id = generate_tab_id();
-    let new_entry = TabSettingsEntry {
-        id: id.clone(),
-        name: proposed_name.clone(),
-        folder_path: folder_path.clone(),
-        locked: Some(already_locked),
-    };
 
     let result = store.modify(registry, |settings| {
-        // The placeholder name is allowed to collide with another locked tab's — `tab_lock`'s
-        // own step 10 placeholder swap on an already-registered tab doesn't run this
-        // duplicate-name check either, so registering a second locked tab under the same 🔒
-        // placeholder must not be treated differently here.
-        if !already_locked {
-            let duplicate = settings.tabs.iter().any(|t| t.name.eq_ignore_ascii_case(&proposed_name));
-            if duplicate {
-                // `path` is attached so the frontend can retry with a different
-                // name for the same already-picked folder without re-opening the
-                // OS folder dialog (`tab-management/PLAN.md` §2 step 2's retry
-                // requirement).
-                return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "a tab with this name already exists").with_path(folder_path.clone()));
-            }
-        }
-        settings.tabs.push(new_entry.clone());
+        // GitHub issue #97: creation auto-numbers past a duplicate display name instead of
+        // blocking — rename operations are unaffected (`tab_rename` below still blocks). The
+        // placeholder name is allowed to collide with another locked tab's regardless of this —
+        // `tab_lock`'s own step 10 placeholder swap on an already-registered tab doesn't run this
+        // check either, so only the non-locked branch resolves uniqueness.
+        let final_name = if already_locked {
+            proposed_name.clone()
+        } else {
+            resolve_unique_name(&proposed_name, |candidate| settings.tabs.iter().any(|t| t.name.eq_ignore_ascii_case(candidate)))
+        };
+        settings.tabs.push(TabSettingsEntry {
+            id: id.clone(),
+            name: final_name,
+            folder_path: folder_path.clone(),
+            locked: Some(already_locked),
+        });
         Ok(())
     });
 
     match result {
-        Ok(Ok((_settings, outcome))) => {
+        Ok(Ok((settings, outcome))) => {
             emit_settings_recovery_event(app, outcome);
-            Ok(TabInfo { id, name: proposed_name, locked: already_locked })
+            // The just-pushed entry's final (possibly auto-numbered) name, looked up by `id`
+            // rather than threaded out of the closure directly (`AppSettingsStore::modify`'s
+            // closure return type is a plain `Result<(), E>`).
+            let name = settings.tabs.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or(proposed_name);
+            Ok(TabInfo { id, name, locked: already_locked })
         }
         Ok(Err(payload)) => Err(payload),
         Err(io_err) => {
