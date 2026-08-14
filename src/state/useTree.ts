@@ -31,6 +31,29 @@ import { applyClick, clearSelection, flattenVisible, moveSelection } from "../sh
 
 export type TreeMutationOutcome = { ok: true } | { ok: false; code: ErrorCode; message: string };
 
+/** The just-created memo is always appended as the last child of its parent (or the last
+ * root-level node, when `parent` is omitted) — `insert_node_at_end` (`commands/tree.rs`). Walking
+ * the FRESH post-create snapshot for this, rather than trusting the caller-supplied `name`
+ * directly, is what makes this correct under GitHub issue #97's creation-time auto-numbering
+ * (`name` -> `name(1)` on a collision) — `memo_create_impl`'s response doesn't otherwise surface
+ * the resolved name explicitly (GitHub issue #143). `null` only if `parent` doesn't resolve to any
+ * node in `nodes` (defensive; shouldn't happen for a create that just succeeded against this exact
+ * snapshot). */
+function lastChildName(nodes: TreeNode[], parent: string | undefined): string | null {
+  if (parent === undefined) {
+    return nodes.length > 0 ? nodes[nodes.length - 1].memoName : null;
+  }
+  const stack: TreeNode[] = [...nodes];
+  while (stack.length > 0) {
+    const node = stack.pop() as TreeNode;
+    if (node.memoName === parent) {
+      return node.children.length > 0 ? node.children[node.children.length - 1].memoName : null;
+    }
+    stack.push(...node.children);
+  }
+  return null;
+}
+
 export interface UseTreeResult {
   /** The tab this tree instance is bound to (`null` when no tab is active). Used by
    * `TreeView`'s cross-tab DND to no-op a drop back onto the tree's own already-active tab. */
@@ -206,18 +229,32 @@ export function useTree(tabId: string | null): UseTreeResult {
 
   const clearLastError = useCallback(() => setLastErrorCode(null), []);
 
+  /** Selects, opens, and auto-focuses the newly-created memo — same effect as clicking its row
+   * right after creation (GitHub issue #143). Operates on the FRESH snapshot's `nodes` directly
+   * (via `lastChildName`) rather than reading `flatOrder`/`nodes` state, which wouldn't reflect
+   * this creation yet within the same synchronous callback (state updates from `applySnapshot`
+   * above haven't flushed). */
+  const focusJustCreated = useCallback((nodes: TreeNode[], parent: string | undefined) => {
+    const createdName = lastChildName(nodes, parent);
+    if (!createdName) return;
+    setSelection({ selected: new Set([createdName]), anchor: createdName });
+    setOpenMemoName(createdName);
+    setFocusEditorToken((t) => t + 1);
+  }, []);
+
   const createMemo = useCallback(
     async (name: string, parent?: string): Promise<TreeMutationOutcome> => {
       if (!tabId) return { ok: false, code: "UNKNOWN", message: "no active tab" };
       const result = await memoCreate(tabId, name, parent);
       if (result.ok) {
         applySnapshot(result.value);
+        focusJustCreated(result.value.nodes, parent);
         return { ok: true };
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
     },
-    [tabId, applySnapshot],
+    [tabId, applySnapshot, focusJustCreated],
   );
 
   const createChildMemo = useCallback(
@@ -226,12 +263,13 @@ export function useTree(tabId: string | null): UseTreeResult {
       const result = await memoCreateChild(tabId, name, parent);
       if (result.ok) {
         applySnapshot(result.value);
+        focusJustCreated(result.value.nodes, parent);
         return { ok: true };
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
     },
-    [tabId, applySnapshot],
+    [tabId, applySnapshot, focusJustCreated],
   );
 
   const renameMemo = useCallback(
