@@ -831,6 +831,11 @@ pub fn memo_set_editor_override(
 /// Toggles the per-memo **edit lock** (`locked?: boolean`) — body-edit-only block, no password,
 /// distinct from tab lock (`[spec §2.2]`). This command only persists the flag; refusing edits
 /// when set is `editor-save/PLAN.md`'s responsibility.
+///
+/// GitHub issue #165: also drives `MemoEditorSettings.preview_locked` (issue #149's preview-lock)
+/// to the same value, symmetrically — an edit-locked memo has nothing editable to show, so it's
+/// pinned to preview; unlocking releases the pin too. One-directional: the preview-lock toolbar
+/// button remains independently togglable and never writes back to `locked`.
 #[tauri::command]
 pub fn memo_set_edit_lock(
     app: AppHandle,
@@ -843,6 +848,7 @@ pub fn memo_set_edit_lock(
 ) -> AppResult<TreeSnapshot> {
     mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
         node.locked = Some(locked);
+        node.editor.get_or_insert_with(Default::default).preview_locked = Some(locked);
         Ok(())
     })
 }
