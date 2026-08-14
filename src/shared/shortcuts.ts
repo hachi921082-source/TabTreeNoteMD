@@ -103,3 +103,30 @@ function normalizeKeyName(key: string): string {
   if (key.length === 1) return key.toUpperCase();
   return key; // e.g. "Tab", "Delete", "F2", "Escape"
 }
+
+/** Every combo this app's own shortcut system has claimed — used to keep CodeMirror's own
+ * built-in `@codemirror/commands` keymaps (`defaultKeymap`/`historyKeymap`) from silently
+ * shadowing them (GitHub issue #140: several, including a destructive one, do). Static, built from
+ * `DEFAULT_SHORTCUTS` rather than the live per-session `AppSettings.shortcuts` override — a user
+ * who rebinds one of these 16+ actions to a combo that happens to newly collide with a CodeMirror
+ * built-in is a separate, out-of-scope follow-up (`AppSettings.shortcuts`'s live value isn't
+ * threaded into the CodeMirror extension-building layer at all today). */
+export const RESERVED_COMBOS = new Set(Object.values(DEFAULT_SHORTCUTS));
+
+/** Converts one CodeMirror `KeyBinding.key`/`.win` string (e.g. `"Mod-i"`, `"Shift-Mod-k"`) into
+ * this app's own `"Ctrl+I"`/`"Ctrl+Shift+K"` combo format, for comparison against
+ * `RESERVED_COMBOS`/`comboFromEvent`'s output. Windows-only translation (`Mod` -> `Ctrl`,
+ * `Ctrl` passed through as-is) — this app's primary target platform (`docs/spec.md` §6: "Windows
+ * 11 primary target"); a binding's separate `.mac`/`.linux` fields are irrelevant here since they
+ * never apply on Windows regardless of this app's own combo choices. */
+export function normalizeCodeMirrorKey(cmKey: string): string {
+  const segments = cmKey.split("-");
+  const keyPart = segments[segments.length - 1];
+  const modifiers = segments.slice(0, -1);
+  const parts: string[] = [];
+  if (modifiers.includes("Mod") || modifiers.includes("Ctrl")) parts.push("Ctrl");
+  if (modifiers.includes("Alt")) parts.push("Alt");
+  if (modifiers.includes("Shift")) parts.push("Shift");
+  parts.push(normalizeKeyName(keyPart));
+  return parts.join("+");
+}

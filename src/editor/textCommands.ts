@@ -7,12 +7,13 @@
 import { Compartment, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, highlightWhitespace, keymap, lineNumbers } from "@codemirror/view";
-import type { Command } from "@codemirror/view";
+import type { Command, KeyBinding } from "@codemirror/view";
 import { copyLineDown, defaultKeymap, deleteLine, history, historyKeymap, insertNewlineKeepIndent, moveLineDown, moveLineUp, redo, selectAll, undo } from "@codemirror/commands";
 import { search } from "@codemirror/search";
 import jaconv from "jaconv";
 import type { EditorDefaults, MemoEditorSettings } from "../shared/models";
 import { linkOpenExternal } from "../ipc/link";
+import { RESERVED_COMBOS, normalizeCodeMirrorKey } from "../shared/shortcuts";
 
 // ---------------------------------------------------------------------------
 // Settings resolution (`[spec §3.4]`: per-memo override falls back to `AppSettings.editorDefaults`)
@@ -158,6 +159,32 @@ function editorPaletteExtension(): Extension {
   });
 }
 
+/** Neutralizes any `@codemirror/commands` binding whose `.key` collides with a combo this app's
+ * own rebindable shortcut system has reserved (`RESERVED_COMBOS`) — otherwise CodeMirror's own
+ * keymap facet (which fires on `.cm-content` before the event ever bubbles to the `window`-level
+ * dispatcher in `components/Editor/EditorPane.tsx`) silently shadows the app's own action for that
+ * combo, since a matched CodeMirror binding calls `preventDefault()` (GitHub issue #140 — Ctrl+I,
+ * Ctrl+Z, Ctrl+Y, Ctrl+Shift+K, and Ctrl+Delete all collided this way; the last of those is
+ * destructive, silently deleting a word/line instead of running the app's own bound action).
+ *
+ * A neutralized binding still matches its key (`run: () => true, preventDefault: true`) rather
+ * than being dropped outright — `.cm-content` is a live `contenteditable` region, and simply
+ * removing CodeMirror's own binding was observed (live-testing this fix) to let the *browser's
+ * native* contenteditable default action for that key fire instead (verified for Ctrl+Delete:
+ * removing CodeMirror's `deleteGroupForward` binding let WebView2's own native "delete word
+ * forward" run, since `tree.forceDelete`'s own `window`-level handler in `TreeView.tsx` only
+ * calls `preventDefault()` when a tree selection is active — an even less desirable outcome than
+ * before, corrupting memo content). Returning `true`/`preventDefault: true` claims the key at the
+ * CodeMirror layer without running any command, so the browser's native fallback never gets a
+ * chance either; the event still bubbles to `window` afterward (`preventDefault()` never stops
+ * propagation), where the app's own dispatcher decides what actually happens.
+ *
+ * Only `.key` is checked (not `.mac`/`.linux`) since this app only ever runs on Windows
+ * (`docs/spec.md` §6), where `.key` is what CodeMirror actually resolves against. */
+function neutralizeReservedCombos(bindings: readonly KeyBinding[]): KeyBinding[] {
+  return bindings.map((b) => (b.key && RESERVED_COMBOS.has(normalizeCodeMirrorKey(b.key)) ? { key: b.key, run: () => true, preventDefault: true } : b));
+}
+
 export function buildPlainTextExtensions(opts: BuildExtensionsOptions): Extension[] {
   return [
     editorPaletteExtension(),
@@ -173,7 +200,7 @@ export function buildPlainTextExtensions(opts: BuildExtensionsOptions): Extensio
     settingsCompartment.of(buildSettingsExtension(opts.settings)),
     whitespaceCompartment.of(whitespaceExtension(opts.showWhitespace)),
     readOnlyCompartment.of(readOnlyExtension(opts.readOnly)),
-    keymap.of([{ key: "Enter", run: insertNewlineKeepIndent }, ...defaultKeymap, ...historyKeymap]),
+    keymap.of([{ key: "Enter", run: insertNewlineKeepIndent }, ...neutralizeReservedCombos(defaultKeymap), ...neutralizeReservedCombos(historyKeymap)]),
     EditorView.updateListener.of((update) => {
       if (update.docChanged) opts.onDocChanged(update.state.doc.toString());
     }),
