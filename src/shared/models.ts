@@ -82,6 +82,9 @@ export interface WindowSettings {
 export interface EditorDefaults {
   wrap: "none" | "chars" | "window";
   tabWidth: number;
+  /** `docs/plans/restore-soft-tab/PLAN.md` (GitHub issue #116) — Tab key inserts `tabWidth`
+   * spaces instead of a literal `\t` when `true`. Restores the setting GitHub issue #61 removed. */
+  softTab: boolean;
   showLineNumbers: boolean;
   fontSize: number;
   /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — default pane layout for a newly-opened
@@ -139,6 +142,7 @@ export interface Label {
 export interface MemoEditorSettings {
   wrap?: "none" | "chars" | "window" | null;
   tabWidth?: number | null;
+  softTab?: boolean | null;
   showLineNumbers?: boolean | null;
   fontSize?: number | null;
   viewMode?: "live" | "source" | null;
