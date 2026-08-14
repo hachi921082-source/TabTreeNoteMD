@@ -136,6 +136,8 @@ function editorPaletteExtension(): Extension {
     },
     ".cm-cursor, .cm-dropCursor": {
       borderLeftColor: "var(--ttn-accent)",
+      // GitHub issue #150: default 1.2px border-left is too thin to spot at a glance.
+      borderLeftWidth: "2px",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
       backgroundColor: "var(--ttn-accent-bg) !important",
