@@ -4,15 +4,17 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Result } from "../shared/result";
 import type { SavedImage } from "../shared/models";
 
-/** Saves a pasted/inserted image's raw bytes directly under the given tab's folder and returns
- * its generated filename (relative to that folder) plus decoded pixel dimensions
+/** Saves a pasted/inserted image's raw bytes under `memoName`'s own per-memo image subfolder
+ * (GitHub issue #139; falls back to the tab folder directly, flat, for a locked tab's active
+ * unlock session — see `image_save_pasted`'s own Rust-side doc comment) and returns its generated
+ * filename (relative to the tab folder) plus decoded pixel dimensions
  * (`docs/plans/image-handling/PLAN.md` §3). `bytes` is a plain array of byte values (0-255) —
  * `Array.from(new Uint8Array(...))`, not a `Uint8Array` itself, since Tauri's IPC serializes
  * arguments as JSON and a typed array would serialize as an object, not an array. `mimeHint` is
  * the clipboard/File API's reported MIME type, if any — a fallback only; the backend sniffs the
  * actual image format from `bytes` first. */
-export async function imageSavePasted(tabId: string, bytes: number[], mimeHint: string | null): Promise<Result<SavedImage>> {
-  return invoke<Result<SavedImage>>("image_save_pasted", { tabId, bytes, mimeHint });
+export async function imageSavePasted(tabId: string, memoName: string, bytes: number[], mimeHint: string | null): Promise<Result<SavedImage>> {
+  return invoke<Result<SavedImage>>("image_save_pasted", { tabId, memoName, bytes, mimeHint });
 }
 
 /** Reads an image file's raw bytes back from disk (`docs/MDEditor-spec.md` §5). Unlike every other
