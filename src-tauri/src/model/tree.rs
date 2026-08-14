@@ -107,6 +107,8 @@ pub struct MemoEditorSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soft_tab: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_line_numbers: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
