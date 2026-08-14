@@ -255,6 +255,9 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
         // Each tab's own onContextMenu stops propagation before this fires.
         onContextMenu={(e) => e.preventDefault()}
       >
+        {/* GitHub issue #153 — this app's own UI never actually rendered its name anywhere; what
+            looked like one in a screenshot was the OS window title, not this component. */}
+        <span className="ttn-tab-brand">TabTreeNoteMD</span>
         {orderedTabs.map((tab) => {
           // While a `tab-lock/PLAN.md` unlock session is active for this tab, show its real name
           // in place of the 🔒-placeholder cached in `AppSettings.tabs[i].name`
