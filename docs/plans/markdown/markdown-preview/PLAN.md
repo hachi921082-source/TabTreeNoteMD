@@ -381,6 +381,12 @@ result is visible. This applies to:
 None of the above are disabled or silently no-op while `paneMode === "preview"`; they reveal-then-act.
 This is fully wired in this plan's initial implementation — there is no remaining deferred piece.
 
+**Preview-lock exception** (GitHub issue #149): `MemoEditorSettings.previewLocked`, `null`/absent by
+default. While `true`, every auto-reveal action listed above — plus the manual pane-mode-cycle toggle
+itself — becomes a no-op instead of reveal-then-act; the memo stays pinned at `"preview"` until the
+lock is explicitly cleared again via the toolbar header's lock button (`MarkdownToolbar.tsx`, next to
+the pane-mode button). Session-local override + persist-on-toggle, same pattern as `paneModeOverride`.
+
 ## 5. Preview Rendering
 
 Elaborates `docs/MDEditor-spec.md` §4. Full design (renderer setup, the `renderMarkdownToHtml` token
