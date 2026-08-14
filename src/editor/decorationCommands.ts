@@ -13,6 +13,7 @@
 // module, not this plan's.
 import type { EditorView } from "@codemirror/view";
 import { findColorSpans } from "./markdownSpanParser";
+import { mergeStyleDeclaration } from "./markdownSanitize";
 
 function currentSelectionText(view: EditorView): { from: number; to: number; text: string } {
   const sel = view.state.selection.main;
@@ -172,31 +173,76 @@ export function linkCommand(view: EditorView): boolean {
 
 // ---------------------------------------------------------------------------
 // Color / Font-size — wraps the selection in `<span style="...">` (closed 5-choice color palette
-// / 3-choice size palette, `docs/plans/markdown-editing/PLAN.md` §4). Deliberately does not search
-// for/merge into an existing enclosing span — a second wrap nests (`<span style="font-size:.."
-// ><span style="color:..">...</span></span>`), which composes correctly via CSS exactly like this
-// plan's mark-decoration approach elsewhere (`markdownDecorations.ts`'s header comment), rather
-// than needing bespoke "merge two style attributes" logic for a toolbar convenience action.
+// / 3-choice size palette, `docs/plans/markdown-editing/PLAN.md` §4). Never nests a new `<span>`
+// around an existing one — `markdownSpanParser.ts`'s `SPAN_RE` doesn't support nested `<span>`s, so
+// a naive second wrap mis-pairs open/close tags and corrupts rendering (GitHub issue #87). Any
+// existing span overlapping the selection has `prop` merged into its own `style` instead of being
+// re-wrapped; only text outside every overlapping span gets a fresh `<span>`.
 // ---------------------------------------------------------------------------
 
-function wrapSelectionInSpan(view: EditorView, styleDecl: string): boolean {
-  const { from, to, text } = currentSelectionText(view);
-  const openTag = `<span style="${styleDecl}">`;
-  const insert = `${openTag}${text}</span>`;
+function wrapSelectionInSpan(view: EditorView, prop: "color" | "font-size", value: string): boolean {
+  const { state } = view;
+  const sel = state.selection.main;
+  const styleDecl = `${prop}: ${value}`;
+
+  const overlapping = findColorSpans(state.doc.toString())
+    .filter((s) => s.openFrom < sel.to && s.closeTo > sel.from)
+    .sort((a, b) => a.openFrom - b.openFrom);
+
+  if (overlapping.length === 0) {
+    const text = state.sliceDoc(sel.from, sel.to);
+    const openTag = `<span style="${styleDecl}">`;
+    const insert = `${openTag}${text}</span>`;
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert },
+      selection: text === "" ? { anchor: sel.from + openTag.length } : { anchor: sel.from, head: sel.from + insert.length },
+    });
+    view.focus();
+    return true;
+  }
+
+  // At least one existing span overlaps — expand the edited range to fully cover every overlapping
+  // span first, so a span's own tag characters are never split mid-tag, then rebuild that whole
+  // range: text already inside an overlapping span merges `prop` into that span's existing style
+  // (reusing its tags, never re-wrapping); everything else gets a fresh `<span style="...">`.
+  let effFrom = sel.from;
+  let effTo = sel.to;
+  for (const s of overlapping) {
+    effFrom = Math.min(effFrom, s.openFrom);
+    effTo = Math.max(effTo, s.closeTo);
+  }
+
+  let cursor = effFrom;
+  let insert = "";
+  for (const s of overlapping) {
+    if (s.openFrom > cursor) {
+      const plain = state.sliceDoc(cursor, s.openFrom);
+      insert += `<span style="${styleDecl}">${plain}</span>`;
+    }
+    const mergedStyle = mergeStyleDeclaration(s.style, prop, value);
+    const inner = state.sliceDoc(s.contentFrom, s.contentTo);
+    insert += `<span style="${mergedStyle}">${inner}</span>`;
+    cursor = s.closeTo;
+  }
+  if (cursor < effTo) {
+    const plain = state.sliceDoc(cursor, effTo);
+    insert += `<span style="${styleDecl}">${plain}</span>`;
+  }
+
   view.dispatch({
-    changes: { from, to, insert },
-    selection: text === "" ? { anchor: from + openTag.length } : { anchor: from, head: from + insert.length },
+    changes: { from: effFrom, to: effTo, insert },
+    selection: { anchor: effFrom, head: effFrom + insert.length },
   });
   view.focus();
   return true;
 }
 
 export function applyColorSpan(view: EditorView, hex: string): boolean {
-  return wrapSelectionInSpan(view, `color:${hex}`);
+  return wrapSelectionInSpan(view, "color", hex);
 }
 
 export function applyFontSizeSpan(view: EditorView, px: string): boolean {
-  return wrapSelectionInSpan(view, `font-size:${px}`);
+  return wrapSelectionInSpan(view, "font-size", px);
 }
 
 /** Removes exactly `prop` (`"color"` or `"font-size"`) from the nearest `<span style="...">` whose
