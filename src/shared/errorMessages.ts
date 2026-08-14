@@ -23,6 +23,7 @@ const MESSAGES: Record<ErrorCode, string> = {
   LONG_PATH: "パスが長すぎる可能性があります",
   TAB_LOCKED: "ロックされたタブには操作できません",
   ANOMALOUS_FILE_STATE: "想定外の状態のファイルが見つかりました。タブをもう一度開いて復旧処理を行ってください。",
+  MEMO_EDIT_LOCKED: "編集ロック中のメモは削除・名前変更できません",
   UNKNOWN: "予期しないエラーが発生しました",
 };
 
