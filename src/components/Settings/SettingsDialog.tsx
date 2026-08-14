@@ -291,6 +291,14 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
             <label className="ttn-settings-row ttn-settings-row-checkbox">
               <input
                 type="checkbox"
+                checked={settings.editorDefaults.softTab}
+                onChange={(e) => void patchSettings({ editorDefaults: { softTab: e.target.checked } })}
+              />
+              <span>タブをスペースとして挿入する</span>
+            </label>
+            <label className="ttn-settings-row ttn-settings-row-checkbox">
+              <input
+                type="checkbox"
                 checked={settings.editorDefaults.showLineNumbers}
                 onChange={(e) => void patchSettings({ editorDefaults: { showLineNumbers: e.target.checked } })}
               />
