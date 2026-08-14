@@ -78,14 +78,70 @@ export function whitespaceExtension(show: boolean): Extension {
   return show ? highlightWhitespace() : [];
 }
 
-/** GitHub issue #116 restores the `softTab` setting #61 had removed. */
-function makeTabCommand(tabWidth: number, softTab: boolean): Command {
+/** Every line number (1-based) touched by any selection range, deduplicated. Shared by the
+ * Tab/Shift-Tab line-indent commands below so a multi-line selection indents/outdents every line
+ * it spans, not just the line the selection's anchor happens to sit on. */
+function selectedLineNumbers(state: EditorState): number[] {
+  const lines = new Set<number>();
+  for (const range of state.selection.ranges) {
+    const startLine = state.doc.lineAt(range.from).number;
+    const endLine = state.doc.lineAt(range.to).number;
+    for (let n = startLine; n <= endLine; n++) lines.add(n);
+  }
+  return Array.from(lines);
+}
+
+/** GitHub issue #116 restores the `softTab` setting #61 had removed; GitHub issue #168 changes
+ * where Tab inserts it from "at the cursor" to "at the start of every selected line" (outliner-
+ * style indent, not a literal-tab-at-cursor text edit) and adds the matching Shift-Tab outdent,
+ * which previously did not exist at all — CodeMirror's `defaultKeymap` deliberately excludes both
+ * Tab and Shift-Tab bindings, so before this, Shift-Tab fell straight through to the browser's own
+ * (unwanted, focus-shifting) contenteditable default.
+ *
+ * Selection is mapped through the change with `assoc = 1`, the same technique
+ * `decorationCommands.ts`'s `toggleLinePrefix` uses and for the same reason: a collapsed cursor
+ * sitting exactly at a line's start must land *after* the inserted/removed indent, not before it,
+ * to actually preserve the caret's visual position ("カーソル位置は保持"). */
+function makeIndentLineCommand(tabWidth: number, softTab: boolean): Command {
   return (view) => {
-    // A real (non-empty) selection falls through to `defaultKeymap`'s ordinary Tab handling
-    // (indent-selection) rather than this plain insert-at-cursor behavior.
-    if (!view.state.selection.ranges.every((r) => r.empty)) return false;
+    const { state } = view;
     const insert = softTab ? " ".repeat(tabWidth) : "\t";
-    view.dispatch(view.state.replaceSelection(insert), { scrollIntoView: true });
+    const changes = selectedLineNumbers(state).map((n) => {
+      const line = state.doc.line(n);
+      return { from: line.from, to: line.from, insert };
+    });
+    const changeSet = state.changes(changes);
+    const selection = state.selection.map(changeSet, 1);
+    view.dispatch({ changes: changeSet, selection, scrollIntoView: true });
+    view.focus();
+    return true;
+  };
+}
+
+/** Removes one indent level (a leading `\t`, or up to `tabWidth` leading spaces, whichever the
+ * line actually starts with) from every selected line. A line with no leading indent to remove is
+ * left untouched; if that holds for every selected line, the key press is still consumed
+ * (returns `true`) but dispatches nothing — a deliberate no-op per GitHub issue #168 ("削除でき
+ * ない場合は何もしない"), rather than letting Shift-Tab fall through to the browser default. */
+function makeOutdentLineCommand(tabWidth: number): Command {
+  return (view) => {
+    const { state } = view;
+    const changes = selectedLineNumbers(state).flatMap((n) => {
+      const line = state.doc.line(n);
+      const text = line.text;
+      let removeLen = 0;
+      if (text.startsWith("\t")) {
+        removeLen = 1;
+      } else {
+        while (removeLen < tabWidth && text[removeLen] === " ") removeLen++;
+      }
+      return removeLen > 0 ? [{ from: line.from, to: line.from + removeLen, insert: "" }] : [];
+    });
+    if (changes.length === 0) return true;
+    const changeSet = state.changes(changes);
+    const selection = state.selection.map(changeSet, 1);
+    view.dispatch({ changes: changeSet, selection, scrollIntoView: true });
+    view.focus();
     return true;
   };
 }
@@ -110,7 +166,12 @@ export function buildSettingsExtension(settings: ResolvedEditorSettings): Extens
     exts.push(EditorView.theme({ ".cm-content": { maxWidth: `${CHARS_WRAP_COLUMN}ch` } }));
   }
   exts.push(EditorView.theme({ "&": { fontSize: `${settings.fontSize}px` } }));
-  exts.push(keymap.of([{ key: "Tab", run: makeTabCommand(settings.tabWidth, settings.softTab) }]));
+  exts.push(
+    keymap.of([
+      { key: "Tab", run: makeIndentLineCommand(settings.tabWidth, settings.softTab) },
+      { key: "Shift-Tab", run: makeOutdentLineCommand(settings.tabWidth) },
+    ]),
+  );
   return exts;
 }
 
