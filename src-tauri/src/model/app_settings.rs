@@ -157,6 +157,8 @@ pub struct LastOpened {
 pub struct EditorDefaults {
     pub wrap: WrapMode,
     pub tab_width: u32,
+    /// GitHub issue #116 — restores the setting issue #61 removed.
+    pub soft_tab: bool,
     pub show_line_numbers: bool,
     pub font_size: u32,
     /// Additive field, `docs/plans/markdown/markdown-preview/PLAN.md` §3 — default pane layout for
@@ -289,6 +291,7 @@ impl Default for AppSettings {
             editor_defaults: EditorDefaults {
                 wrap: WrapMode::Window,
                 tab_width: 4,
+                soft_tab: true,
                 show_line_numbers: true,
                 font_size: 14,
                 pane_mode: PaneMode::Edit,

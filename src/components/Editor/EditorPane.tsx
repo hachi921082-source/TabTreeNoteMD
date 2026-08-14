@@ -75,7 +75,7 @@ import "./Editor.css";
 
 /** Matches `AppSettings::default().editorDefaults` (`model/app_settings.rs`) — used until
  * `appSettings` has loaded from `settings_get`. */
-const FALLBACK_EDITOR_DEFAULTS: EditorDefaults = { wrap: "window", tabWidth: 4, showLineNumbers: true, fontSize: 14, paneMode: "edit" };
+const FALLBACK_EDITOR_DEFAULTS: EditorDefaults = { wrap: "window", tabWidth: 4, softTab: true, showLineNumbers: true, fontSize: 14, paneMode: "edit" };
 
 /** `docs/plans/markdown/markdown-preview/PLAN.md` §4.1 — the 3-state pane-mode cycling toggle's
  * fixed order, `edit -> split -> preview -> edit -> ...`. */
