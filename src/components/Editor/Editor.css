@@ -236,8 +236,10 @@
   font-family: "Consolas", "Cascadia Code", monospace;
   /* Semi-transparent (not the plain opaque `--ttn-bg-code` token used elsewhere) so CodeMirror's
      `drawSelection()` layer — painted behind `.cm-line` content — still shows through when a range
-     selection crosses a code block (GitHub issue #119). */
-  background: color-mix(in srgb, var(--ttn-bg-code) 75%, transparent);
+     selection crosses a code block (GitHub issue #119). 75% was still too close to opaque to tell
+     selected from unselected at a glance (GitHub issue #152) — lowered to 45%, matching
+     `.cm-md-inline-code`'s same treatment above (GitHub issue #154). */
+  background: color-mix(in srgb, var(--ttn-bg-code) 45%, transparent);
 }
 
 .cm-md-table-line {
