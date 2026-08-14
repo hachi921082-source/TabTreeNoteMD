@@ -64,3 +64,11 @@
   padding-left: 12px;
   background: var(--ttn-bg-muted);
 }
+
+/* Thin divider between role-category groups (GitHub issue #117). */
+.ttn-context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--ttn-border);
+  flex: none;
+}
