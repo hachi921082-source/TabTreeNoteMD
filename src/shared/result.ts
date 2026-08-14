@@ -25,4 +25,5 @@ export type ErrorCode =
   | "LONG_PATH"
   | "TAB_LOCKED"
   | "ANOMALOUS_FILE_STATE"
+  | "MEMO_EDIT_LOCKED"
   | "UNKNOWN";

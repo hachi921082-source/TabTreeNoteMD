@@ -20,7 +20,7 @@ import { PermanentUnlockRecoveryDialog } from "../dialogs/PermanentUnlockRecover
 import { validateNameStrict } from "../../shared/nameSanitize";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { formatDateTime } from "../../shared/formatDateTime";
-import { findNode, locateNode } from "../../shared/treeOps";
+import { findNode, locateNode, subtreeHasLocked } from "../../shared/treeOps";
 import type { UseTreeResult } from "../../state/useTree";
 import type { UseTabLockResult } from "../../state/useTabLock";
 import type { AppSettings, LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
@@ -101,6 +101,12 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
 
   const { nodes, loading, locked, recoveryPending, recoveryKind, selection, openMemoName, lastErrorCode, clearLastError, activeTabId } = tree;
 
+  // GitHub issue #156: `true` if any of `paths` (or one of their descendants — deleting a node
+  // deletes its whole subtree, `[spec §2.2]`) carries the per-memo Edit Lock. Shared by the
+  // "削除" context-menu entry's `disabled` and the Ctrl+Delete shortcut's own guard below, so both
+  // paths agree; the backend (`memo_delete`) independently rejects the same cases too.
+  const selectionHasLocked = useCallback((paths: string[]) => paths.some((p) => { const n = findNode(nodes, p); return n ? subtreeHasLocked(n) : false; }), [nodes]);
+
   // Crash-mid-lock recovery (`docs/plans/tab-lock/CRASH-RECOVERY.md` "Trigger Point"): the moment
   // `tree_open` reports `recoveryPending: true`/`recoveryKind: "lock"` for this tab, fetch the
   // per-entry classification so the recovery dialog can render its Finish/Restore choice. The
@@ -166,6 +172,10 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
       if (comboFromEvent(e) === shortcuts["tree.forceDelete"]) {
         const selected = Array.from(selection.selected);
         if (selected.length === 0) return;
+        // GitHub issue #156: matches the right-click "削除" entry's own `disabled` guard — no
+        // dialog at all for a locked selection, rather than showing one only to have the backend
+        // reject it afterward.
+        if (selectionHasLocked(selected)) return;
         e.preventDefault();
         // Same confirmation dialog as the right-click "削除" entry (GitHub issue #142) —
         // Ctrl+Delete used to call `requestDelete` directly, skipping it entirely.
@@ -175,14 +185,17 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
       if (comboFromEvent(e) === shortcuts["tree.rename"]) {
         if (renamingPath) return; // already renaming; let the inline input handle its own keys
         if (selection.selected.size === 1) {
+          const path = Array.from(selection.selected)[0];
+          // GitHub issue #156: matches the right-click "名前を変更" entry's own `disabled` guard.
+          if (findNode(nodes, path)?.locked === true) return;
           e.preventDefault();
-          setRenamingPath(Array.from(selection.selected)[0]);
+          setRenamingPath(path);
         }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selection.selected, requestDelete, shortcuts, renamingPath]);
+  }, [selection.selected, requestDelete, shortcuts, renamingPath, selectionHasLocked, nodes]);
 
   // ---- row interaction wiring --------------------------------------------
   const handleRowClick = useCallback(
@@ -364,8 +377,11 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
     const selectedPaths = selection.selected.has(path) && selection.selected.size > 0 ? Array.from(selection.selected) : [path];
     const isLocked = findNode(nodes, path)?.locked === true;
     return [
-      { label: "名前を変更", disabled: !singleSelection, onSelect: () => setRenamingPath(path) },
-      { label: "削除", danger: true, onSelect: () => setPendingDialog({ kind: "deleteConfirm", paths: selectedPaths }) },
+      // GitHub issue #156: an edit-locked memo must not be renamed or deleted either, not just
+      // have its body protected from edits. "削除" additionally checks every selected node's
+      // whole subtree, since deleting a node deletes its entire subtree (`[spec §2.2]`).
+      { label: "名前を変更", disabled: !singleSelection || isLocked, onSelect: () => setRenamingPath(path) },
+      { label: "削除", danger: true, disabled: selectionHasLocked(selectedPaths), onSelect: () => setPendingDialog({ kind: "deleteConfirm", paths: selectedPaths }) },
       { label: "メモを作成", onSelect: () => setPendingDialog({ kind: "createRoot" }) },
       { label: "子として作成", disabled: !singleSelection, onSelect: () => setPendingDialog({ kind: "createChild", parent: path }) },
       {
