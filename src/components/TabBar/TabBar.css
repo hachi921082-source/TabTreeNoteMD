@@ -3,21 +3,59 @@
   flex-direction: column;
 }
 
+/* GitHub issue #153: `.ttn-tab-bar` itself keeps its original `align-items: stretch`/height so
+ * `.ttn-tab-brand`/`.ttn-tab-bar-toolbar`/`<TitleBarControls>` (unrelated to this redesign) stay
+ * exactly as tall as before — only `.ttn-tab`/`.ttn-tab-create` opt out via their own `align-self:
+ * flex-end` + fixed height below, leaving the 6px gap above them that makes the rounded-top shape
+ * read as tabs "poking up" rather than flush rectangles. `::after` replaces the old `border-bottom`
+ * (which would otherwise cut straight across underneath the active tab too) with a bar spanning the
+ * full width that the active tab's own bottom border punches a gap through (see `.ttn-tab-active`). */
 .ttn-tab-bar {
   display: flex;
   align-items: stretch;
   height: 36px;
   background: var(--ttn-bg-chrome);
-  border-bottom: 1px solid var(--ttn-border);
+  position: relative;
   overflow-x: auto;
   user-select: none;
+}
+
+.ttn-tab-bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--ttn-border-strong);
+}
+
+/* App-name label (GitHub issue #153 follow-up) — this app's own UI never actually rendered its
+ * name anywhere before; what looked like one in a screenshot was the OS window title, not this
+ * component. Purely decorative, `flex: none` so it never shrinks the tabs. */
+.ttn-tab-brand {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-weight: 650;
+  font-size: calc(12px * var(--ui-font-scale));
+  color: var(--ttn-fg-muted);
+  white-space: nowrap;
+  flex: none;
 }
 
 .ttn-tab {
   display: flex;
   align-items: center;
+  align-self: flex-end;
+  height: 30px;
   padding: 0 14px;
-  border-right: 1px solid var(--ttn-border);
+  margin-right: 2px;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  /* Accent slot, filled only on the active tab below — reserved here (transparent) so activating a
+     tab doesn't shift its neighbors' box size. */
+  box-shadow: inset 0 3px 0 transparent;
   font-size: calc(13px * var(--ui-font-scale));
   white-space: nowrap;
   cursor: pointer;
@@ -37,7 +75,16 @@
 
 .ttn-tab-active {
   background: var(--ttn-bg);
+  border-color: var(--ttn-border-strong);
+  /* Matches the content area's own background, punching a visual gap through `.ttn-tab-bar::after`
+     right under the active tab — the "connects to the content below" seam. */
+  border-bottom-color: var(--ttn-bg);
+  box-shadow:
+    inset 0 3px 0 var(--ttn-accent),
+    0 -1px 0 var(--ttn-bg);
   font-weight: 600;
+  position: relative;
+  z-index: 1;
 }
 
 .ttn-tab-locked .ttn-tab-name {
@@ -55,12 +102,15 @@
 
 .ttn-tab-create {
   appearance: none;
-  border: none;
+  align-self: flex-end;
+  height: 30px;
+  margin-right: 2px;
   /* Two adjacent buttons now share this class ("register existing" 📂 + "create new" ＋,
-     `docs/plans/tab-management/PLAN.md` §4, GitHub issue #2) — a right border on each keeps them
-     visually distinct from one another and from the last tab, matching `.ttn-tab`'s own
-     border-right separator convention. */
-  border-right: 1px solid var(--ttn-border);
+     `docs/plans/tab-management/PLAN.md` §4, GitHub issue #2) — same rounded-top card shape as
+     `.ttn-tab` (GitHub issue #153) keeps them visually distinct from one another and from the last
+     tab, replacing the old shared-border-right separator convention. */
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
   background: transparent;
   color: var(--ttn-fg);
   width: 36px;
