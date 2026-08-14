@@ -256,8 +256,13 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
         onContextMenu={(e) => e.preventDefault()}
       >
         {/* GitHub issue #153 — this app's own UI never actually rendered its name anywhere; what
-            looked like one in a screenshot was the OS window title, not this component. */}
-        <span className="ttn-tab-brand">TabTreeNoteMD</span>
+            looked like one in a screenshot was the OS window title, not this component.
+            GitHub issue #173 — the divider rule after the word is what visually closes off the
+            "label zone" before the first real tab starts. */}
+        <span className="ttn-tab-brand">
+          <span className="ttn-tab-brand-word">TabTreeNoteMD</span>
+          <span className="ttn-tab-brand-rule" aria-hidden="true" />
+        </span>
         {orderedTabs.map((tab) => {
           // While a `tab-lock/PLAN.md` unlock session is active for this tab, show its real name
           // in place of the 🔒-placeholder cached in `AppSettings.tabs[i].name`
