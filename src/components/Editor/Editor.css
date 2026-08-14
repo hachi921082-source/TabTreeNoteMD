@@ -202,7 +202,10 @@
 .cm-md-strike { text-decoration: line-through; }
 .cm-md-inline-code {
   font-family: "Consolas", "Cascadia Code", monospace;
-  background: var(--ttn-bg-code);
+  /* Semi-transparent, matching `.cm-md-codeblock`'s treatment below (GitHub issue #119) — a plain
+     opaque `--ttn-bg-code` fully hides the negative-z-index `.cm-selectionBackground` layer
+     underneath, making a range selection crossing inline code look unselected (GitHub issue #154). */
+  background: color-mix(in srgb, var(--ttn-bg-code) 45%, transparent);
   border-radius: 3px;
   padding: 0 2px;
 }
