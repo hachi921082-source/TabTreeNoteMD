@@ -1,11 +1,12 @@
 // Floating, freely-repositionable Markdown toolbar (`docs/plans/markdown-editing/PLAN.md` §4,
-// `DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed Grid Layout"). Fixed 8-column×2-row
-// grid of `editor/toolbarSlots.ts`'s 16 actions; drag the header to reposition, toggle slot 16
-// (`rearrangeToggle`) to reorder slots by drag. Position/order persist via `AppSettings.window`
-// (`state/useSettings.ts`'s generic `patch`), written on drag-end/mode-exit only, never per-frame.
+// `DECISIONS.md` "Markdown Toolbar: Expanded to 18-Slot Grid" — GitHub issue #176). Fixed
+// 9-column×2-row grid of `editor/toolbarSlots.ts`'s 18 actions; drag the header to reposition,
+// toggle slot 18 (`rearrangeToggle`) to reorder slots by drag. Position/order persist via
+// `AppSettings.window` (`state/useSettings.ts`'s generic `patch`), written on drag-end/mode-exit
+// only, never per-frame.
 //
 // The live/source view-mode runtime toggle (`docs/plans/markdown-editing/PLAN.md` §3) is NOT one
-// of the 16 grid slots — it's a separate control in this panel's header, since the 16-slot grid's
+// of the 18 grid slots — it's a separate control in this panel's header, since the 18-slot grid's
 // contents are fixed by spec and don't include it.
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
@@ -20,7 +21,9 @@ import {
   boldCommand,
   clearColorSpan,
   clearFontSizeSpan,
+  clearFormattingCommand,
   codeBlockCommand,
+  hardBreakCommand,
   headingCommand,
   italicCommand,
   linkCommand,
@@ -89,8 +92,8 @@ type Position = { x: number; y: number };
  * text-based rows to ~26-28px, pushing the true requirement to ~43px — rounded up further to 50px
  * as a simple constant with comfortable headroom rather than a precise dynamic measurement. The
  * popover's width (`left: 4px` within the toolbar, content ~144-192px wide) stays comfortably
- * inside the toolbar's own ~246px grid width, so only the bottom bound needs this reservation — the
- * right bound doesn't. */
+ * inside the toolbar's own ~276px grid width (9 columns, GitHub issue #176's 18-slot grid), so only
+ * the bottom bound needs this reservation — the right bound doesn't. */
 const POPOVER_RESERVED_HEIGHT = 50;
 
 /** Clamps `pos` (the toolbar's top-left, `left`/`top` in `.ttn-editor-pane` content-box
@@ -156,7 +159,7 @@ export interface MarkdownToolbarProps {
   onPdfExport: () => void;
 }
 
-/** Exposes the 16 grid actions for external (keyboard-shortcut) invocation
+/** Exposes the 18 grid actions for external (keyboard-shortcut) invocation
  * (`docs/plans/markdown-editing/PLAN.md` §4's "every action gets a default keyboard shortcut" —
  * `components/Editor/EditorPane.tsx`'s global shortcut dispatcher calls this rather than
  * duplicating the action switch statement below), since state like which popover is open or
@@ -510,7 +513,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     // grid buttons themselves already show as `disabled`, re-checked here since keyboard-shortcut
     // invocation (`MarkdownToolbarHandle.invokeAction`) doesn't go through the button element.
     if (readOnly) return;
-    // Auto-reveal (`docs/plans/markdown/markdown-preview/PLAN.md` §4.4): every one of these 15
+    // Auto-reveal (`docs/plans/markdown/markdown-preview/PLAN.md` §4.4): every one of these 17
     // remaining slots (all but `rearrangeToggle`, handled above) ultimately acts on the CodeMirror
     // view — reveal the edit pane first if it's currently hidden (`paneMode === "preview"`), so the
     // result is actually visible instead of landing on a hidden pane.
@@ -566,6 +569,12 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         break;
       case "image":
         runOnView((v) => insertImageViaFilePicker(v, tabId, memoName, onImageError));
+        break;
+      case "clearFormatting":
+        runOnView(clearFormattingCommand);
+        break;
+      case "hardBreak":
+        runOnView(hardBreakCommand);
         break;
     }
   };
