@@ -7,12 +7,14 @@
 // Shortcuts tab (`components/Settings/SettingsDialog.tsx`).
 //
 // Combo strings use the same "Ctrl+Shift+X" style as the rest of the app's
-// documentation. The 16 markdown-toolbar combos (plus `markdown.tocUpdate`'s
-// pairing with "Update (TOC)") match `window-operation/PLAN.md` §3's
-// explicit table verbatim; the rest (tab switching, save, rename,
-// force-delete, find/replace) are implementation discretion not otherwise
-// fixed by `spec.md` (`docs/detailed-spec.md` §9), chosen to not collide
-// with the table or each other.
+// documentation. The 16 original markdown-toolbar combos (plus
+// `markdown.tocUpdate`'s pairing with "Update (TOC)") match
+// `window-operation/PLAN.md` §3's explicit table verbatim; the rest (tab
+// switching, save, rename, force-delete, find/replace, and GitHub issue
+// #176's `markdown.clearFormatting`/`markdown.hardBreak` additions) are
+// implementation discretion not otherwise fixed by `spec.md`
+// (`docs/detailed-spec.md` §9), chosen to not collide with the table or
+// each other.
 
 export const DEFAULT_SHORTCUTS: Record<string, string> = {
   // Tab bar (`docs/plans/tab-management/PLAN.md` §4). Mouse-wheel switching
@@ -29,11 +31,11 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "tree.forceDelete": "Ctrl+Delete",
 
   // Markdown toolbar (`docs/plans/markdown-editing/PLAN.md` §4; `docs/detailed-spec.md` §5.10:
-  // "every one of the 16 toolbar actions gets a default keyboard shortcut"; combos fixed by
-  // `docs/plans/window-operation/PLAN.md` §3's table). Action ids match
-  // `editor/toolbarSlots.ts`'s `ToolbarActionId`, namespaced under `markdown.`.
+  // "every toolbar action gets a default keyboard shortcut", now 18 actions after GitHub issue
+  // #176; the original 16's combos fixed by `docs/plans/window-operation/PLAN.md` §3's table).
+  // Action ids match `editor/toolbarSlots.ts`'s `ToolbarActionId`, namespaced under `markdown.`.
   // `markdown.toggleLiveView` is the runtime live/source toggle (`[detailed-spec §5.10]`) — not
-  // one of the 16 fixed grid slots (so not in that table), but still gets a default binding for
+  // one of the 18 fixed grid slots (so not in that table), but still gets a default binding for
   // the same reason.
   "markdown.undo": "Ctrl+Z",
   "markdown.redo": "Ctrl+Y",
@@ -50,6 +52,8 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "markdown.tocUpdate": "Ctrl+Shift+O",
   "markdown.table": "Ctrl+Shift+T",
   "markdown.image": "Ctrl+Shift+I",
+  "markdown.clearFormatting": "Ctrl+Shift+E",
+  "markdown.hardBreak": "Shift+Enter",
   "markdown.rearrangeToggle": "Ctrl+Shift+R",
   "markdown.toggleLiveView": "Ctrl+Shift+M",
 
