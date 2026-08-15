@@ -50,6 +50,8 @@ const SHORTCUT_LABELS: Record<string, string> = {
   "markdown.tocUpdate": "目次を更新",
   "markdown.table": "表を挿入",
   "markdown.image": "画像を挿入",
+  "markdown.clearFormatting": "書式クリア",
+  "markdown.hardBreak": "強制改行",
   "markdown.rearrangeToggle": "ツールバー並べ替え",
   "markdown.toggleLiveView": "ライブ/ソース表示切替",
   "markdown.paneModeCycle": "ペイン表示モードを切り替え",
