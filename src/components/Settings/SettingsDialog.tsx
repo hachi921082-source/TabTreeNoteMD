@@ -116,6 +116,7 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
         </button>
       }
     >
+      <span className="ttn-settings-version">{__APP_GIT_BRANCH__}</span>
       <div className="ttn-settings-tabs" role="tablist">
         <button type="button" className={`ttn-settings-tab${tab === "general" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("general")}>
           一般
