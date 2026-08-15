@@ -11,6 +11,8 @@
 
 ## Closed
 
+- #187 Markdown toolbar's default 9x2 slot order rearranged (grouped undo/redo, text-formatting, and insert-type actions more consistently by row) — `DEFAULT_TOOLBAR_ORDER` reordered, 18-action set unchanged; a user's own persisted order is unaffected (PR #188)
+- #185 Tab bar brand label still showed ALL-CAPS regardless of the #181 rename's actual casing — removed `.ttn-tab-brand-word`'s `text-transform: uppercase`, reduced `letter-spacing` from `0.14em` (tuned for all-caps) to `0.02em` (reads correctly on mixed case) (PR #186)
 - #182 Settings screen had no build/dev identifier — bakes the current git branch into the frontend build (`vite.config.ts`'s `__APP_GIT_BRANCH__` define via `git rev-parse --abbrev-ref HEAD`) and shows it top-right of the Settings dialog, scoped so no other `Dialog`-shell instance is affected (PR #184)
 - #181 Tab bar brand label was too small/light to read clearly — renamed `TabTreeNoteMD` to `TabTreeNote`, bumped `.ttn-tab-brand-word` from `10.5px`/`--ttn-fg-subtle` to `13px` (matching regular tab text)/`--ttn-fg-muted` (darker in both themes) (PR #183)
 - #179 Narrowing the window broke the tab bar's layout (brand label/tabs pushed above the visible bar) — a real horizontal scrollbar was consuming vertical space from the flex content box; hid the scrollbar chrome (`scrollbar-width: none` / `::-webkit-scrollbar { display: none }`) while keeping `overflow-x: auto` scrolling functional (PR #180)
