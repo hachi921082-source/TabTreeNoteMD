@@ -11,6 +11,7 @@
 
 ## Closed
 
+- #182 Settings screen had no build/dev identifier — bakes the current git branch into the frontend build (`vite.config.ts`'s `__APP_GIT_BRANCH__` define via `git rev-parse --abbrev-ref HEAD`) and shows it top-right of the Settings dialog, scoped so no other `Dialog`-shell instance is affected (PR #184)
 - #181 Tab bar brand label was too small/light to read clearly — renamed `TabTreeNoteMD` to `TabTreeNote`, bumped `.ttn-tab-brand-word` from `10.5px`/`--ttn-fg-subtle` to `13px` (matching regular tab text)/`--ttn-fg-muted` (darker in both themes) (PR #183)
 - #179 Narrowing the window broke the tab bar's layout (brand label/tabs pushed above the visible bar) — a real horizontal scrollbar was consuming vertical space from the flex content box; hid the scrollbar chrome (`scrollbar-width: none` / `::-webkit-scrollbar { display: none }`) while keeping `overflow-x: auto` scrolling functional (PR #180)
 - #175 App-name brand label didn't move the window when dragged — Tauri's bare `data-tauri-drag-region` only fires in "self" mode (exact click target must match), not inherited by descendants; added `data-tauri-drag-region="deep"` scoped to `.ttn-tab-brand` only (PR #178)
