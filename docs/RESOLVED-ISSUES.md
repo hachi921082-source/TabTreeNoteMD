@@ -11,6 +11,7 @@
 
 ## Closed
 
+- #175 App-name brand label didn't move the window when dragged — Tauri's bare `data-tauri-drag-region` only fires in "self" mode (exact click target must match), not inherited by descendants; added `data-tauri-drag-region="deep"` scoped to `.ttn-tab-brand` only (PR #178)
 - #176 Toolbar expanded from 16 to 18 slots (9×2); added "clear formatting" (`Ctrl+Shift+E`) and "hard line break" (`Shift+Enter`) actions, protecting links/images and fenced/indented code content from the format-clear pass (PR #177)
 - #20 Bare file-path auto-link click-to-open has no `..`-traversal guard (security-relevant) — `resolve_file_path` now rejects relative targets with a `..` segment or a rooted-but-not-absolute path (e.g. `\Windows\System32\cmd.exe`), mirroring `markdownSanitize.ts`'s `isSafeRelativeImageSrc` (PR #32)
 - #11 `markdown-editing/PLAN.md` described the toolbar's "Update" slot as calling a removed stub — corrected to describe the real `tocGenerator.ts` wiring (PR #33)
