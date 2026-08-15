@@ -19,7 +19,26 @@
   background: var(--ttn-bg-chrome);
   position: relative;
   overflow-x: auto;
+  /* Explicit (not the `visible` default) so this axis can never get promoted to `auto` by CSS's
+     overflow-axis-pairing rule (same mechanism as `.ttn-tab-brand-word` below, GitHub issue #173) —
+     belt-and-suspenders alongside the scrollbar hiding right below, which is this bar's own fix for
+     that same mechanism's *other* failure mode. */
+  overflow-y: hidden;
+  /* GitHub issue #179: a *real* horizontal scrollbar (shown when the bar's content genuinely
+     doesn't fit a narrow window) is a classic, space-consuming one by default — it eats into this
+     element's content-box *height* (measured: `clientHeight` 36px -> ~21px), even though
+     `offsetHeight` stays 36px. `.ttn-tab-brand`/`.ttn-tab` are `align-self: flex-end` against that
+     shrunken content box, so they get pushed upward until they poke out above the visible 36px bar.
+     Hiding the native scrollbar chrome removes its space reservation entirely (content-box height
+     stays the full 36px regardless of overflow state) while `overflow-x: auto` above keeps this
+     element scrollable exactly as before — via wheel/trackpad/shift-scroll or the existing
+     tab-drag-to-reorder gesture, just without a draggable scrollbar thumb. */
+  scrollbar-width: none;
   user-select: none;
+}
+
+.ttn-tab-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .ttn-tab-bar::after {
