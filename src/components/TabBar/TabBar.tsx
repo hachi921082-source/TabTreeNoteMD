@@ -265,7 +265,7 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
             never satisfies that check, so dragging it silently did nothing despite having no
             competing click handler. `"deep"` mode is the one that makes descendant clicks count. */}
         <span className="ttn-tab-brand" data-tauri-drag-region="deep">
-          <span className="ttn-tab-brand-word">TabTreeNoteMD</span>
+          <span className="ttn-tab-brand-word">TabTreeNote</span>
           <span className="ttn-tab-brand-rule" aria-hidden="true" />
         </span>
         {orderedTabs.map((tab) => {
