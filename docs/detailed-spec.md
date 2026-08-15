@@ -29,7 +29,7 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   - §3.7 Constants Inventory — table of concrete numeric defaults (retry counts, TTL, scrypt params, etc.).
 - **§4 Backend Operation Inventory** — logical command list by domain: §4.1 Tab, §4.2 Tree/memo, §4.3 Editor/save, §4.4 Search, §4.5 Settings, §4.6 Link, §4.7 Image.
 - **§5 Feature Behavior Details** — elaboration per feature: §5.1 Tab Management, §5.2 Memo Tree (incl.
-  tree guide lines), §5.3 Text Editing, §5.4 Search/Index, §5.5 Appearance/Theme, §5.6 Persistence/Save Triggers, §5.7 Window/Operation, §5.8 Link Functionality, §5.9 Tab Lock End-to-End Flows (locking/crash-recovery/unlocking/cross-tab DND; permanent unlock and its own crash recovery are now in `docs/tab-lock-detailed-spec.md`), §5.10 Markdown Editing (16-slot toolbar, icon set, sanitization allowlist, TOC; the split-pane preview, PDF export, and live-view real-image-rendering details are now in `docs/MDEditor-spec.md`).
+  tree guide lines), §5.3 Text Editing, §5.4 Search/Index, §5.5 Appearance/Theme, §5.6 Persistence/Save Triggers, §5.7 Window/Operation, §5.8 Link Functionality, §5.9 Tab Lock End-to-End Flows (locking/crash-recovery/unlocking/cross-tab DND; permanent unlock and its own crash recovery are now in `docs/tab-lock-detailed-spec.md`), §5.10 Markdown Editing (18-slot toolbar, icon set, sanitization allowlist, TOC; the split-pane preview, PDF export, and live-view real-image-rendering details are now in `docs/MDEditor-spec.md`).
 - **§6 Cross-Cutting Mechanism Details** — §6.1 Atomic Write concrete sequence, §6.2 Self-Write Registry, §6.3 Sync Order, §6.4 Conflict Detection & Corruption Recovery, §6.5 other Post-M7 rules (folder-not-found, validation strictness, no native dialogs, Esc rule).
 - **§7 Error Handling — Expanded** — table of every `ErrorCode`: trigger scenario + expected UI response.
 - **§8 Non-Functional Elaboration** — performance qualitative bar, backup/portability acceptance check.
@@ -120,7 +120,7 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
     { "id": "t2", "name": "🔒", "folderPath": "C:\\notes\\private", "locked": true }
   ],
   // Tab order = array order (single source of truth, no separate "order" field).
-  "window": { "x": 100, "y": 100, "width": 1200, "height": 800, "maximized": false, "treeWidth": 260, "treeSide": "left", "toolbarPosition": { "x": 480, "y": 120 }, "toolbarOrder": ["undo","color","heading","list","bold","strikethrough","link","tocUpdate","redo","fontSize","codeBlock","quote","italic","table","image","rearrangeToggle"] },
+  "window": { "x": 100, "y": 100, "width": 1200, "height": 800, "maximized": false, "treeWidth": 260, "treeSide": "left", "toolbarPosition": { "x": 480, "y": 120 }, "toolbarOrder": ["undo","color","heading","list","bold","strikethrough","link","tocUpdate","clearFormatting","redo","fontSize","codeBlock","quote","italic","table","image","hardBreak","rearrangeToggle"] },
   "theme": "dark",
   "uiFontScale": 1.0,
   "lastOpened": { "tabId": "t1", "memoName": "Shopping list" },
@@ -148,12 +148,11 @@ Elaborates the `AppSettings` interface already given in `[spec §3.4]`. Concrete
   "Free-position float panel"; persistence and `window`-vs-`MemoEditorSettings` placement confirmed
   per `DECISIONS.md` "UI-State Persistence Decisions"). Absent/`null` on first launch means the toolbar
   uses its implementation-chosen default position.
-- `window.toolbarOrder` (16-element array of action-ID strings) persists the result of rearrange-mode
-  reordering (§5.10) across app restarts (`DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed
-  Grid Layout"). The **set** of 16 IDs is fixed (one entry per action in the §5.10 grid, no add/remove);
-  array order is slot order, read left-to-right then top-to-bottom (row 1 slots 1–8, then row 2 slots
-  1–8). Default value on first launch is the finalized default layout shown above. Exact ID spellings:
-  §9.
+- `window.toolbarOrder` (18-element array of action-ID strings) persists the result of rearrange-mode
+  reordering (§5.10) across app restarts (`DECISIONS.md` "Markdown Toolbar: Expanded to 18-Slot Grid").
+  The **set** of 18 IDs is fixed (one entry per action in the §5.10 grid, no add/remove); array order is
+  slot order, read left-to-right then top-to-bottom (row 1 slots 1–9, then row 2 slots 1–9). Default
+  value on first launch is the finalized default layout shown above. Exact ID spellings: §9.
 - `editorDefaults` has no `softTab` or `viewMode` field (removed, `DECISIONS.md` "Remove Unused Editor
   Default Settings: Display Mode Selector and Soft-Tab Checkbox", GitHub issue #61). The Settings →
   Editor dialog no longer shows a "display mode" selector or an "insert tab as spaces" checkbox.
@@ -760,18 +759,21 @@ in this §5.10 stayed here).
   its new value into the currently-open memo's `MemoEditorSettings.viewMode` override (never the fixed
   default), so reopening a memo — or restarting the app — resumes in that memo's last-toggled mode; a
   memo with no override yet still falls back to the fixed `'live'` default (GitHub issue #31).
-- **Toolbar — finalized 16-slot layout** (`DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed
-  Grid Layout"): a floating, freely repositionable (drag anywhere within the window) panel, fixed
-  **8 columns × 2 rows = 16 slots, no blanks**:
+- **Toolbar — finalized 18-slot layout** (`DECISIONS.md` "Markdown Toolbar: Expanded to 18-Slot Grid",
+  GitHub issue #176; supersedes the earlier 16-slot layout in the same entry's predecessor): a floating,
+  freely repositionable (drag anywhere within the window) panel, fixed
+  **9 columns × 2 rows = 18 slots, no blanks**:
 
-  | | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 |
-  |---|---|---|---|---|---|---|---|---|
-  | Row 1 | Undo | Color | Heading | List | Bold | Strikethrough | Link insert | Update (TOC) |
-  | Row 2 | Redo | Font size | Code block | Quote | Italic | Table insert | Image insert | Rearrange-mode toggle |
+  | | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 | Col 9 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | Row 1 | Undo | Color | Heading | List | Bold | Strikethrough | Link insert | Update (TOC) | Clear formatting |
+  | Row 2 | Redo | Font size | Code block | Quote | Italic | Table insert | Image insert | Hard line break | Rearrange-mode toggle |
 
   Bold and Italic are two separate actions/icons (the earlier "combined single button" idea is
   dropped). Each action applies to the current selection or inserts at the cursor, consistent with
-  standard Markdown-editor toolbar conventions.
+  standard Markdown-editor toolbar conventions. The 15 actions carried over from the prior 16-slot
+  layout keep their previous row/column positions unchanged; only `rearrangeToggle` moves, from
+  (row 2, col 8) to (row 2, col 9), so it remains the fixed last slot as the grid grows.
 - **Icon set**: Lucide (MIT-licensed open-source SVG icon set), bundled locally into the app — no
   CDN/network dependency, consistent with the app's portable/offline design (`[spec §0, §6]`). Mapping:
 
@@ -792,21 +794,50 @@ in this §5.10 stayed here).
   | Link insert | `Link` |
   | Image insert | `Image` |
   | Update (TOC) | `RefreshCw` |
+  | Clear formatting | `Eraser` |
+  | Hard line break | `CornerDownLeft` |
   | Rearrange-mode toggle | `GripVertical` |
 
-- **Rearrange mode**: the 16th slot (`GripVertical`) toggles rearrange mode on/off; it does not open a
+- **Rearrange mode**: the 18th slot (`GripVertical`) toggles rearrange mode on/off; it does not open a
   settings screen.
-  - **OFF (default)**: clicking any of the other 15 icons invokes that icon's action immediately, as
+  - **OFF (default)**: clicking any of the other 17 icons invokes that icon's action immediately, as
     normal.
   - **ON**: clicking an icon does not invoke its action — only dragging works, to reorder icons among
-    the 16 slots. The *set* of 16 actions is fixed; only positions change (no add/remove/hide slot).
+    the 18 slots. The *set* of 18 actions is fixed; only positions change (no add/remove/hide slot).
   - Exit rearrange mode by clicking the toggle icon again, or by pressing Esc.
   - Visual indicator while ON: the toolbar's border/background changes (whole-toolbar tint), so the
     mode is unambiguous at a glance.
 - **Persistence**: the toolbar's dragged position persists across app restarts, stored in
   `AppSettings.window.toolbarPosition` (§3.2, `DECISIONS.md` "UI-State Persistence Decisions"). The icon
   order resulting from rearrange mode also persists, stored in `AppSettings.window.toolbarOrder` (§3.2,
-  `DECISIONS.md` "Markdown Toolbar: Finalized 16-Slot Fixed Grid Layout").
+  `DECISIONS.md` "Markdown Toolbar: Expanded to 18-Slot Grid").
+
+- **New action — "Insert hard line break"** (`hardBreak`, tooltip label "強制改行", GitHub issue #176):
+  inserts a CommonMark hard line break (two trailing spaces + `\n`) at the insertion point, as a single CodeMirror transaction
+  (one undo step). Insertion point is the end of the current selection if one exists, or the cursor
+  position if the selection is collapsed; existing text is never deleted. Because this is a
+  point-insertion action rather than a selection-wrapping one (unlike Bold/Italic/Color), it behaves
+  identically whether or not there is a selection — there is no separate empty-selection case to
+  special-case.
+- **New action — "Clear formatting"** (`clearFormatting`, tooltip label "書式クリア", GitHub issue #176): strips Markdown
+  decoration/structure syntax and this app's own `<span style="color:...;font-size:...">` allowlist tag
+  from the selected text, reducing it to plain text, as a single CodeMirror transaction (one undo step).
+  - **Stripped**: bold (`**`/`__`), italic (`*`/`_`), strikethrough (`~~`), inline code (`` ` ``),
+    fenced/indented code-block markers (block text content is kept, only the fence/indent markers are
+    removed), blockquote `>` line prefixes, heading `#`–`######` line prefixes, list markers
+    (`-`/`*`/`+`/ordered `N.`), horizontal-rule lines (`---`/`***`/`___`) that fall fully inside the
+    selection, table pipe/header-separator syntax, and the `<span style="color:...;font-size:...">`
+    wrapper (inner text is kept — this is the combined equivalent of the Color and Font-size buttons'
+    own "clear color"/"clear size" controls, applied together plus everything else above).
+  - **Not stripped** (left exactly as-is): link syntax `[text](url)` (including `memo:` links and
+    `#slug` same-document heading-anchor links) and image syntax (`![alt](url)` and
+    `<img src width height>`) — both are content/references, not decoration, so Clear Formatting never
+    discards a link target or an embedded image. Any HTML tag outside the sanitization allowlist is
+    also left untouched, same as everywhere else in the app; this action does not change the allowlist,
+    it only strips the one allowlisted decoration tag (`<span style>`).
+  - **No selection (collapsed cursor)**: no-op — no transaction is created. There is nothing to strip,
+    and unlike Bold/Italic this action has no "apply to future typing" concept in this app's
+    plain-text-buffer editing model.
 
 - **Table of Contents (TOC) — new v1 feature, triggered by the toolbar's "Update" button** (row 1,
   slot 8; `[spec §4.2, §2.8]`):
@@ -893,13 +924,13 @@ in this §5.10 stayed here).
 
   Both palettes above are closed enums, not free-form pickers — same "adopted verbatim, no new design"
   treatment as the `label.color` palette in §3.3.
-- **Default keyboard shortcuts for all 16 toolbar actions — confirmed policy**: every one of the 16
+- **Default keyboard shortcuts for all 18 toolbar actions — confirmed policy**: every one of the 18
   actions in the grid above gets a default keyboard shortcut, registered as an entry in the existing
   generic shortcut system (`AppSettings.shortcuts`, `[spec §3.4]`; default keymap already tracked in
   `docs/plans/window-operation/PLAN.md` §3 — no new mechanism). Users may rebind any of them via
   Settings → Shortcuts, same as any other shortcut in the app. This is a policy decision only (every
   action gets *some* default binding, none stay toolbar-click-only) — the exact key combination for
-  each of the 16 is `developer-lite`'s implementation discretion (§9).
+  each of the 18 is `developer-lite`'s implementation discretion (§9).
 - **Resize behavior**: pasting an image inserts standard `![alt](relative/path.png)`; resizing (via a
   UI resize handle on the rendered image) converts that single image's markup to
   `<img src="relative/path.png" width=".." height="..">`. Reverting a resize back to "natural size" may
@@ -1059,9 +1090,11 @@ implementation, and should not be escalated to `QA.md`:
 - Exact HTML-comment marker text delimiting the TOC block (§5.10), as long as it stays inert in
   live-view rendering.
 - Exact action-ID string spellings used in `AppSettings.window.toolbarOrder` (§3.2, §5.10), as long as
-  the set stays fixed at 16 and the array's slot→action mapping role is preserved.
-- Exact key combination assigned as the default shortcut for each of the 16 Markdown-toolbar actions
-  (§5.10) — only the policy that all 16 get *a* default binding is spec-level; the specific combos are
+  the set stays fixed at 18 and the array's slot→action mapping role is preserved (`hardBreak` and
+  `clearFormatting` are this document's own suggested spellings, not binding — same discretion as the
+  other 16).
+- Exact key combination assigned as the default shortcut for each of the 18 Markdown-toolbar actions
+  (§5.10) — only the policy that all 18 get *a* default binding is spec-level; the specific combos are
   added to `docs/plans/window-operation/PLAN.md` §3's default keymap list by `developer-lite`.
 
 ---
