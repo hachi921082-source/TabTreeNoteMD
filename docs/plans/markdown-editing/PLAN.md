@@ -176,19 +176,22 @@ must hold for arbitrarily frequent toggling within one editing session (`[detail
 
 ## 4. Toolbar
 
-**Finalized 16-slot fixed grid** (`[detailed-spec §5.10]`, `DECISIONS.md` "Markdown Toolbar: Finalized
-16-Slot Fixed Grid Layout" — supersedes any earlier 12-slot/6×2 draft). Floating, freely-repositionable
-panel (drag anywhere within the window, plain CSS `position: absolute` + a drag-handle), fixed
-**8 columns × 2 rows = 16 slots, no blanks**:
+**Finalized 18-slot fixed grid** (`[detailed-spec §5.10]`, `DECISIONS.md` "Markdown Toolbar: Expanded to
+18-Slot Grid" — GitHub issue #176, supersedes the prior 16-slot/8×2 layout, which itself superseded an
+earlier 12-slot/6×2 draft). Floating, freely-repositionable panel (drag anywhere within the window,
+plain CSS `position: absolute` + a drag-handle), fixed **9 columns × 2 rows = 18 slots, no blanks**:
 
-| | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 |
-|---|---|---|---|---|---|---|---|---|
-| Row 1 | Undo | Color | Heading | List | Bold | Strikethrough | Link insert | Update (TOC) |
-| Row 2 | Redo | Font size | Code block | Quote | Italic | Table insert | Image insert | Rearrange toggle |
+| | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 | Col 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| Row 1 | Undo | Color | Heading | List | Bold | Strikethrough | Link insert | Update (TOC) | Clear formatting |
+| Row 2 | Redo | Font size | Code block | Quote | Italic | Table insert | Image insert | Hard line break | Rearrange toggle |
 
 Bold and Italic are separate slots. Undo/Redo are toolbar actions here (in addition to their existing
 keyboard shortcuts, `editor-save/PLAN.md` §4). Update (TOC) triggers §9 below. Each action applies to
-the current selection or inserts at the cursor, per standard Markdown-editor conventions.
+the current selection or inserts at the cursor, per standard Markdown-editor conventions. The 15 actions
+carried over from the 16-slot layout keep their previous row/column positions unchanged; only
+`rearrangeToggle` moves from (row 2, col 8) to (row 2, col 9), staying the fixed last slot. §4.1 below
+covers the two new actions' exact behavior.
 
 **Icon set**: Lucide, bundled locally (no CDN). Mapping:
 
@@ -201,14 +204,58 @@ the current selection or inserts at the cursor, per standard Markdown-editor con
 | Strikethrough | `Strikethrough` | | Quote | `Quote` |
 | Link insert | `Link` | | Code block | `Code` |
 | Update (TOC) | `RefreshCw` | | Table insert | `Table` |
-| — | — | | Image insert | `Image` |
+| Clear formatting | `Eraser` | | Image insert | `Image` |
+| — | — | | Hard line break | `CornerDownLeft` |
 | — | — | | Rearrange toggle | `GripVertical` |
 
-**Rearrange mode** (`toolbarSlots.ts`): slot 16 (`GripVertical`) toggles it; does not open a settings
+**Rearrange mode** (`toolbarSlots.ts`): slot 18 (`GripVertical`) toggles it; does not open a settings
 screen. The action *set* is fixed — only slot order changes (no add/remove/hide).
 - **OFF** (default): click invokes the slot's action normally.
 - **ON**: click does nothing; only drag reorders slots. Exit via re-clicking the toggle or Esc.
   Whole-toolbar border/background tint indicates ON state.
+
+### 4.1 New Actions — Hard Line Break / Clear Formatting (GitHub issue #176)
+
+Both live in `editor/decorationCommands.ts`, alongside the other selection/cursor-acting toolbar
+commands, and each produces one CodeMirror transaction (one undo step), matching every other action in
+this section.
+
+**Hard line break** (`hardBreak`, tooltip "強制改行", icon `CornerDownLeft`) — `hardBreakCommand(view)`:
+- Inserts a CommonMark hard line break (two trailing spaces + `\n`) at the insertion point: the end of
+  the current selection if one exists, else the cursor position if collapsed.
+- Point-insertion only — never deletes/replaces existing text. No empty-selection special case (the
+  collapsed-cursor and non-empty-selection paths behave identically, since the insertion point is
+  `selection.main.to` either way).
+
+**Clear formatting** (`clearFormatting`, tooltip "書式クリア", icon `Eraser`) —
+`clearFormattingCommand(view)`:
+- **No-op on a collapsed selection**: returns without dispatching (no transaction created).
+- Otherwise, replaces the selected text with a plain-text version, in one transaction:
+  1. **Protect link/image spans first**: every `[text](url)` (incl. `memo:` links and `#slug`
+     anchors), `![alt](url)`, and `<img ...>` match inside the selection is located and left untouched
+     by every later step below (their raw source text is never rewritten) — these are content/
+     references, not decoration (`[detailed-spec §5.10]`).
+  2. **Unwrap `<span style="...">...</span>`** (this app's own allowlisted decoration tag,
+     `markdownSanitize.ts`) — replace with its inner text. No other HTML tag is touched (outside the
+     sanitization allowlist already, left as-is everywhere else in the app).
+  3. **Per line** (outside any fenced/indented code block, tracked across the selection):
+     - Strip a fenced code block's opening/closing ` ``` `/`~~~` delimiter line entirely; content
+       lines inside the fence are copied through verbatim (no further stripping — CommonMark treats
+       their content as literal text, not Markdown syntax).
+     - Strip a 4-space/tab indented code block's leading indent (content kept, verbatim, same as
+       above).
+     - Strip heading `#`–`######` line prefixes, blockquote `>` line prefixes (repeated for nested
+       quotes), and list markers (`-`/`*`/`+`/ordered `N.`, plus their leading indent).
+     - Drop a horizontal-rule line (`---`/`***`/`___`, allowing internal spaces) entirely when it
+       falls fully inside the selection.
+     - Strip table pipe/header-separator syntax: a header-separator row (e.g. `| --- | --- |`) is
+       dropped entirely; other table rows have their `|` delimiters removed (cell text kept).
+  4. **Inline, across the remaining (non-protected) text**: strip bold (`**`/`__`), italic (`*`/`_`),
+     strikethrough (`~~`), and inline code (`` ` ``) markers, keeping the text between them.
+  5. Restore the protected link/image text from step 1 verbatim into the result.
+- Naive regex-based, same rigor level as this file's other toggle/strip commands (e.g. `boldCommand`'s
+  own known boundary-misfire limitation, §4 above) — not a full CommonMark parser; edge cases (e.g.
+  malformed/overlapping syntax) are implementation discretion (`[detailed-spec §9]`), not a spec gap.
 
 **Color button palette** (`<span style="color:...">` on the selection; distinct from `label.color`,
 `memo-tree/PLAN.md` §3) — closed 5-swatch enum + separate "clear color" control:
@@ -238,11 +285,14 @@ separate "clear size" control:
 **Persistence** (both via `settings_get`/`settings_set`, `persistence-fs/PLAN.md` §6.2):
 - Position: `AppSettings.window.toolbarPosition: { x, y }` — write on drag-end (pointerup), not per
   mousemove frame.
-- Slot order: `AppSettings.window.toolbarOrder` — 16-element array of action-ID strings (exact ID
+- Slot order: `AppSettings.window.toolbarOrder` — 18-element array of action-ID strings (exact ID
   spellings are this plan's call, e.g. `"undo" | "redo" | "color" | "fontSize" | "heading" | "list" |
   "bold" | "italic" | "strikethrough" | "quote" | "link" | "codeBlock" | "tocUpdate" | "table" |
-  "image" | "rearrangeToggle"`) — write on exiting rearrange mode (not per drag-move frame). Absent/
-  `null` on first launch → the default layout above.
+  "image" | "clearFormatting" | "hardBreak" | "rearrangeToggle"`) — write on exiting rearrange mode
+  (not per drag-move frame). Absent/`null` on first launch → the default layout above. A previously-
+  persisted 16-element array (from before GitHub issue #176) is upgraded transparently: 
+  `toolbarSlots.ts`'s `normalizeToolbarOrder` appends any action ID missing from a persisted order, so
+  the two new IDs land at the end of the user's existing order on next load rather than being lost.
 
 ## 5. Sanitization Allowlist
 
