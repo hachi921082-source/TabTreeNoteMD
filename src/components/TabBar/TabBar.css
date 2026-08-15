@@ -84,8 +84,11 @@
   height: 100%;
   font-size: calc(13px * var(--ui-font-scale));
   font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  /* No `text-transform: uppercase` (was here pre-#185) — it silently overrode the actual "TabTreeNote"
+     casing chosen in issue #181 with "TABTREENOTE" regardless of source text. `letter-spacing` is
+     reduced from #173's original `0.14em` (tuned for all-caps) to a value that reads well on mixed
+     case instead. */
+  letter-spacing: 0.02em;
   color: var(--ttn-fg-muted);
   border-bottom: 2px solid var(--ttn-border-strong);
 }
