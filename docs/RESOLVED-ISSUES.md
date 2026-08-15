@@ -11,6 +11,7 @@
 
 ## Closed
 
+- #176 Toolbar expanded from 16 to 18 slots (9×2); added "clear formatting" (`Ctrl+Shift+E`) and "hard line break" (`Shift+Enter`) actions, protecting links/images and fenced/indented code content from the format-clear pass (PR #177)
 - #20 Bare file-path auto-link click-to-open has no `..`-traversal guard (security-relevant) — `resolve_file_path` now rejects relative targets with a `..` segment or a rooted-but-not-absolute path (e.g. `\Windows\System32\cmd.exe`), mirroring `markdownSanitize.ts`'s `isSafeRelativeImageSrc` (PR #32)
 - #11 `markdown-editing/PLAN.md` described the toolbar's "Update" slot as calling a removed stub — corrected to describe the real `tocGenerator.ts` wiring (PR #33)
 - #14 `Cargo.toml`'s `tauri-plugin-autostart` comment described the abandoned Startup-folder approach — corrected to describe the shipped Registry `HKCU\...\Run` key (PR #34)
