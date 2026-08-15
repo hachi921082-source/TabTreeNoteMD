@@ -258,8 +258,13 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
         {/* GitHub issue #153 — this app's own UI never actually rendered its name anywhere; what
             looked like one in a screenshot was the OS window title, not this component.
             GitHub issue #173 — the divider rule after the word is what visually closes off the
-            "label zone" before the first real tab starts. */}
-        <span className="ttn-tab-brand">
+            "label zone" before the first real tab starts.
+            GitHub issue #175 — `.ttn-tab-bar`'s own bare `data-tauri-drag-region` is Tauri's "self"
+            mode (see `tauri`'s injected `drag.js`): it only starts a drag when the raw click target
+            IS that element itself, not merely a descendant of it — clicking this nested `<span>`
+            never satisfies that check, so dragging it silently did nothing despite having no
+            competing click handler. `"deep"` mode is the one that makes descendant clicks count. */}
+        <span className="ttn-tab-brand" data-tauri-drag-region="deep">
           <span className="ttn-tab-brand-word">TabTreeNoteMD</span>
           <span className="ttn-tab-brand-rule" aria-hidden="true" />
         </span>

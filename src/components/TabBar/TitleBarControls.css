@@ -2,9 +2,13 @@
   display: flex;
   align-items: stretch;
   flex: none;
-  /* Sits outside the drag region's default behavior implicitly (buttons inside a
-     data-tauri-drag-region ancestor still receive clicks normally, same as the existing
-     "+"/pin buttons in this bar). */
+  /* GitHub issue #175 correction: this isn't "descendants inherit the ancestor's drag region by
+     default" — `.ttn-tab-bar`'s bare `data-tauri-drag-region` is Tauri's "self" mode, which never
+     triggers a drag from a descendant click at all (see `TabBar.tsx`'s `.ttn-tab-brand` comment).
+     Buttons specifically are exempted from drag regions unconditionally by Tauri's own drag script
+     (any `<button>`/`<a>`/etc. in the click path blocks dragging outright, regardless of "self" vs
+     "deep" mode) — that's why these "+"/pin/minimize/maximize/close buttons keep receiving clicks
+     normally, not because they sit inside a drag-region ancestor. */
 }
 
 .ttn-titlebar-btn {
