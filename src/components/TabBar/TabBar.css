@@ -82,11 +82,11 @@
   display: flex;
   align-items: center;
   height: 100%;
-  font-size: calc(10.5px * var(--ui-font-scale));
+  font-size: calc(13px * var(--ui-font-scale));
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ttn-fg-subtle);
+  color: var(--ttn-fg-muted);
   border-bottom: 2px solid var(--ttn-border-strong);
 }
 
