@@ -274,3 +274,142 @@ export function clearColorSpan(view: EditorView): boolean {
 export function clearFontSizeSpan(view: EditorView): boolean {
   return clearSpanProperty(view, "font-size");
 }
+
+// ---------------------------------------------------------------------------
+// Hard line break — inserts a CommonMark hard line break (two trailing spaces + `\n`) at the
+// insertion point: the end of the current selection if one exists, or the cursor if collapsed
+// (`docs/plans/markdown-editing/PLAN.md` §4.1, GitHub issue #176). Point-insertion only — existing
+// text is never deleted, so there is no separate empty-selection case to special-case.
+// ---------------------------------------------------------------------------
+
+export function hardBreakCommand(view: EditorView): boolean {
+  const { state } = view;
+  const pos = state.selection.main.to;
+  const insert = "  \n";
+  view.dispatch({ changes: { from: pos, to: pos, insert }, selection: { anchor: pos + insert.length } });
+  view.focus();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Clear formatting — strips Markdown decoration/structure syntax (and this app's own allowlisted
+// `<span style="...">` tag) from the selection, reducing it to plain text, in one transaction
+// (`docs/plans/markdown-editing/PLAN.md` §4.1, GitHub issue #176). Link syntax (`[text](url)`,
+// incl. `memo:`/`#slug` links) and image syntax (`![alt](url)`, `<img>`) are content/references, not
+// decoration, so they are protected from every step below and restored verbatim. Naive regex-based,
+// same rigor level as this file's other toggle/strip commands (e.g. `boldCommand`'s own known
+// boundary-misfire limitation above) — not a full CommonMark parser.
+// ---------------------------------------------------------------------------
+
+/** Matches one `[text](url)`/`![alt](url)` link-or-image, or one self-contained `<img ...>` tag —
+ * the exact set of constructs Clear Formatting must never rewrite. Images (`!...`) and links share
+ * the same bracket/paren shape, told apart only by the leading `!`, so one alternation covers both;
+ * `<img>` (the app's other allowlisted image form, `markdownSanitize.ts`) is a separate shape
+ * entirely. */
+const PROTECTED_RE = /!?\[[^\]]*\]\([^)]*\)|<img\s+[^>]*\/?>/g;
+
+/** Placeholder-substitutes every `PROTECTED_RE` match in `text` with a token that survives the
+ * regex passes below untouched (no `*`/`_`/`~`/`` ` ``/`#`/`>`/`|` characters), then returns a
+ * restore function to substitute the originals back in once every strip pass has run. */
+function protectLinksAndImages(text: string): { protectedText: string; restore: (s: string) => string } {
+  const originals: string[] = [];
+  const protectedText = text.replace(PROTECTED_RE, (match) => {
+    const token = `\u0000${originals.length}\u0000`;
+    originals.push(match);
+    return token;
+  });
+  const restore = (s: string) => s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => originals[Number(i)] ?? "");
+  return { protectedText, restore };
+}
+
+/** Unwraps every allowlisted `<span style="...">...</span>` in `text` to its inner content —
+ * the combined equivalent of the Color/Font-size buttons' own "clear" controls, applied together.
+ * No other HTML tag is touched (outside the sanitization allowlist already, `markdownSanitize.ts`). */
+function unwrapColorSpans(text: string): string {
+  return text.replace(/<span\s+style="[^"]*"\s*>([\s\S]*?)<\/span>/gi, "$1");
+}
+
+const FENCE_RE = /^(\s*)(```|~~~)/;
+const HR_RE = /^\s*(?:-\s*){3,}$|^\s*(?:\*\s*){3,}$|^\s*(?:_\s*){3,}$/;
+const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const HEADING_PREFIX_RE = /^#{1,6}\s+/;
+const QUOTE_PREFIX_RE = /^(>\s?)+/;
+const LIST_PREFIX_RE = /^(\s*)(?:[-*+]|\d+\.)\s+/;
+const INDENTED_CODE_RE = /^(?: {4}|\t)/;
+
+/** Strips bold/italic/strikethrough/inline-code markers, keeping the text between them. Bold is
+ * processed before italic so a `**bold**` pair isn't half-consumed by the single-marker italic
+ * regex first. Only ever applied to a line that is NOT fenced-code-block content — see
+ * `stripLineLevelSyntax`'s call site below. */
+function stripInlineSyntax(text: string): string {
+  let result = text;
+  result = result.replace(/~~([^~]+?)~~/g, "$1");
+  result = result.replace(/\*\*([^*]+?)\*\*/g, "$1");
+  result = result.replace(/__([^_]+?)__/g, "$1");
+  result = result.replace(/\*([^*]+?)\*/g, "$1");
+  result = result.replace(/\b_([^_]+?)_\b/g, "$1");
+  result = result.replace(/`([^`]+?)`/g, "$1");
+  return result;
+}
+
+/** Strips fenced/indented code-block markers, heading/blockquote/list line-prefixes,
+ * horizontal-rule lines, table pipe/separator syntax, and inline bold/italic/strikethrough/code
+ * markers — one line at a time, tracking fenced code-block state across the selection so a
+ * fence's own content lines are copied through completely verbatim: no line-level stripping AND
+ * no inline stripping (CommonMark treats fence content as literal text, not Markdown syntax).
+ * Inline stripping is folded into this same per-line loop — rather than run as a separate pass
+ * over the whole joined result afterward — specifically so it can be skipped for fence-content
+ * lines; a separate blind pass has no record of which output lines came from inside a fence. */
+function stripLineLevelSyntax(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let fenceMarker: string | null = null;
+  for (const line of lines) {
+    if (fenceMarker !== null) {
+      const closeMatch = FENCE_RE.exec(line);
+      if (closeMatch && closeMatch[2] === fenceMarker) {
+        fenceMarker = null; // closing fence line — drop the marker, keep no line for it
+        continue;
+      }
+      out.push(line); // fence content — verbatim, no inline stripping either
+      continue;
+    }
+    const openMatch = FENCE_RE.exec(line);
+    if (openMatch) {
+      fenceMarker = openMatch[2];
+      continue; // opening fence line — drop the marker
+    }
+    if (HR_RE.test(line)) continue; // horizontal rule — drop the whole line
+    if (TABLE_SEPARATOR_RE.test(line) && line.includes("-")) continue; // table header separator row
+    let rest = line;
+    if (INDENTED_CODE_RE.test(rest)) {
+      out.push(rest.replace(INDENTED_CODE_RE, ""));
+      continue;
+    }
+    rest = rest.replace(HEADING_PREFIX_RE, "");
+    rest = rest.replace(QUOTE_PREFIX_RE, "");
+    rest = rest.replace(LIST_PREFIX_RE, "");
+    if (rest.includes("|")) rest = rest.replace(/\s*\|\s*/g, " ").trim();
+    out.push(stripInlineSyntax(rest));
+  }
+  return out.join("\n");
+}
+
+export function clearFormattingCommand(view: EditorView): boolean {
+  const { state } = view;
+  const sel = state.selection.main;
+  if (sel.empty) return false; // no-op on a collapsed selection — no transaction created
+  const original = state.sliceDoc(sel.from, sel.to);
+
+  const { protectedText, restore } = protectLinksAndImages(original);
+  let result = unwrapColorSpans(protectedText);
+  result = stripLineLevelSyntax(result); // also strips inline syntax per-line, skipping fence content
+  result = restore(result);
+
+  view.dispatch({
+    changes: { from: sel.from, to: sel.to, insert: result },
+    selection: { anchor: sel.from, head: sel.from + result.length },
+  });
+  view.focus();
+  return true;
+}

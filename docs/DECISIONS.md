@@ -52,6 +52,28 @@ existing `AppSettings.shortcuts` system (no new mechanism); exact key combos are
 `developer-lite`'s implementation discretion, same treatment as other deferred items in
 `detailed-spec.md` §9. Full values and elaboration in `detailed-spec.md` §5.10.
 
+**Superseded (2026-08-15)**: the 16-slot count, 8×2 grid, and 16-element `toolbarOrder` array described
+above are historical — see "Markdown Toolbar: Expanded to 18-Slot Grid" below for current values
+(18/9×2/18-element). Icon set, rearrange-mode mechanism, Color/Font-size palettes, and default-shortcut
+policy in this entry are otherwise unchanged.
+
+## Markdown Toolbar: Expanded to 18-Slot Grid; "Insert Hard Line Break" and "Clear Formatting" Actions Added (GitHub issue #176, 2026-08-15)
+
+**Decision**: Grid grows from 8 columns × 2 rows (16 slots) to **9 columns × 2 rows = 18 slots**, no
+blanks — continuing the "grow columns, keep 2 rows" pattern already used once before (6×2/12-slot →
+8×2/16-slot, entry above). The extra column holds two new actions, one per row: **Insert hard line
+break** (`hardBreak`, icon `CornerDownLeft`) and **Clear formatting** (`clearFormatting`, icon
+`Eraser`). `rearrangeToggle` shifts from slot 16 to slot 18, remaining the fixed last slot; the other 15
+pre-existing action IDs keep their prior row/column positions unchanged. `AppSettings.window.toolbarOrder`
+becomes an 18-element array. Full grid table, icon mapping, and both new actions' exact
+insertion/strip behavior — including Clear Formatting's content-vs-decoration scope (links and images
+are preserved, not stripped) — are in `detailed-spec.md` §5.10.
+
+**Rejected**: 6 columns × 3 rows. Matches the pre-16-slot column count but grows the floating panel's
+height instead of width; no user preference was expressed for taller-vs-wider, and matching the
+established "grow by column" pattern from the prior expansion was judged the lower-risk, more
+consistent choice.
+
 ## New Feature: Table of Contents (TOC) (2026-08-01)
 
 **Decision**: Added to v1 scope. Triggered only by the toolbar's "Update" button (manual, one-shot,

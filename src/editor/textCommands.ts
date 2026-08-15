@@ -3,7 +3,12 @@
 // transforms, status-bar derived state, scroll-position helpers, and "Search with Google".
 // Everything here feeds the same undo history as manual typing (single CodeMirror transactions
 // per action). The Markdown-specific decoration/live-view layer is `markdown-editing/PLAN.md`'s
-// separate, not-yet-implemented concern, built on top of the extensions this module produces.
+// separate concern, built on top of the extensions this module produces — with one deliberate
+// exception: `buildPlainTextExtensions`'s keymap imports `decorationCommands.ts`'s `hardBreakCommand`
+// directly (GitHub issue #176), since `Shift-Enter` must be intercepted at THIS CodeMirror-layer
+// keymap to preempt `@codemirror/commands`'s own built-in binding — see that keymap entry's own
+// comment for why a no-op / window-level-dispatch handoff (this module's usual pattern for other
+// markdown toolbar actions) doesn't work for this one specific combo.
 import { Compartment, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, highlightWhitespace, keymap, lineNumbers } from "@codemirror/view";
@@ -14,6 +19,7 @@ import jaconv from "jaconv";
 import type { EditorDefaults, MemoEditorSettings } from "../shared/models";
 import { linkOpenExternal } from "../ipc/link";
 import { RESERVED_COMBOS, normalizeCodeMirrorKey } from "../shared/shortcuts";
+import { hardBreakCommand } from "./decorationCommands";
 
 // ---------------------------------------------------------------------------
 // Settings resolution (`[spec §3.4]`: per-memo override falls back to `AppSettings.editorDefaults`)
@@ -263,7 +269,37 @@ export function buildPlainTextExtensions(opts: BuildExtensionsOptions): Extensio
     settingsCompartment.of(buildSettingsExtension(opts.settings)),
     whitespaceCompartment.of(whitespaceExtension(opts.showWhitespace)),
     readOnlyCompartment.of(readOnlyExtension(opts.readOnly)),
-    keymap.of([{ key: "Enter", run: insertNewlineKeepIndent }, ...neutralizeReservedCombos(defaultKeymap), ...neutralizeReservedCombos(historyKeymap)]),
+    // `Shift-Enter` -> `hardBreakCommand` (GitHub issue #176, `markdown.hardBreak` default
+    // "Shift+Enter") is a REAL command here, not a `neutralizeReservedCombos`-style no-op, and MUST
+    // stay ordered ahead of `defaultKeymap` below, for the same reason the plain `"Enter"` override
+    // right before it is: `defaultKeymap`'s own `{ key: "Enter", run: insertNewlineAndIndent, shift:
+    // insertNewlineAndIndent }` registers `.shift` as a SEPARATE alternate binding CodeMirror's own
+    // keymap builder resolves under the key name `"Shift-Enter"` (`@codemirror/view`'s
+    // `bindingKeymap`: `if (b.shift) add(scope, "Shift-" + name, b.shift, ...)`) — `.key` alone
+    // (what `neutralizeReservedCombos` checks) never sees it, so merely neutralizing `.key` bindings
+    // leaves this alternate free to keep firing `insertNewlineAndIndent` instead (a plain soft
+    // newline, not the CommonMark hard break `hardBreakCommand` inserts).
+    //
+    // A no-op override (`run: () => true, preventDefault: true`, the pattern
+    // `neutralizeReservedCombos` uses for other reserved combos) is not viable here specifically:
+    // unlike those other combos, `markdown.hardBreak`'s actual command normally runs through
+    // `EditorPane.tsx`'s own `window`-level shortcut dispatcher (`toolbarRef.current?.invokeAction`),
+    // which bails immediately on `e.defaultPrevented` — and CodeMirror's own DOM handler calls
+    // `event.preventDefault()` on ANY matched keymap binding whose `run` returns `true`, no-op or
+    // not (`@codemirror/view`'s `InputState.runHandlers`), *before* the event ever bubbles from
+    // `.cm-content` up to `window`. So a no-op here would swallow Shift+Enter into doing nothing at
+    // all (worse than the original bug) rather than letting the window-level dispatcher take over.
+    // Running `hardBreakCommand` directly inside this CodeMirror-layer binding — exactly like the
+    // plain `"Enter"` override already does for `insertNewlineKeepIndent` — sidesteps that dead end
+    // entirely: the edit happens right here, and the later `e.defaultPrevented` bail in
+    // `EditorPane.tsx` then correctly suppresses a *second*, duplicate `invokeAction` for the same
+    // keypress rather than blocking the only one.
+    keymap.of([
+      { key: "Enter", run: insertNewlineKeepIndent },
+      { key: "Shift-Enter", run: hardBreakCommand },
+      ...neutralizeReservedCombos(defaultKeymap),
+      ...neutralizeReservedCombos(historyKeymap),
+    ]),
     EditorView.updateListener.of((update) => {
       if (update.docChanged) opts.onDocChanged(update.state.doc.toString());
     }),

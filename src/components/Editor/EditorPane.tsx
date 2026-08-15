@@ -577,9 +577,10 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     return () => window.removeEventListener("keydown", handler);
   }, [search, appSettings?.shortcuts, revealSplitIfPreviewOnly]);
 
-  // Default keyboard shortcuts for the 16 Markdown toolbar actions plus the live/source toggle
-  // (`docs/detailed-spec.md` §5.10: "every one of the 16 toolbar actions gets a default keyboard
-  // shortcut, registered as an entry in the existing generic shortcut system"). Dispatches through
+  // Default keyboard shortcuts for the 18 Markdown toolbar actions plus the live/source toggle
+  // (`docs/detailed-spec.md` §5.10: "every toolbar action gets a default keyboard shortcut,
+  // registered as an entry in the existing generic shortcut system" — 18 actions after GitHub
+  // issue #176). Dispatches through
   // `MarkdownToolbar`'s imperative handle rather than duplicating its action switch statement here.
   // Scoped to when focus is within this editor's own CodeMirror content, so these common
   // combinations (Ctrl+B, Ctrl+I, etc.) don't fire while typing elsewhere in the app (e.g. a
@@ -615,11 +616,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   }, [appSettings?.shortcuts, handleToggleLiveView]);
 
   // `markdown.paneModeCycle` (`docs/plans/markdown/markdown-preview/PLAN.md` §6.3): a separate,
-  // focus-UNconstrained effect (unlike the 16-grid-action dispatcher above, which only fires while
+  // focus-UNconstrained effect (unlike the 18-grid-action dispatcher above, which only fires while
   // focus is inside `.ttn-editor-cm-container`) — this shortcut must work regardless of focus
   // location within the editor pane, including while focus is inside the preview pane's own DOM
   // subtree. Mirrors the also-unconstrained Ctrl+F handler's pattern above. Not part of
-  // `ToolbarActionId`/`toolbarSlots.ts`'s 16-slot registry, so it can't go through
+  // `ToolbarActionId`/`toolbarSlots.ts`'s 18-slot registry, so it can't go through
   // `MarkdownToolbar`'s `invokeAction` switch — it calls `onCyclePaneMode` directly instead.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
