@@ -183,15 +183,16 @@ plain CSS `position: absolute` + a drag-handle), fixed **9 columns × 2 rows = 1
 
 | | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 | Col 9 |
 |---|---|---|---|---|---|---|---|---|---|
-| Row 1 | Undo | Color | Heading | List | Bold | Strikethrough | Link insert | Update (TOC) | Clear formatting |
-| Row 2 | Redo | Font size | Code block | Quote | Italic | Table insert | Image insert | Hard line break | Rearrange toggle |
+| Row 1 | Undo | Color | Heading | Font size | List | Bold | Italic | Strikethrough | Update (TOC) |
+| Row 2 | Redo | Quote | Code block | Table insert | Link insert | Image insert | Clear formatting | Hard line break | Rearrange toggle |
 
 Bold and Italic are separate slots. Undo/Redo are toolbar actions here (in addition to their existing
 keyboard shortcuts, `editor-save/PLAN.md` §4). Update (TOC) triggers §9 below. Each action applies to
-the current selection or inserts at the cursor, per standard Markdown-editor conventions. The 15 actions
-carried over from the 16-slot layout keep their previous row/column positions unchanged; only
-`rearrangeToggle` moves from (row 2, col 8) to (row 2, col 9), staying the fixed last slot. §4.1 below
-covers the two new actions' exact behavior.
+the current selection or inserts at the cursor, per standard Markdown-editor conventions. Slot order
+above reflects GitHub issue #187's rearrangement (supersedes issue #176's original default order) — this
+is only the *default*; a returning user's persisted `AppSettings.window.toolbarOrder` always wins
+(`toolbarSlots.ts`'s `normalizeToolbarOrder`). §4.1 below covers `hardBreak`/`clearFormatting`'s exact
+behavior.
 
 **Icon set**: Lucide, bundled locally (no CDN). Mapping:
 
@@ -336,7 +337,7 @@ the buffer and rendering them as clickable; actual resolution/opening logic is n
 
 ## 8. Table of Contents (TOC)
 
-Triggered by the toolbar's Update slot (§4, row 1 slot 8, `RefreshCw`). Fully specified as its own plan
+Triggered by the toolbar's Update slot (§4, row 1 slot 9, `RefreshCw`). Fully specified as its own plan
 in [`table-of-contents/PLAN.md`](../table-of-contents/PLAN.md) — heading scan (with code-fence
 awareness), slugification, marker-block generation/insert-replace, persistence, and `#slug` link
 coexistence all live there; read it alongside this file rather than duplicating it here.

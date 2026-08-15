@@ -56,27 +56,25 @@ export interface ToolbarActionDef {
 
 /** The fixed 9-columns×2-rows grid's factory-default slot order (row-major: row 1 slots 1-9, then
  * row 2 slots 1-9), matching the table in `docs/plans/markdown-editing/PLAN.md` §4 exactly. Used
- * whenever `AppSettings.window.toolbarOrder` is absent/`null` (first launch). The 15 IDs carried
- * over from the prior 16-slot default keep their previous relative order; `clearFormatting` and
- * `hardBreak` (GitHub issue #176) are inserted at their new slots (row 1 col 9, row 2 col 8), and
- * `rearrangeToggle` shifts to the new last slot (row 2 col 9). */
+ * whenever `AppSettings.window.toolbarOrder` is absent/`null` (first launch). Reordered per GitHub
+ * issue #187 — only the default arrangement changed, not the action set. */
 export const DEFAULT_TOOLBAR_ORDER: ToolbarActionId[] = [
   "undo",
   "color",
   "heading",
+  "fontSize",
   "list",
   "bold",
-  "strikethrough",
-  "link",
-  "tocUpdate",
-  "clearFormatting",
-  "redo",
-  "fontSize",
-  "codeBlock",
-  "quote",
   "italic",
+  "strikethrough",
+  "tocUpdate",
+  "redo",
+  "quote",
+  "codeBlock",
   "table",
+  "link",
   "image",
+  "clearFormatting",
   "hardBreak",
   "rearrangeToggle",
 ];
