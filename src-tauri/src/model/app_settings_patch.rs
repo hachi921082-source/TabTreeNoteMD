@@ -379,10 +379,7 @@ mod tests {
     #[test]
     fn double_option_distinguishes_absent_from_explicit_null() {
         let mut current = AppSettings::default();
-        current.last_opened = Some(LastOpened {
-            tab_id: "t1".into(),
-            memo_name: "Shopping list".into(),
-        });
+        current.last_opened = Some(LastOpened { tab_id: "t1".into() });
 
         // Key absent -> leave unchanged.
         let patch: AppSettingsPatch = serde_json::from_str("{}").unwrap();
@@ -393,6 +390,17 @@ mod tests {
         let patch: AppSettingsPatch = serde_json::from_str(r#"{"lastOpened":null}"#).unwrap();
         patch.apply_to(&mut current);
         assert!(current.last_opened.is_none());
+    }
+
+    /// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1: a pre-upgrade `lastOpened` patch carrying
+    /// the now-removed `memoName` field must still parse (unknown-field tolerance is this struct's
+    /// default), with just `tabId` applied.
+    #[test]
+    fn last_opened_patch_tolerates_a_pre_upgrade_memo_name_field() {
+        let mut current = AppSettings::default();
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"lastOpened":{"tabId":"t1","memoName":"Shopping list"}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.last_opened, Some(LastOpened { tab_id: "t1".into() }));
     }
 
     #[test]

@@ -6,7 +6,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const APP_SETTINGS_SCHEMA_VERSION: u32 = 1;
+// v1.1.0: bumped 1 -> 2, combined bump covering both this file's `LastOpened` narrowing (drops
+// `memoName`, `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1) and
+// `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md`'s `tabLockAutoRelockMinutes` addition — a
+// single bump for both, not two separate increments (`[detailed-spec v1.1.0 §5.4]`).
+pub const APP_SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,11 +149,16 @@ impl Default for AppearanceSettings {
     }
 }
 
+/// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1: narrowed from `{ tabId, memoName }` to just
+/// `{ tabId }` — the "which memo was open" pointer moved to each tab's own
+/// `TabMetaFile::last_viewed_memo`/`LockPayload::last_viewed_memo`, avoiding the two ever falling
+/// out of sync. A pre-upgrade `settings.json` with a `lastOpened.memoName` field simply has that
+/// field ignored by serde (unknown-field tolerance, already the default for this struct) — no
+/// destructive migration needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastOpened {
     pub tab_id: String,
-    pub memo_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
