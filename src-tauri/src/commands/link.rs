@@ -243,7 +243,15 @@ mod tests {
     }
 
     fn empty_session(real_tab_name: &str, tree: Vec<MetaTreeNode>) -> LockSession {
-        LockSession { real_tab_name: real_tab_name.to_string(), tree, file_map: Vec::new(), kdf: KdfParams::generate_new(), hint: None, key: [0u8; 32] }
+        LockSession {
+            real_tab_name: real_tab_name.to_string(),
+            tree,
+            file_map: Vec::new(),
+            kdf: KdfParams::generate_new(),
+            hint: None,
+            key: [0u8; 32],
+            last_viewed_memo: None,
+        }
     }
 
     #[test]

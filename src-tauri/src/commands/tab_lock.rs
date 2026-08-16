@@ -438,11 +438,15 @@ pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Op
         }
     }
 
-    // Step 8: build + write the lock blob.
+    // Step 8: build + write the lock blob. `last_viewed_memo` carries forward the pre-lock plain
+    // tab's own value (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1's "data-model symmetry" —
+    // even a just-locked tab remembers what was last viewed, though it's never read back
+    // automatically for a locked tab, `PLAN.md` §6).
     let payload = LockPayload {
         real_tab_name: tab_name,
         tree: loaded.tree,
         file_map,
+        last_viewed_memo: loaded.last_viewed_memo,
     };
     let field = match lock_blob::encrypt_lock_field(&key, kdf_params, hint, &payload) {
         Ok(f) => f,
@@ -528,11 +532,15 @@ fn clear_locked_placeholder(
 
 fn write_lock_field(folder: &Path, field: &LockField, registry: &SelfWriteRegistry) -> std::io::Result<()> {
     let value = serde_json::to_value(field).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    // `last_viewed_memo: None` — a locked tab's own value lives inside the encrypted `lock`
+    // payload instead (`LockPayload::last_viewed_memo`), never as a plaintext sibling here
+    // (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1).
     let meta = TabMetaFile {
         schema_version: TAB_META_SCHEMA_VERSION,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         tree: None,
         lock: Some(value),
+        last_viewed_memo: None,
     };
     let json = serde_json::to_vec_pretty(&meta)?;
     atomic_write(&folder.join(TAB_META_FILE_NAME), &json, registry)
@@ -621,6 +629,7 @@ pub async fn tab_unlock(app: AppHandle, tab_id: String, password: String) -> App
             kdf: field.kdf,
             hint: field.hint,
             key: key_bytes,
+            last_viewed_memo: payload.last_viewed_memo,
         },
     );
 
@@ -673,6 +682,7 @@ async fn resolve_key_and_lock_payload(
                 real_tab_name: s.real_tab_name.clone(),
                 tree: s.tree.clone(),
                 file_map: s.file_map.clone(),
+                last_viewed_memo: s.last_viewed_memo.clone(),
             },
         )
     }) {
@@ -806,7 +816,7 @@ pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Opti
 
     // Step 8: rewrite metadata — plain `tree` field, real names. Only reached once step 7
     // completed with zero anomalous entries.
-    if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, &registry) {
+    if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, payload.last_viewed_memo.clone(), &registry) {
         tracing::error!(error = %err, "tab_permanent_unlock: failed to save plain tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
@@ -961,11 +971,13 @@ pub async fn tab_lock_recovery_finish(app: AppHandle, tab_id: String, password: 
                 }
             }
         }
+        let last_viewed_memo = parsed.as_ref().and_then(|m| m.last_viewed_memo.clone());
         let tree_field = parsed.and_then(|m| m.tree).unwrap_or_default();
         let payload = LockPayload {
             real_tab_name: tab_name,
             tree: tree_field,
             file_map: marker.file_map.clone(),
+            last_viewed_memo,
         };
         let field = match lock_blob::encrypt_lock_field(&key, marker.kdf.clone(), None, &payload) {
             Ok(f) => f,
@@ -1029,6 +1041,10 @@ pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password:
 
     let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&folder);
     let already_has_lock_field = parsed.as_ref().and_then(|m| m.lock.clone()).is_some();
+    // Plain-shaped-file case (the `else` branch below) has its own top-level `last_viewed_memo`;
+    // the already-locked case overwrites this with the decrypted payload's own value instead
+    // (captured in that branch, below) — a locked tab's top-level field is always `None`.
+    let mut last_viewed_memo = parsed.as_ref().and_then(|m| m.last_viewed_memo.clone());
 
     let restored_tree: Vec<MetaTreeNode> = if already_has_lock_field {
         // Step 8 already succeeded: decrypt the already-written lock blob (with the now-verified
@@ -1040,7 +1056,10 @@ pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password:
             Err(_) => return AppResult::err_code(ErrorCode::Unknown, "this tab's lock metadata is corrupted"),
         };
         match lock_blob::decrypt_lock_field(&key, &field) {
-            Ok(payload) => payload.tree,
+            Ok(payload) => {
+                last_viewed_memo = payload.last_viewed_memo;
+                payload.tree
+            }
             Err(_) => return AppResult::err_code(ErrorCode::DecryptFailed, "incorrect password"),
         }
     } else {
@@ -1074,7 +1093,7 @@ pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password:
         }
     }
 
-    if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &restored_tree, &registry) {
+    if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &restored_tree, last_viewed_memo, &registry) {
         tracing::error!(error = %err, "tab_lock_recovery_restore: failed to restore plain tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to restore tab metadata");
     }
@@ -1230,7 +1249,7 @@ pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String
             }
             Err(err) => return AppResult::err(err),
         };
-        if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, &registry) {
+        if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, payload.last_viewed_memo.clone(), &registry) {
             tracing::error!(error = %err, "tab_permanent_unlock_recovery_finish: failed to save plain tab metadata");
             return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
         }
@@ -1358,6 +1377,7 @@ pub(crate) fn session_tree_snapshot(session: &LockSession) -> TreeSnapshot {
         locked: true,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo: session.last_viewed_memo.clone(),
     }
 }
 
@@ -1368,20 +1388,24 @@ fn empty_locked_snapshot() -> TreeSnapshot {
         locked: true,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo: None,
     }
 }
 
 /// Re-encrypts and atomically re-saves the lock blob for `session`'s static fields
-/// (key/kdf/hint/realTabName) combined with an explicit `tree`/`file_map` — called after every
-/// structure-changing session mutation (`PLAN.md` §3). `tree`/`file_map` are taken as separate
-/// parameters (rather than read from `session` itself) so callers can save a not-yet-committed
-/// draft and only write it into `session` once this succeeds (`commit_session_mutation`, GH #17).
-fn save_lock_blob(folder: &Path, session: &LockSession, tree: &[MetaTreeNode], file_map: &[FileMapEntry], registry: &SelfWriteRegistry) -> std::io::Result<()> {
+/// (key/kdf/hint/realTabName) combined with an explicit `tree`/`file_map`/`last_viewed_memo` —
+/// called after every structure-changing session mutation (`PLAN.md` §3), and by
+/// `session_set_last_viewed` below (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4). Every
+/// parameter besides `session` is taken explicitly (rather than read from `session` itself) so
+/// callers can save a not-yet-committed draft and only write it into `session` once this succeeds
+/// (`commit_session_mutation`, GH #17).
+fn save_lock_blob(folder: &Path, session: &LockSession, tree: &[MetaTreeNode], file_map: &[FileMapEntry], last_viewed_memo: Option<String>, registry: &SelfWriteRegistry) -> std::io::Result<()> {
     let key = LockKey::new(&session.key);
     let payload = LockPayload {
         real_tab_name: session.real_tab_name.clone(),
         tree: tree.to_vec(),
         file_map: file_map.to_vec(),
+        last_viewed_memo,
     };
     let field = lock_blob::encrypt_lock_field(&key, session.kdf.clone(), session.hint.clone(), &payload).map_err(|_| std::io::Error::other("failed to encrypt lock blob"))?;
     write_lock_field(folder, &field, registry)
@@ -1414,7 +1438,7 @@ fn commit_session_mutation(
         let mut tree = session.tree.clone();
         let mut file_map = session.file_map.clone();
         mutate(session, &mut tree, &mut file_map)?;
-        save_lock_blob(folder, session, &tree, &file_map, registry).map_err(|err| {
+        save_lock_blob(folder, session, &tree, &file_map, session.last_viewed_memo.clone(), registry).map_err(|err| {
             tracing::error!(error = %err, tab_id, "session mutation: failed to save lock blob; in-memory session left unchanged");
             AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
         })?;
@@ -1422,6 +1446,28 @@ fn commit_session_mutation(
         session.file_map = file_map;
         Ok(())
     })
+}
+
+/// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4, session branch of `tree_set_last_viewed`: sets
+/// `session.last_viewed_memo` and re-encrypts+re-saves the lock blob (fresh IV) — same "structure
+/// change -> re-encrypt and re-save the blob" rule as every other session mutation above, even
+/// though this field isn't part of `tree`/`file_map`. Follows the same "commit only after the save
+/// succeeds" discipline as `commit_session_mutation` (GH #17): `session.last_viewed_memo` is left
+/// unchanged if the lock-blob save fails.
+pub(crate) fn session_set_last_viewed(sessions: &LockSessionStore, registry: &SelfWriteRegistry, folder: &Path, tab_id: &str, memo_name: Option<String>) -> AppResult<()> {
+    let result = sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
+        save_lock_blob(folder, session, &session.tree.clone(), &session.file_map.clone(), memo_name.clone(), registry).map_err(|err| {
+            tracing::error!(error = %err, tab_id, "session_set_last_viewed: failed to save lock blob; in-memory session left unchanged");
+            AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
+        })?;
+        session.last_viewed_memo = memo_name;
+        Ok(())
+    });
+    match result {
+        Some(Ok(())) => AppResult::ok(()),
+        Some(Err(payload)) => AppResult::err(payload),
+        None => AppResult::err_code(ErrorCode::TabLocked, "no active session for this tab"),
+    }
 }
 
 pub(crate) fn session_create_memo(
@@ -2025,7 +2071,7 @@ pub(crate) fn move_cross_tab_plain_to_session(
         for p in paths {
             tree::remove_node(&mut source_loaded.tree, p);
         }
-        if let Err(err) = tree::save_tab_meta(source_folder, source_loaded.schema_version, source_loaded.app_version, &source_loaded.tree, registry) {
+        if let Err(err) = tree::save_tab_meta(source_folder, source_loaded.schema_version, source_loaded.app_version, &source_loaded.tree, source_loaded.last_viewed_memo.clone(), registry) {
             tracing::error!(error = %err, "move_cross_tab_plain_to_session: failed to save source tab metadata");
             return AppResult::err_code(ErrorCode::Unknown, "failed to save source tab metadata");
         }
@@ -2045,6 +2091,7 @@ pub(crate) fn move_cross_tab_plain_to_session(
             locked: false,
             recovery_pending: false,
             recovery_kind: None,
+            last_viewed_memo: source_loaded.last_viewed_memo,
         },
         target: Some(target_snapshot),
     })
@@ -2108,7 +2155,7 @@ pub(crate) fn move_cross_tab_session_to_plain(
     for (i, node) in nodes_to_move.iter().enumerate() {
         let _ = tree::insert_node_at(&mut target_loaded.tree, new_parent, index + i, node.clone());
     }
-    if let Err(err) = tree::save_tab_meta(target_folder, target_loaded.schema_version, target_loaded.app_version, &target_loaded.tree, registry) {
+    if let Err(err) = tree::save_tab_meta(target_folder, target_loaded.schema_version, target_loaded.app_version, &target_loaded.tree, target_loaded.last_viewed_memo.clone(), registry) {
         tracing::error!(error = %err, "move_cross_tab_session_to_plain: failed to save target tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save target tab metadata");
     }
@@ -2128,6 +2175,7 @@ pub(crate) fn move_cross_tab_session_to_plain(
             locked: false,
             recovery_pending: false,
             recovery_kind: None,
+            last_viewed_memo: target_loaded.last_viewed_memo,
         }),
     })
 }
@@ -2326,6 +2374,7 @@ mod tests {
                 kdf: KdfParams::generate_new(),
                 hint: None,
                 key: [7u8; 32],
+                last_viewed_memo: None,
             },
         );
         std::fs::write(dir.join(TAB_META_FILE_NAME), b"placeholder").unwrap();
@@ -2371,6 +2420,7 @@ mod tests {
                 kdf: KdfParams::generate_new(),
                 hint: None,
                 key: [7u8; 32],
+                last_viewed_memo: None,
             },
         );
         std::fs::write(dir.join(TAB_META_FILE_NAME), b"placeholder").unwrap();
@@ -2414,6 +2464,7 @@ mod tests {
                 kdf: KdfParams::generate_new(),
                 hint: None,
                 key: [7u8; 32],
+                last_viewed_memo: None,
             },
         );
 
@@ -2469,6 +2520,7 @@ mod tests {
                 kdf: KdfParams::generate_new(),
                 hint: None,
                 key: [7u8; 32],
+                last_viewed_memo: None,
             },
         );
 
@@ -2510,6 +2562,7 @@ mod tests {
                 kdf: KdfParams::generate_new(),
                 hint: None,
                 key: [7u8; 32],
+                last_viewed_memo: None,
             },
         );
 
@@ -2583,6 +2636,7 @@ mod tests {
             real_tab_name: "Private".to_string(),
             tree: loaded_tree,
             file_map: file_map.clone(),
+            last_viewed_memo: None,
         };
         let field = lock_blob::encrypt_lock_field(&key, kdf_params, Some("my hint".to_string()), &lock_payload).unwrap();
         write_lock_field(&dir, &field, &registry).unwrap();
@@ -2616,6 +2670,7 @@ mod tests {
                 kdf: stored_field.kdf,
                 hint: stored_field.hint,
                 key: unlock_key_bytes,
+                last_viewed_memo: decrypted_payload.last_viewed_memo,
             },
         );
         assert!(sessions.has_session("tab-1"));
@@ -2705,6 +2760,7 @@ mod tests {
                 kdf: KdfParams::generate_new(),
                 hint: None,
                 key: second_key_bytes,
+                last_viewed_memo: None,
             },
         );
         let move_back = move_cross_tab_plain_to_session("plain-tab", &plain_dir, "Plain Target", "tab-2", &second_dir, &["Shopping list".to_string()], None, 0, false, &registry, &sessions, &search_index);
@@ -3005,6 +3061,7 @@ mod tests {
             real_tab_name: "Private".to_string(),
             tree: tree.clone(),
             file_map: file_map.clone(),
+            last_viewed_memo: None,
         };
         let field = lock_blob::encrypt_lock_field(&key, kdf_params, None, &lock_payload).unwrap();
         write_lock_field(&dir, &field, &registry).unwrap();
@@ -3020,6 +3077,7 @@ mod tests {
                 kdf: field.kdf.clone(),
                 hint: field.hint.clone(),
                 key: key_bytes,
+                last_viewed_memo: lock_payload.last_viewed_memo.clone(),
             },
         );
 
@@ -3038,7 +3096,7 @@ mod tests {
                 }
             }
         }
-        tree::save_tab_meta(&dir, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &resolved_payload.tree, &registry).unwrap();
+        tree::save_tab_meta(&dir, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &resolved_payload.tree, resolved_payload.last_viewed_memo.clone(), &registry).unwrap();
         delete_unlock_marker(&dir, &registry).unwrap();
         sessions.end("tab-1");
 
@@ -3070,6 +3128,7 @@ mod tests {
             real_tab_name: "Second Private".to_string(),
             tree: tree2,
             file_map: file_map2.clone(),
+            last_viewed_memo: None,
         };
         let field2 = lock_blob::encrypt_lock_field(&key2, kdf_params2, None, &lock_payload2).unwrap();
         write_lock_field(&dir2, &field2, &registry).unwrap();
@@ -3095,7 +3154,7 @@ mod tests {
                 restore_one_permanent_unlock_entry(&dir2, entry_fm, &resolved_key2, &registry).unwrap();
             }
         }
-        tree::save_tab_meta(&dir2, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &resolved_payload2.tree, &registry).unwrap();
+        tree::save_tab_meta(&dir2, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &resolved_payload2.tree, resolved_payload2.last_viewed_memo.clone(), &registry).unwrap();
         delete_unlock_marker(&dir2, &registry).unwrap();
 
         assert_eq!(std::fs::read(dir2.join("Notes.md")).unwrap(), b"second tab content");

@@ -28,6 +28,11 @@ pub struct LockSession {
     /// Derived once at `tab_unlock`, reused for every encrypt/decrypt this session performs
     /// (`tab-lock/PLAN.md` §2: "key never re-derived per save").
     pub key: [u8; 32],
+    /// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1/§3 — mirrors the decrypted
+    /// `LockPayload::last_viewed_memo` this session was started from, kept live in memory and
+    /// re-encrypted into the lock blob on every change (`commands/tab_lock.rs`'s
+    /// `session_set_last_viewed`), same treatment as `tree`/`file_map` above.
+    pub last_viewed_memo: Option<String>,
 }
 
 pub struct LockSessionStore {
@@ -88,6 +93,7 @@ mod tests {
             kdf: KdfParams::generate_new(),
             hint: None,
             key: [0u8; 32],
+            last_viewed_memo: None,
         }
     }
 

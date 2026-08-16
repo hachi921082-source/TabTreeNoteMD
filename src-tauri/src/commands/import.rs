@@ -114,7 +114,7 @@ pub fn import_file(
         if let Err(code) = insert_node_at_end(&mut loaded.tree, parent.as_deref(), node) {
             return AppResult::err_code(code, "failed to insert memo into tree");
         }
-        if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, &registry) {
+        if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, loaded.last_viewed_memo.clone(), &registry) {
             tracing::error!(error = %err, "import_file: failed to save tab metadata");
             return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
         }
@@ -125,13 +125,15 @@ pub fn import_file(
     // that fn's own doc comment once `docs/plans/v1.1.0/favorites/PLAN.md` extends `IndexEntry`).
     search_index.upsert(&tab_id, &target_name, &normalized_text);
 
-    // Step 11.
+    // Step 11. `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4 "Not called by": an imported memo
+    // never becomes a tab's `lastViewedMemo`, so this is simply the preserved pre-existing value.
     AppResult::ok(TreeSnapshot {
         nodes: loaded.tree,
         tab_name,
         locked: false,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo: loaded.last_viewed_memo,
     })
 }
 

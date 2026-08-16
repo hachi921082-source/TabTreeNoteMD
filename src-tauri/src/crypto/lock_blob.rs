@@ -68,6 +68,13 @@ pub struct LockPayload {
     pub real_tab_name: String,
     pub tree: Vec<MetaTreeNode>,
     pub file_map: Vec<FileMapEntry>,
+    /// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1 — the locked tab's own "last viewed memo"
+    /// pointer, kept inside this encrypted payload (never a plaintext sibling of `.tabtreenote.
+    /// json`'s `lock` field) so even *which* memo was last viewed isn't readable without the
+    /// password. `#[serde(default)]` so a pre-v1.1.0 encrypted payload (written before this field
+    /// existed) still decrypts cleanly, with this defaulting to `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_viewed_memo: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -195,6 +202,7 @@ mod tests {
                 memo_name: "Diary 2026-07".to_string(),
                 token: "9f2c7a1e4b3d0f8c6a5e2d1b0c9a8f7e".to_string(),
             }],
+            last_viewed_memo: None,
         }
     }
 
@@ -263,5 +271,46 @@ mod tests {
         let wrong_key = LockKey::new(&[4u8; 32]);
         let field = encrypt_lock_field(&key, KdfParams::generate_new(), None, &sample_payload()).unwrap();
         assert!(matches!(decrypt_lock_field(&wrong_key, &field), Err(LockCryptoError::DecryptFailed)));
+    }
+
+    /// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1: `last_viewed_memo` round-trips through the
+    /// encrypted payload like every other field.
+    #[test]
+    fn last_viewed_memo_round_trips_through_the_encrypted_payload() {
+        let key = LockKey::new(&[3u8; 32]);
+        let mut payload = sample_payload();
+        payload.last_viewed_memo = Some("Diary 2026-07".to_string());
+        let field = encrypt_lock_field(&key, KdfParams::generate_new(), None, &payload).unwrap();
+        let decrypted = decrypt_lock_field(&key, &field).unwrap();
+        assert_eq!(decrypted.last_viewed_memo.as_deref(), Some("Diary 2026-07"));
+    }
+
+    /// A pre-v1.1.0 encrypted payload (no `lastViewedMemo` key at all) must still decrypt cleanly,
+    /// defaulting to `None` — `#[serde(default)]` on the field.
+    #[test]
+    fn pre_v1_1_0_payload_with_no_last_viewed_memo_field_decrypts_as_none() {
+        let key = LockKey::new(&[3u8; 32]);
+        let legacy_json = serde_json::json!({
+            "realTabName": "Private",
+            "tree": [],
+            "fileMap": [],
+        });
+        let bytes = serde_json::to_vec(&legacy_json).unwrap();
+        let (iv, ciphertext_with_tag) = key.encrypt_bytes(&bytes);
+        let split_at = ciphertext_with_tag.len() - GCM_TAG_LEN;
+        let (ciphertext, tag) = ciphertext_with_tag.split_at(split_at);
+        let field = LockField {
+            format_version: LOCK_FORMAT_VERSION,
+            kdf: KdfParams::generate_new(),
+            cipher: CipherParams {
+                algo: CIPHER_ALGO.to_string(),
+                iv_b64: BASE64.encode(iv),
+                tag_b64: BASE64.encode(tag),
+            },
+            hint: None,
+            ciphertext_b64: BASE64.encode(ciphertext),
+        };
+        let decrypted = decrypt_lock_field(&key, &field).unwrap();
+        assert_eq!(decrypted.last_viewed_memo, None);
     }
 }

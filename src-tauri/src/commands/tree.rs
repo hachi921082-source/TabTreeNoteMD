@@ -34,6 +34,7 @@ use crate::model::tree::{Label, LabelColor, MemoEditorSettings, MetaTreeNode, No
 use crate::search::index::SearchIndex;
 use crate::settings::app_settings_store::{AppSettingsStore, RecoveryOutcome};
 use crate::store::lock_session_store::LockSessionStore;
+use crate::store::tab_store::TabViewStore;
 
 // ---------------------------------------------------------------------------
 // Command I/O types
@@ -55,6 +56,13 @@ pub struct TreeSnapshot {
     /// `recovery_pending` is `true`, `None` otherwise (`tab-lock-permanent-unlock/CRASH-RECOVERY.md` §3).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery_kind: Option<RecoveryKind>,
+    /// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §2 — the tab's raw persisted (plain tabs) or
+    /// active-session (locked-with-session tabs) `lastViewedMemo`, unreconciled: if it names a
+    /// memo `[detailed-spec §3.5]` reconciliation dropped, this is returned unchanged (the raw
+    /// value), and reconciling *that* down to `None` is the frontend `restoreTabView`'s job, not
+    /// this command's. `None` for a recovery-pending or locked-no-session snapshot (nothing to
+    /// restore from either).
+    pub last_viewed_memo: Option<String>,
 }
 
 /// Which crash-recovery flow `recovery_pending: true` refers to
@@ -124,6 +132,7 @@ pub fn tree_open(
     registry: State<SelfWriteRegistry>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
+    view_store: State<TabViewStore>,
 ) -> AppResult<TreeSnapshot> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -147,6 +156,7 @@ pub fn tree_open(
             locked: false,
             recovery_pending: true,
             recovery_kind: Some(RecoveryKind::Lock),
+            last_viewed_memo: None,
         });
     }
 
@@ -167,6 +177,7 @@ pub fn tree_open(
             locked: cached_locked,
             recovery_pending: true,
             recovery_kind: Some(RecoveryKind::PermanentUnlock),
+            last_viewed_memo: None,
         });
     }
 
@@ -211,6 +222,9 @@ pub fn tree_open(
         // Step 1, session branch (`tab-lock/PLAN.md` §3 `tab_unlock` step 7): an active unlock
         // session supplies the real tree/name via this same command.
         if let Some(snapshot) = sessions.with_session(&tab_id, tab_lock::session_tree_snapshot) {
+            // `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §3: refresh the runtime cache on every
+            // read, not just the write path — picks up a session started elsewhere too.
+            view_store.set(&tab_id, snapshot.last_viewed_memo.clone());
             return AppResult::ok(snapshot);
         }
         // Step 1, no-session branch: nothing is rendered for a locked-and-not-yet-unlocked tab.
@@ -220,11 +234,20 @@ pub fn tree_open(
             locked: true,
             recovery_pending: false,
             recovery_kind: None,
+            last_viewed_memo: None,
         });
     }
 
+    // Captured before `parsed` is partially moved-from by `.and_then(|m| m.tree)` below.
+    let last_viewed_memo = parsed.as_ref().and_then(|m| m.last_viewed_memo.clone());
     let persisted_tree = parsed.and_then(|m| m.tree).unwrap_or_default();
     let (reconciled, _changed) = reconcile_against_disk(&folder, persisted_tree);
+
+    // `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §3: populate the runtime cache on every read —
+    // the raw persisted value, not reconciled against `reconciled` (that reconciliation-drop check
+    // is `restoreTabView`'s job, per this snapshot's own `last_viewed_memo` doc comment above).
+    // Done before `tab_id` is potentially moved into `emit_meta_recovered` below.
+    view_store.set(&tab_id, last_viewed_memo.clone());
 
     if recovery_outcome != RecoveryOutcome::Clean {
         emit_meta_recovered(&app, "tab", Some(tab_id));
@@ -236,6 +259,7 @@ pub fn tree_open(
         locked: false,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo,
     })
 }
 
@@ -324,7 +348,7 @@ fn memo_create_impl(
         return AppResult::err_code(code, "failed to insert memo into tree");
     }
 
-    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, registry) {
+    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, loaded.last_viewed_memo.clone(), registry) {
         tracing::error!(error = %err, "memo_create: failed to save tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
@@ -339,6 +363,7 @@ fn memo_create_impl(
         locked: false,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo: loaded.last_viewed_memo,
     })
 }
 
@@ -419,7 +444,7 @@ pub fn memo_rename(
         node.memo_name = trimmed.to_string();
     }
 
-    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, &registry) {
+    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, loaded.last_viewed_memo.clone(), &registry) {
         tracing::error!(error = %err, "memo_rename: failed to save tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
@@ -435,6 +460,7 @@ pub fn memo_rename(
         locked: false,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo: loaded.last_viewed_memo,
     })
 }
 
@@ -527,7 +553,7 @@ pub fn memo_delete(
         search_index.remove(&tab_id, name);
     }
 
-    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, &registry) {
+    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, loaded.last_viewed_memo.clone(), &registry) {
         tracing::error!(error = %err, "memo_delete: failed to save tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
@@ -538,6 +564,7 @@ pub fn memo_delete(
         locked: false,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo: loaded.last_viewed_memo,
     })
 }
 
@@ -653,7 +680,7 @@ fn memo_move_within_tab(
         }
     }
 
-    if let Err(err) = save_tab_meta(folder, loaded.schema_version, loaded.app_version, &loaded.tree, registry) {
+    if let Err(err) = save_tab_meta(folder, loaded.schema_version, loaded.app_version, &loaded.tree, loaded.last_viewed_memo.clone(), registry) {
         tracing::error!(error = %err, "memo_move: failed to save tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
@@ -665,6 +692,7 @@ fn memo_move_within_tab(
             locked: false,
             recovery_pending: false,
             recovery_kind: None,
+            last_viewed_memo: loaded.last_viewed_memo,
         },
         target: None,
     })
@@ -760,12 +788,12 @@ fn memo_move_cross_tab(
         }
     }
 
-    if let Err(err) = save_tab_meta(target_folder, target_loaded.schema_version, target_loaded.app_version, &target_loaded.tree, registry) {
+    if let Err(err) = save_tab_meta(target_folder, target_loaded.schema_version, target_loaded.app_version, &target_loaded.tree, target_loaded.last_viewed_memo.clone(), registry) {
         tracing::error!(error = %err, "memo_move: failed to save target tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save target tab metadata");
     }
     if !copy {
-        if let Err(err) = save_tab_meta(source_folder, source_loaded.schema_version, source_loaded.app_version, &source_loaded.tree, registry) {
+        if let Err(err) = save_tab_meta(source_folder, source_loaded.schema_version, source_loaded.app_version, &source_loaded.tree, source_loaded.last_viewed_memo.clone(), registry) {
             tracing::error!(error = %err, "memo_move: failed to save source tab metadata");
             return AppResult::err_code(ErrorCode::Unknown, "failed to save source tab metadata");
         }
@@ -778,6 +806,7 @@ fn memo_move_cross_tab(
             locked: false,
             recovery_pending: false,
             recovery_kind: None,
+            last_viewed_memo: source_loaded.last_viewed_memo,
         },
         target: Some(TreeSnapshot {
             nodes: target_loaded.tree,
@@ -785,6 +814,7 @@ fn memo_move_cross_tab(
             locked: false,
             recovery_pending: false,
             recovery_kind: None,
+            last_viewed_memo: target_loaded.last_viewed_memo,
         }),
     })
 }
@@ -882,6 +912,72 @@ pub fn memo_set_edit_lock(
     })
 }
 
+// ---------------------------------------------------------------------------
+// tree_set_last_viewed
+// ---------------------------------------------------------------------------
+
+/// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4 — pure metadata mutation (no file-body I/O),
+/// called from the same trigger points that already call `memo_set_editor_override` to persist the
+/// outgoing memo's `scrollPosition` (memo click, arrow-key nav, `memo:` link navigation, tab
+/// switch): this rides along, it does not introduce a new debounce/flush timer. Unlike
+/// `memo_set_expanded`/`memo_set_edit_lock` etc. above, this does NOT return a fresh
+/// `TreeSnapshot` — the frontend already holds the authoritative in-memory tree/selection state for
+/// this narrow, tree-structure-independent mutation.
+#[tauri::command]
+pub fn tree_set_last_viewed(
+    app: AppHandle,
+    tab_id: String,
+    memo_name: Option<String>,
+    store: State<AppSettingsStore>,
+    registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
+    view_store: State<TabViewStore>,
+) -> AppResult<()> {
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+    tree_set_last_viewed_impl(&settings, &sessions, &view_store, &registry, &tab_id, memo_name)
+}
+
+/// Core logic, split out from the `#[tauri::command]` wrapper above so it's directly unit-testable
+/// against a manually-built `AppSettings` — `State<T>` extraction needs a live `tauri::App`, the
+/// same constraint `commands/editor.rs`'s own tests document (`resolve_tab`/`load_and_reconcile`
+/// below follow the identical split).
+pub(crate) fn tree_set_last_viewed_impl(
+    settings: &AppSettings,
+    sessions: &LockSessionStore,
+    view_store: &TabViewStore,
+    registry: &SelfWriteRegistry,
+    tab_id: &str,
+    memo_name: Option<String>,
+) -> AppResult<()> {
+    let access = match tab_lock::resolve_tab_access(settings, sessions, tab_id) {
+        Ok(v) => v,
+        Err(e) => return AppResult::err(e),
+    };
+
+    match access {
+        // Session branch: re-encrypt+re-save the lock blob (fresh IV) — same "structure change ->
+        // re-encrypt and re-save the blob" rule `tab-lock/PLAN.md` §3 "While a Session Is Active"
+        // already states for any session-tree mutation.
+        tab_lock::TabAccess::Session { tab_id: session_tab_id, folder } => {
+            let result = tab_lock::session_set_last_viewed(sessions, registry, &folder, &session_tab_id, memo_name.clone());
+            if matches!(result, AppResult::Ok(())) {
+                view_store.set(&session_tab_id, memo_name);
+            }
+            result
+        }
+        tab_lock::TabAccess::Plain { folder, .. } => {
+            let loaded = load_and_reconcile(&folder);
+            if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, memo_name.clone(), registry) {
+                tracing::error!(error = %err, "tree_set_last_viewed: failed to save tab metadata");
+                return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
+            }
+            view_store.set(tab_id, memo_name);
+            AppResult::ok(())
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn mutate_node_field(
     app: &AppHandle,
@@ -914,7 +1010,7 @@ fn mutate_node_field(
         return AppResult::err_code(code, "failed to update memo");
     }
 
-    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, registry) {
+    if let Err(err) = save_tab_meta(&folder, loaded.schema_version, loaded.app_version, &loaded.tree, loaded.last_viewed_memo.clone(), registry) {
         tracing::error!(error = %err, "failed to save tab metadata");
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
@@ -925,6 +1021,7 @@ fn mutate_node_field(
         locked: false,
         recovery_pending: false,
         recovery_kind: None,
+        last_viewed_memo: loaded.last_viewed_memo,
     })
 }
 
@@ -1088,6 +1185,10 @@ pub(crate) struct LoadedTabMeta {
     pub(crate) schema_version: u32,
     pub(crate) app_version: String,
     pub(crate) tree: Vec<MetaTreeNode>,
+    /// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1 — the raw persisted `lastViewedMemo`,
+    /// carried through unchanged so callers that re-save this tab's metadata (every mutating
+    /// command below) preserve it rather than silently clearing it back to `None`.
+    pub(crate) last_viewed_memo: Option<String>,
 }
 
 /// `pub(crate)` so `commands/tab_lock.rs`'s crash-recovery Finish/Restore flow
@@ -1118,24 +1219,25 @@ fn try_parse_tab_meta(path: &Path) -> Option<TabMetaFile> {
 /// safe to defer.
 pub(crate) fn load_and_reconcile(folder: &Path) -> LoadedTabMeta {
     let (parsed, _recovery) = load_tab_meta_with_recovery(folder);
-    let (schema_version, app_version, persisted_tree) = match parsed {
-        Some(meta) => (meta.schema_version, meta.app_version, meta.tree.unwrap_or_default()),
-        None => (TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), Vec::new()),
+    let (schema_version, app_version, persisted_tree, last_viewed_memo) = match parsed {
+        Some(meta) => (meta.schema_version, meta.app_version, meta.tree.unwrap_or_default(), meta.last_viewed_memo),
+        None => (TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), Vec::new(), None),
     };
     let (tree, _changed) = reconcile_against_disk(folder, persisted_tree);
-    LoadedTabMeta { schema_version, app_version, tree }
+    LoadedTabMeta { schema_version, app_version, tree, last_viewed_memo }
 }
 
 /// `pub(crate)` so `commands/tab_lock.rs`'s crash-recovery Finish flow can write the plain-`tree`
 /// shape back if recovery rolls back before ever building a lock blob for an unrelated tab (not
 /// currently exercised, but keeps this the single write path for the `tree`-shaped
 /// `.tabtreenote.json` rather than a second ad hoc one).
-pub(crate) fn save_tab_meta(folder: &Path, schema_version: u32, app_version: String, tree: &[MetaTreeNode], registry: &SelfWriteRegistry) -> std::io::Result<()> {
+pub(crate) fn save_tab_meta(folder: &Path, schema_version: u32, app_version: String, tree: &[MetaTreeNode], last_viewed_memo: Option<String>, registry: &SelfWriteRegistry) -> std::io::Result<()> {
     let meta = TabMetaFile {
         schema_version,
         app_version,
         tree: Some(tree.to_vec()),
         lock: None,
+        last_viewed_memo,
     };
     let json = serde_json::to_vec_pretty(&meta)?;
     atomic_write(&folder.join(TAB_META_FILE_NAME), &json, registry)
@@ -1429,5 +1531,116 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ttn-tree-test-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    // -----------------------------------------------------------------------
+    // tree_set_last_viewed_impl (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4)
+    // -----------------------------------------------------------------------
+
+    fn settings_with_plain_tab(tab_id: &str, folder: &Path) -> AppSettings {
+        let mut settings = AppSettings::default();
+        settings.tabs.push(crate::model::app_settings::TabSettingsEntry {
+            id: tab_id.to_string(),
+            name: "Test tab".to_string(),
+            folder_path: folder.to_string_lossy().into_owned(),
+            locked: Some(false),
+        });
+        settings
+    }
+
+    #[test]
+    fn tree_set_last_viewed_writes_the_field_and_updates_the_runtime_cache() {
+        let dir = tempdir();
+        std::fs::write(dir.join("Diary.md"), b"").unwrap();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let view_store = TabViewStore::new();
+        let settings = settings_with_plain_tab("tab-1", &dir);
+
+        let result = tree_set_last_viewed_impl(&settings, &sessions, &view_store, &registry, "tab-1", Some("Diary".to_string()));
+        assert!(matches!(result, AppResult::Ok(())));
+
+        let (parsed, _recovery) = load_tab_meta_with_recovery(&dir);
+        assert_eq!(parsed.unwrap().last_viewed_memo.as_deref(), Some("Diary"));
+        assert_eq!(view_store.get("tab-1"), Some("Diary".to_string()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tree_set_last_viewed_preserves_the_existing_tree_structure() {
+        let dir = tempdir();
+        std::fs::write(dir.join("Diary.md"), b"").unwrap();
+        std::fs::write(dir.join("Notes.md"), b"").unwrap();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let view_store = TabViewStore::new();
+        let settings = settings_with_plain_tab("tab-1", &dir);
+
+        // Establish an initial reconciled tree on disk first (mirrors an ordinary `tree_open`).
+        let loaded = load_and_reconcile(&dir);
+        save_tab_meta(&dir, loaded.schema_version, loaded.app_version, &loaded.tree, None, &registry).unwrap();
+
+        let result = tree_set_last_viewed_impl(&settings, &sessions, &view_store, &registry, "tab-1", Some("Notes".to_string()));
+        assert!(matches!(result, AppResult::Ok(())));
+
+        let (parsed, _recovery) = load_tab_meta_with_recovery(&dir);
+        let meta = parsed.unwrap();
+        assert_eq!(meta.last_viewed_memo.as_deref(), Some("Notes"));
+        assert_eq!(meta.tree.unwrap().len(), 2, "the tree structure must survive this metadata-only mutation");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tree_set_last_viewed_none_clears_a_previously_set_value() {
+        let dir = tempdir();
+        std::fs::write(dir.join("Diary.md"), b"").unwrap();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let view_store = TabViewStore::new();
+        let settings = settings_with_plain_tab("tab-1", &dir);
+
+        tree_set_last_viewed_impl(&settings, &sessions, &view_store, &registry, "tab-1", Some("Diary".to_string()));
+        let result = tree_set_last_viewed_impl(&settings, &sessions, &view_store, &registry, "tab-1", None);
+        assert!(matches!(result, AppResult::Ok(())));
+
+        let (parsed, _recovery) = load_tab_meta_with_recovery(&dir);
+        assert_eq!(parsed.unwrap().last_viewed_memo, None);
+        assert_eq!(view_store.get("tab-1"), None);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tree_set_last_viewed_unknown_tab_returns_not_found() {
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let view_store = TabViewStore::new();
+        let settings = AppSettings::default();
+
+        let result = tree_set_last_viewed_impl(&settings, &sessions, &view_store, &registry, "missing-tab", Some("Diary".to_string()));
+        match result {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::NotFound),
+            AppResult::Ok(()) => panic!("expected NotFound for an unregistered tab"),
+        }
+    }
+
+    #[test]
+    fn tree_set_last_viewed_locked_no_session_tab_returns_tab_locked() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let view_store = TabViewStore::new();
+        let mut settings = settings_with_plain_tab("tab-1", &dir);
+        settings.tabs[0].locked = Some(true);
+
+        let result = tree_set_last_viewed_impl(&settings, &sessions, &view_store, &registry, "tab-1", Some("Diary".to_string()));
+        match result {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::TabLocked),
+            AppResult::Ok(()) => panic!("expected TabLocked for a locked tab with no active session"),
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

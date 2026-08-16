@@ -285,6 +285,7 @@ mod tests {
             app_version: "0.1.0".to_string(),
             tree: Some(vec![node]),
             lock: None,
+            last_viewed_memo: None,
         };
         std::fs::write(dir.join(".tabtreenote.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
 
