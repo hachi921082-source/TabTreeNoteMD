@@ -2396,6 +2396,94 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Folder-import (`docs/plans/v1.1.0/folder-import/PLAN.md` §5) new-file path (`overwrite:
+    /// false`): the imported memo lands in both `session.tree` and `session.file_map`, and its
+    /// encrypted body is written under a fresh obfuscated token filename — the session-locked-tab
+    /// counterpart of the plain path's `import_file` (`commands/import.rs`).
+    #[test]
+    fn session_import_file_creates_new_file_when_not_overwriting() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: "Private".to_string(),
+                tree: Vec::new(),
+                file_map: Vec::new(),
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: [7u8; 32],
+            },
+        );
+
+        match session_import_file(&sessions, &registry, &dir, "tab-1", "Notes", b"hello world", false, None) {
+            AppResult::Ok(_) => {}
+            AppResult::Err(err) => panic!("expected success, got {err:?}"),
+        }
+
+        let tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
+        let file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].memo_name, "Notes");
+        assert_eq!(file_map.len(), 1);
+        assert_eq!(file_map[0].memo_name, "Notes");
+
+        let bytes = std::fs::read(dir.join(&file_map[0].token)).unwrap();
+        let plaintext = lock_blob::decrypt_memo_body(&LockKey::new(&[7u8; 32]), &bytes).unwrap();
+        assert_eq!(plaintext, b"hello world");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Folder-import Overwrite-on-edit-locked-target rejection (`PLAN.md` §5, mirrors
+    /// `commands/import.rs::find_node_ci`'s same defensive check for the plain path) — the
+    /// frontend already disables the Overwrite control once it detects the collision target
+    /// carries `locked: true` (`state/useImport.ts`'s `overwriteDisabled`), but the backend must
+    /// independently refuse it too. Uses a target name that only case-insensitively matches the
+    /// existing entry ("note" vs. the stored "Note") to also exercise the case-insensitive lookup
+    /// this rejection relies on.
+    #[test]
+    fn session_import_file_rejects_overwrite_of_edit_locked_target() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        let token = "tok-note".to_string();
+        std::fs::write(dir.join(&token), b"pre-existing-placeholder").unwrap();
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: "Private".to_string(),
+                tree: vec![MetaTreeNode {
+                    memo_name: "Note".to_string(),
+                    expanded: true,
+                    label: None,
+                    editor: None,
+                    locked: Some(true),
+                    children: Vec::new(),
+                }],
+                file_map: vec![FileMapEntry {
+                    memo_name: "Note".to_string(),
+                    token: token.clone(),
+                }],
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: [7u8; 32],
+            },
+        );
+
+        match session_import_file(&sessions, &registry, &dir, "tab-1", "note", b"new content", true, None) {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::Unknown),
+            AppResult::Ok(_) => panic!("expected the edit-locked overwrite target to be rejected"),
+        }
+
+        // The physical file must be left untouched — the lock check runs before any write.
+        let bytes = std::fs::read(dir.join(&token)).unwrap();
+        assert_eq!(bytes, b"pre-existing-placeholder");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// GH #18: `cleanup_session_move_source` (the "not copy" cross-tab-move cleanup) must, like
     /// `session_delete_memo` above, delete the physical obfuscated file *before* mutating
     /// `tree`/`file_map`, and abort (propagating `Err`) without mutating them if that delete
