@@ -1588,6 +1588,76 @@ pub(crate) fn session_mutate_node_field(
     finish_session_mutation(sessions, tab_id, result)
 }
 
+/// `docs/plans/v1.1.0/folder-import/PLAN.md` §5 — the `TabAccess::Session` branch of
+/// `import_file` (`commands/import.rs`). `content_bytes` is already the fully processed bytes
+/// (source read -> decoded -> EOL-restored -> re-encoded, `import_file`'s shared steps 4-6, which
+/// run once regardless of branch) ready to either write plain or encrypt; this function's own job
+/// is the structural counterpart of the plain path's steps 8-10 (insert-into-tree-and-file_map, or
+/// overwrite-in-place), but through the session's in-memory tree/file-map + re-encrypted lock blob
+/// instead of a plain `.md` file (`[spec v1.1.0 §1.5]`: "proceeds exactly like dropping onto a
+/// normal unlocked tab"). Never touches `SearchIndex` — same as every other session-path helper
+/// above, locked tabs stay unconditionally excluded from the index even with an active session
+/// (`search-index/PLAN.md` §1).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn session_import_file(
+    sessions: &LockSessionStore,
+    registry: &SelfWriteRegistry,
+    folder: &Path,
+    tab_id: &str,
+    target_name: &str,
+    content_bytes: &[u8],
+    overwrite: bool,
+    parent: Option<&str>,
+) -> AppResult<TreeSnapshot> {
+    let result = commit_session_mutation(sessions, registry, folder, tab_id, |session, tree, file_map| {
+        let key = LockKey::new(&session.key);
+        let encrypted = lock_blob::encrypt_memo_body(&key, content_bytes);
+
+        if !overwrite {
+            if tree::contains_name(tree, target_name) {
+                return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "a memo with this name already exists in this tab"));
+            }
+            if let Some(p) = parent {
+                if tree::find_node(tree, p).is_none() {
+                    return Err(AppErrorPayload::new(ErrorCode::NotFound, "parent memo not found"));
+                }
+            }
+            let token = obfuscated_naming::generate_unique_token(folder);
+            if let Err(err) = atomic_write(&folder.join(&token), &encrypted, registry) {
+                tracing::error!(error = %err, "session_import_file: failed to write obfuscated memo file");
+                return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to import memo file"));
+            }
+            let node = MetaTreeNode::default_for_new_file(target_name.to_string());
+            tree::insert_node_at_end(tree, parent, node).map_err(|code| AppErrorPayload::new(code, "failed to insert memo into tree"))?;
+            file_map.push(FileMapEntry {
+                memo_name: target_name.to_string(),
+                token,
+            });
+        } else {
+            // Case-insensitive lookup, same reasoning as `commands/import.rs::find_node_ci` for
+            // the plain path — the just-dropped source's sanitized name need not match the
+            // existing entry's own stored casing.
+            let Some(entry) = file_map.iter().find(|e| e.memo_name.eq_ignore_ascii_case(target_name)) else {
+                return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo to overwrite not found"));
+            };
+            let real_name = entry.memo_name.clone();
+            let token_path = folder.join(&entry.token);
+            if tree::find_node(tree, &real_name).and_then(|n| n.locked) == Some(true) {
+                // Defensive fallback, same policy as the plain path (`commands/import.rs`) — the
+                // frontend already disables the Overwrite control for an edit-locked collision
+                // target.
+                return Err(AppErrorPayload::new(ErrorCode::Unknown, "cannot overwrite an edit-locked memo"));
+            }
+            if let Err(err) = atomic_write(&token_path, &encrypted, registry) {
+                tracing::error!(error = %err, "session_import_file: failed to write obfuscated memo file");
+                return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to import memo file"));
+            }
+        }
+        Ok(())
+    });
+    finish_session_mutation(sessions, tab_id, result)
+}
+
 fn finish_session_mutation(sessions: &LockSessionStore, tab_id: &str, result: Option<Result<(), AppErrorPayload>>) -> AppResult<TreeSnapshot> {
     match result {
         Some(Ok(())) => match sessions.with_session(tab_id, session_tree_snapshot) {
