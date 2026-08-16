@@ -61,3 +61,12 @@ export async function memoGetProperties(tabId: string, path: string): Promise<Re
 export async function memoOpenLocation(tabId: string, path: string): Promise<Result<void>> {
   return invoke<Result<void>>("memo_open_location", { tabId, path });
 }
+
+/** `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4 — persists `tabId`'s "last viewed memo" pointer.
+ * `memoName: null` records "nothing viewed" (not a normal call site today, see that plan's "Not
+ * called by" list — no current caller passes `null`, but the backend command accepts it). No
+ * `TreeSnapshot` round-trip: the frontend already holds the authoritative tree/selection state for
+ * this narrow, tree-structure-independent mutation. */
+export async function treeSetLastViewed(tabId: string, memoName: string | null): Promise<Result<void>> {
+  return invoke<Result<void>>("tree_set_last_viewed", { tabId, memoName });
+}
