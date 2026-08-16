@@ -507,3 +507,65 @@ starts at `#`/H1 is unaffected (identical output to the prior absolute-indentati
 **Rejected alternative**: keeping absolute-level indentation (the original v1 implementation) — rejected
 because a document whose shallowest heading isn't `#` then produces a TOC with no flat top-level item at
 all, which reads as visually broken.
+
+## Quick Open Default Shortcut: `Ctrl+O` (2026-08-16)
+
+**Background**: `spec.v1.1.0.md` §3.1 originally confirmed `Ctrl+Shift+P` as Quick Open's default shortcut,
+reasoning only against `docs/plans/window-operation/PLAN.md`'s original 16-action shortcut table (ruling
+out `Ctrl+P`/`Ctrl+K`). It did not check the app's actual current default keymap,
+`src/shared/shortcuts.ts`'s `DEFAULT_SHORTCUTS`, where `Ctrl+Shift+P` was already bound to
+`markdown.paneModeCycle` (added later by `docs/plans/markdown/markdown-preview/PLAN.md` §6.3, a plan that
+postdates `window-operation/PLAN.md`'s table). This was a real, live default-shortcut collision between two
+v1.1.0/v1.0.0 features, raised by `developer-lite` in `docs/QA.md` during `docs/plans/v1.1.0/quick-open/
+PLAN.md` planning.
+
+**Decision**: Quick Open's default shortcut is `Ctrl+O`, verified as unused in `DEFAULT_SHORTCUTS` as of
+this writing (checked directly against `src/shared/shortcuts.ts`, not just `window-operation/PLAN.md`'s
+table). `markdown.paneModeCycle`'s existing `Ctrl+Shift+P` binding is left untouched. `Ctrl+O` is also a
+reasonably mnemonic choice ("Open") for a feature whose purpose is to jump-open a memo, echoing the same
+mnemonic (if not identical key) VS Code's own "Quick Open" uses. Reflected in `spec.v1.1.0.md` §3.1 and
+`detailed-spec.v1.1.0.md` §3.3.
+
+**Rejected alternative**: reassigning `markdown.paneModeCycle`'s default away from `Ctrl+Shift+P` to free
+it up for Quick Open — rejected because that binding is already implemented/shipped in v1.0.0, and
+reassigning it would break existing users' muscle memory for no benefit over simply picking a different,
+unused combo for the newer feature instead.
+
+**Process note**: this collision existed because the original conflict-check only cross-referenced
+`window-operation/PLAN.md`'s shortcut table, which is a point-in-time snapshot that predates
+later-added bindings (`markdown.paneModeCycle`, `markdown.pdfExport`, etc.). Future shortcut
+conflict-checks during spec/detailed-spec work should verify directly against the live
+`src/shared/shortcuts.ts` `DEFAULT_SHORTCUTS` map, not only `window-operation/PLAN.md`'s original table,
+to avoid this recurring as more shortcuts get added by later plans.
+
+## Tab-Lock Auto-Relock Scope: Foreground Active Tab Only, Backgrounded Sessions Explicitly Out of Scope (2026-08-16)
+
+**Background**: `spec.v1.1.0.md` §5.1 originally justified a single global inactivity timer on the premise
+that "a session is already discarded the instant the user leaves its tab (`[spec §4.1 pt.5]`)," so "at
+most one locked session can ever be alive at a time." That premise is factually false for the
+already-implemented, frozen v1.0.0 Tab Lock feature: `docs/plans/tab-lock/PLAN.md`'s "Implementation
+Notes" and the shipped `src/state/useTabLock.ts` both confirm Tab Lock supports more than one
+concurrently-active session — e.g. a cross-tab drag-and-drop onto a locked tab unlocks that tab in place
+(password entered at drop time) without the drag-source tab ever losing focus, so the dropped-onto tab's
+session can stay alive in the background indefinitely, since it never itself becomes the active tab and so
+never triggers the "leaving the tab" teardown. `developer-lite` raised this in `docs/QA.md` during
+`docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` planning, since it blocks the timer-scope architecture
+decision (single global vs. per-session-aware).
+
+**Decision**: Auto-Relock's inactivity timer covers the foreground active tab's session only, exactly as
+`spec.v1.1.0.md` §5.1 already literally stated — no change to the feature's actual behavior or
+architecture (still a single global timer, not a per-session one). What changed is that the spec now states
+this scope limitation **explicitly** as a deliberate, accepted boundary rather than resting on the false
+"at most one session alive" premise: a backgrounded, drop-created Tab-Lock session has no lifecycle
+end-trigger at all today (not "leaving the tab" — it was never entered — and, with this scope, not
+Auto-Relock's timer either), and this feature knowingly does not close that gap. Reflected in
+`spec.v1.1.0.md` §5.1 ("Deliberately does not cover backgrounded sessions") and
+`detailed-spec.v1.1.0.md` §3.5 (timer lifecycle bullet).
+
+**Rejected alternative**: widening Auto-Relock to also watch backgrounded/drop-created sessions (e.g. a
+per-session timer, or extending the single global timer's reach to every live session, not just the
+foreground one) — presented to the user as an option alongside the narrower scope; declined to keep this
+feature's scope small, treating the backgrounded-session gap as a pre-existing condition of Tab Lock's
+multi-session model that is unrelated to and not newly introduced by Auto-Relock, not something this
+feature is obligated to fix as a side effect. Closing that gap, if ever pursued, remains available as its
+own separate future feature.
