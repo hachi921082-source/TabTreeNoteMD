@@ -8,93 +8,118 @@
 
 ## Where the project stands
 
-- `docs/spec.md`, `docs/detailed-spec.md`, `docs/DECISIONS.md`, `docs/QA.md` are all up to date with
-  every decision made this session (see below). `QA.md` currently has **no open items**.
-- `docs/plans/` now exists (created this session) with 12 independent per-feature `PLAN.md` files plus
-  `docs/plans/README.md` as an index. Per `.claude/agents/README.md`'s workflow, this is the
-  "implementation planning" stage output — **no implementation code exists yet** (`src/` has not been
-  started). Every plan is marked "planning complete, not yet implemented."
-- All 12 plans are currently **fully unblocked** — no plan has an open `QA.md`-dependent item.
+- The project is transitioning from branch `V1.0.0` to `V1.1.0` (currently on `V1.1.0`). This session's
+  work was entirely **specification-stage** for v1.1.0 — no code implementation, no `developer-lite`
+  work, and nothing has been committed yet.
+- **New convention established this session**: version-suffixed spec files. `docs/spec.md` is now
+  frozen as the permanent v1.0.0 baseline and is never appended to again. New/changed spec content for
+  v1.1.0 lives in `docs/spec.v1.1.0.md` (new file, fully written this session, no open questions). Future
+  version bumps repeat the same pattern (`spec.v1.2.0.md`, etc.), and the same separation is meant to
+  extend to `docs/detailed-spec.v<version>.md` and version-labeled `docs/plans/<feature>/` content once
+  those stages are reached — **not yet done for v1.1.0** (see Next step).
+- `docs/spec.v1.1.0.md` is complete: 5 features (§1-§5), no items in its closing "Open Questions for
+  User" section, and a full consistency-review pass (via `designer-lite`, report-only) already ran and
+  every finding from it was fixed in a follow-up pass. Read this file's own Index first, as usual.
 
-## Decisions made this session (already reflected in the docs above — this is a summary, not the record)
+## The 5 confirmed v1.1.0 features (`docs/spec.v1.1.0.md`)
 
-This was a long session covering two phases:
+1. **§1 — OS-Folder → Tree-Pane Drag-and-Drop Import**: drag `.md` files from Windows Explorer onto an
+   open tab's tree pane to import them. Copy-only (source untouched), `.md`-only (non-`.md` items
+   silently skipped), filename collisions get an in-app Rename/Overwrite/Skip prompt (deliberate
+   divergence from the baseline's silent auto-number convention). A skip-summary toast fires only when
+   at least one item was skipped; full success stays silent.
+2. **§2 — Per-Tab Last-Viewed-Memo and Scroll-Position Memory**: extends the existing startup-only
+   "reopen last memo" behavior to also apply on every in-session tab switch. New per-tab
+   `lastViewedMemo` field; `AppSettings.lastOpened` narrowed to `{tabId}` only (modifies `spec.md`
+   §3.4). Also restores the tree pane's own scroll/selection to the restored node (no new field needed
+   for that part — computed at restore time).
+3. **§3 — Cross-Tab Quick Memo-Name Search ("Quick Open")**: `Ctrl+Shift+P` overlay, substring-matches
+   memo names across all tabs, reuses the existing cross-tab full-text index (`spec.md` §2.4) rather
+   than building a new one. Results ordered MRU-first using §2's `lastViewedMemo` as the recency signal
+   (tie-break alphabetical).
+4. **§4 — Cross-Tab Favorites**: new `favorite?: boolean` on `MetaTreeNode` (rides along inside the
+   existing tree/lock-payload structure, no new Tab-Lock handling needed). Cross-tab list view reuses
+   the same index as Quick Open, same MRU ordering rule, same Tab-Lock exclusion, same
+   jump-to-result behavior.
+5. **§5 — Tab-Lock Auto-Relock on Inactivity**: single global inactivity timer (since at most one Tab
+   Lock session can ever be alive at a time, per the existing "discard on leaving the tab" rule) that
+   auto-ends a session even without leaving the tab. Reuses the existing pre-lock save-flush rule and
+   session-teardown logic verbatim — only adds a new trigger. Pauses (doesn't reset) while any modal
+   dialog is open. New configurable `AppSettings.tabLockAutoRelockMinutes` field, Settings → 一般 tab,
+   dropdown with 5/15/30/60-minute presets + 無効, default 15 minutes.
 
-**Phase 1 — creating the initial plan set**: `docs/plans/` was created from scratch (12 feature plans +
-index), organized by feature name rather than dependency order (per user request), with a mandatory
-whole-app integration-test policy recorded in `docs/plans/README.md` for after all features are
-implemented.
+**Dropped along the way**: an earlier "§2 Cross-Tab Memo Clipboard (Copy/Cut/Paste)" feature was fully
+designed (multiple `designer-lite` passes) then **deleted entirely** after the user clarified their
+original request was ambiguous and actually already covered by existing features — moving whole memo
+files between tabs already works via existing cross-tab drag-and-drop, and copying memo *text* already
+works via the existing editor's OS-clipboard copy/paste. This was a real misstep (over-elaborating an
+ambiguous request before confirming the basic interpretation) — see
+`feedback_confirm_interpretation_before_elaborating.md` in the auto-memory system for the full lesson.
+Everything currently in §1-§5 has since been re-confirmed against the user's actual intent.
 
-**Phase 2 — a long design-review conversation that amended both `detailed-spec.md` and the plans**:
+## Cross-cutting decisions worth knowing before continuing
 
-1. **Tab Lock crash-mid-lock recovery** (formerly `QA.md` Q1): resolved as Option B — explicit
-   in-progress marker + deterministic resume/rollback. Fully specified in `detailed-spec.md` §5.9 and
-   `tab-lock/PLAN.md`.
-2. **UI-state persistence**: scroll position (persist) and toolbar position (persist) now firm
-   requirements; search/replace history confirmed session-only. New fields:
-   `MemoEditorSettings.scrollPosition`, `AppSettings.window.toolbarPosition`.
-3. **Force-delete shortcut**: confirmed `Ctrl+Delete` (was previously just an example).
-4. **Tab-lock placeholder display name**: confirmed as the 🔒 glyph alone, no text.
-5. **`label.color`**: confirmed 5-choice palette adopted verbatim from the legacy app (None/Red `#e05a5a`/
-   Blue `#4a90d9`/Green `#4caf50`/Yellow `#e0c040`). The right-click "Icon" submenu (`spec §2.2`) is this
-   picker. `label.kind` confirmed to stay reserved/unimplemented for v1 (verified via legacy code that
-   it was always a dead/unused field).
-6. **Mouse-wheel tab switching**: removed from v1 scope entirely (`spec.md` §2.1 itself edited). Click
-   and keyboard-shortcut switching unaffected.
-7. **Markdown toolbar — fully redesigned and finalized**: fixed **8×2 = 16-slot grid** (up from an
-   earlier 12-slot concept), icon set = **Lucide** (bundled locally). Bold/Italic are separate slots;
-   Undo/Redo added as toolbar actions. A "rearrange mode" (16th slot, `GripVertical` icon) lets the user
-   drag-reorder the 16 icons; OFF=click invokes action, ON=drag-only+Esc-exits+whole-toolbar tint. Icon
-   order persists (`AppSettings.window.toolbarOrder`, new field). Full layout table, icon mapping, and
-   mechanism are in `detailed-spec.md` §5.10 and `markdown-editing/PLAN.md` §4.
-8. **New v1 feature — Table of Contents (TOC)**: triggered by the toolbar's "Update" slot only (manual,
-   never live/background). Scans headings, GitHub-style slugifies them, writes a nested Markdown link
-   list into a marker-delimited block (insert-or-replace in place). Adds a new same-document
-   heading-anchor link type (`#slug`) to the Link domain — click re-scans current memo, scrolls via
-   CodeMirror, silent no-op if no match. Fully specified in `spec.md` §2.8/§4.2, `detailed-spec.md`
-   §4.6/§5.8/§5.10, `markdown-editing/PLAN.md` §8, `link/PLAN.md` §1/§5.
-9. **Toolbar "Color"/"Font size" buttons** (text decoration via `<span>`, distinct from `label.color`):
-   confirmed palettes adopted verbatim from the legacy app — Color: Red `#e53935`/Blue `#1e88e5`/
-   Green `#43a047`/Orange `#fb8c00`/Purple `#8e24aa` (+ a "clear color" control); Font size: Small `12px`/
-   Large `20px`/Extra-large `28px` (+ a "clear size" control).
-10. **Default shortcuts**: all 16 toolbar actions now get a default keybinding in
-    `window-operation/PLAN.md` §3's keymap (rebindable via the existing `AppSettings.shortcuts`
-    mechanism — no new mechanism was needed).
-11. A self-review pass confirmed no other recording gaps; `docs/plans/README.md`'s integration-test
-    example list got a new "TOC + Tab Lock" example.
+- **schemaVersion bumps are consolidated, not per-field**: `TabMeta.schemaVersion` bumps once for
+  v1.1.0 covering both §2's `lastViewedMemo` and §4's `favorite` together; `AppSettings.schemaVersion`
+  bumps once covering both §2's `lastOpened` narrowing and §5's `tabLockAutoRelockMinutes` together —
+  explicitly, not three independent increments, since all three ship together and no real intermediate
+  file state will ever exist.
+- **Citation discipline matters in this file**: `[spec §x]` is a defined convention meaning "cites
+  `docs/spec.md` specifically." The consistency-review pass found and fixed two cases where content
+  actually sourced from `detailed-spec.md` had been mis-tagged as `[spec §x]` — worth double-checking
+  citation accuracy again when writing `detailed-spec.v1.1.0.md`, since it will cite both `spec.md` and
+  `spec.v1.1.0.md`.
 
-**Process note for future sessions**: partway through, the user asked that `DECISIONS.md`/`PLAN.md`
-entries be written **concisely** — decision + concrete parameters only, skip rationale/rejected-
-alternatives narrative unless it's load-bearing for a future implementation judgment call (this is
-saved as a standing memory: `feedback_concise_docs.md`). Entries written before that point in this
-session (e.g. the Tab Lock recovery entry, the label/Icon-submenu investigation entry) are still in the
-older, more narrative style and were **not** retroactively rewritten in `DECISIONS.md`/`detailed-spec.md`
-(low priority — rarely re-read); `docs/plans/tab-lock/PLAN.md` **was** trimmed of a few non-load-bearing
-"why" sentences, since `PLAN.md` files are read often. Two rationale notes were deliberately kept in
-`tab-lock/PLAN.md` (why the marker isn't encrypted; why the marker must hold the complete mapping) because
-they prevent a plausible future "fix" that would reintroduce the exact bug they exist to close.
+## Agent/config changes made this session (project + global)
+
+To make the version-suffixed-file convention durable (not dependent on the orchestrator re-explaining it
+in every task prompt — this was a real, repeated problem this session before these fixes landed):
+
+- **Project-level** `.claude/agents/{designer,developer,reviewer}-lite.md`: each now explicitly
+  documents the version-suffixed-file convention in their "must check" steps.
+- **This project's own `CLAUDE.md`**: "Documentation for This Repository" section now has a pointer
+  sentence about future version bumps following this convention, citing `docs/README.md`.
+- **`docs/README.md`**: File Structure list now documents `spec.v1.1.0.md` and the convention it starts.
+- **Global** `~/.claude/agents/{designer,developer,reviewer}-lite.md` (affects *other* projects too, not
+  just this one): each now has a line to also read `~/.claude/README-lite-workflow.md`.
+- **Global** `~/.claude/README-lite-workflow.md`: new "Version-Suffixed Specification Files (Optional
+  Convention)" section — generic description of the pattern, explicitly optional (not a default for new
+  projects), with instructions for adopting projects to mirror it into their own `docs/README.md` and
+  `CLAUDE.md`.
+- This defense-in-depth setup (three layers: project `docs/README.md`, global shared doc, project
+  `CLAUDE.md`) is itself saved as a standing lesson: `feedback_defense_in_depth_for_conventions.md`.
 
 ## Uncommitted state (as of this handoff)
 
-Nothing from this session has been committed yet. Current working tree:
+Nothing from this session has been committed. Current working tree (`git status --short`):
 
-- Modified: `docs/spec.md`, `docs/detailed-spec.md`, `docs/DECISIONS.md`, `docs/QA.md`
-- New (untracked): `docs/plans/` (12 `PLAN.md` files + `README.md`, 13 files total)
+```
+ M .claude/agents/designer-lite.md
+ M .claude/agents/developer-lite.md
+ M .claude/agents/reviewer-lite.md
+ M CLAUDE.md
+ M docs/README.md
+?? docs/spec.v1.1.0.md
+```
 
-The user has not yet given the go-ahead to commit. Per this repo's commit convention (one file per
-commit, message states that file's role/purpose), these files should each get their own commit once the
-user confirms — the orchestrator asked for this confirmation multiple times this session without a
-definitive yes/no yet.
+`.claude/files/` and `"CLAUDE - コピー.md"` are also untracked but **pre-existing, unrelated to this
+session's work** — do not assume they need handling here.
 
-`CLAUDE.ja.md` also has pre-existing uncommitted changes, unrelated to this session's work. It's a
-Japanese mirror file; `CLAUDE.md`'s own "Language" section says not to create/maintain `.ja.md` mirrors
-going forward. Whether to delete it (vs. leave it) has been asked but not yet answered.
+The user has not yet given go-ahead to commit. Per this repo's commit convention (one file per commit,
+message describes that file's role/purpose), each modified/new file above should get its own commit once
+confirmed.
 
 ## Next step
 
-1. **Immediate**: get the user's go-ahead to commit the 4 modified docs + 13 new `docs/plans/` files
-   (one file per commit), and a decision on `CLAUDE.ja.md`.
-2. **After that**: per `.claude/agents/README.md`'s workflow, the next stage is **implementation**
-   (`developer-lite` begins writing code in `src/`, following the finalized `PLAN.md` files) — likely
-   starting with the two foundational plans (`project-architecture`, `persistence-fs`) that the other
-   ten depend on. No implementation has started yet.
+1. **Immediate**: create `docs/detailed-spec.v1.1.0.md` (elaborating `docs/spec.v1.1.0.md` to a level
+   `developer-lite` can plan from, same relationship `detailed-spec.md` already has to `spec.md`) — this
+   is what the user was about to start when this handoff was written. Follow the same
+   version-suffixed-file convention: do not append into `docs/detailed-spec.md`.
+2. **After that**: per the user's original instruction, `docs/plans/<feature>/PLAN.md` content
+   introduced by v1.1.0 features should also stay separate from any existing plan rather than being
+   appended — but the **exact separation format for the plans layer was deliberately left undecided**
+   (a companion file vs. a version-labeled section; see `developer-lite.md`'s own note to confirm the
+   format with the user/`designer-lite` the first time an *existing* plan needs a version-specific
+   change, rather than inventing one). None of the 5 v1.1.0 features currently modify an existing plan
+   (they're all brand-new feature areas), so this open format question may not even come up yet.
+3. Get the user's go-ahead to commit the uncommitted state listed above.
