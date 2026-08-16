@@ -8,7 +8,6 @@ import { useCallback, useRef, useState } from "react";
 import { importFile } from "../ipc/import";
 import { resolveUniqueName } from "../shared/uniqueName";
 import { suggestSanitized } from "../shared/nameSanitize";
-import { findNode } from "../shared/treeOps";
 import type { TreeNode } from "../shared/models";
 import type { ImportCollisionChoice } from "../components/dialogs/ImportCollisionDialog";
 import type { UseToastResult } from "./useToast";
@@ -58,6 +57,19 @@ function baseNameOf(sourcePath: string): string {
 function collectNamesLower(node: TreeNode, out: Set<string>) {
   out.add(node.memoName.toLowerCase());
   for (const child of node.children) collectNamesLower(child, out);
+}
+
+/** Case-insensitive counterpart to `treeOps.ts`'s `findNode` — used only for the collision-target
+ * Edit-Lock lookup below, to stay consistent with `claimedNames`'s lowercased collision-detection
+ * convention and the backend's `find_node_ci` (`import.rs`/`tab_lock.rs`). `findNode` itself stays
+ * exact-case since other callers rely on that. */
+function findNodeCI(nodes: readonly TreeNode[], lowerName: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.memoName.toLowerCase() === lowerName) return node;
+    const found = findNodeCI(node.children, lowerName);
+    if (found) return found;
+  }
+  return null;
 }
 
 export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: () => Promise<void>, toast: UseToastResult): UseImportResult {
@@ -121,7 +133,7 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
             continue;
           }
 
-          const collisionNode = findNode(nodes, sanitizedName);
+          const collisionNode = findNodeCI(nodes, lowerName);
           const overwriteDisabled = collisionNode?.locked === true;
 
           let choice: ImportCollisionChoice;
