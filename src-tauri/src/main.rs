@@ -189,6 +189,7 @@ fn main() {
             commands::link::link_open_external,
             commands::image::image_save_pasted,
             commands::image::image_read_bytes,
+            commands::import::import_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -7,6 +7,7 @@
 // `shared/treeSelection.ts`) — this component only wires DOM events to them.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { TreeRow } from "./TreeRow";
 import type { DropPosition } from "./TreeRow";
 import { ContextMenu } from "../ContextMenu/ContextMenu";
@@ -17,12 +18,16 @@ import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { PasswordDialog } from "../dialogs/PasswordDialog";
 import { RecoveryDialog } from "../dialogs/RecoveryDialog";
 import { PermanentUnlockRecoveryDialog } from "../dialogs/PermanentUnlockRecoveryDialog";
+import { ImportCollisionDialog } from "../dialogs/ImportCollisionDialog";
+import { Toast } from "../Toast/Toast";
 import { validateNameStrict } from "../../shared/nameSanitize";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { formatDateTime } from "../../shared/formatDateTime";
 import { findNode, locateNode, subtreeHasLocked } from "../../shared/treeOps";
 import type { UseTreeResult } from "../../state/useTree";
 import type { UseTabLockResult } from "../../state/useTabLock";
+import { useImport } from "../../state/useImport";
+import { useToast } from "../../state/useToast";
 import type { AppSettings, LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import "./Tree.css";
@@ -100,6 +105,10 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
   }, []);
 
   const { nodes, loading, locked, recoveryPending, recoveryKind, selection, openMemoName, lastErrorCode, clearLastError, activeTabId } = tree;
+
+  // OS-folder -> tree-pane drag-and-drop import (`docs/plans/v1.1.0/folder-import/PLAN.md`).
+  const importToast = useToast();
+  const importState = useImport(activeTabId, nodes, tree.refresh, importToast);
 
   // GitHub issue #156: `true` if any of `paths` (or one of their descendants — deleting a node
   // deletes its whole subtree, `[spec §2.2]`) carries the per-memo Edit Lock. Shared by the
@@ -370,6 +379,61 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
       clearTabHover();
     };
   }, [nodes, tree, activeTabId, updateDropTarget]);
+
+  // ---- OS-folder -> tree-pane drag-and-drop import (`docs/plans/v1.1.0/folder-import/PLAN.md`
+  // §6): Tauri's native file-drop event, scoped to this tree pane's DOM area (same event/pattern
+  // `TabBar.tsx` already uses for its own OS-folder-drop-onto-tab-bar gesture, just a different
+  // hit-test rect). Hover feedback reuses the exact same `dropTarget`/row-highlight machinery as
+  // the internal memo-DND effect above — dropped hovering a row is treated as an "into" drop
+  // (children end), matching `[spec v1.1.0 §1.4]`; dropped on empty background resolves to
+  // `parent: null` (root level's end). A drop is ignored entirely while a batch is already in
+  // progress (`state/useImport.ts`'s `importing`), so a second drop landing mid-collision-dialog
+  // is a no-op rather than starting a second concurrent batch (`PLAN.md` §4). -------------------
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type === "leave") {
+          updateDropTarget(null);
+          return;
+        }
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const scale = window.devicePixelRatio || 1;
+        const x = event.payload.position.x / scale;
+        const y = event.payload.position.y / scale;
+        const within = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+        if (!within) {
+          updateDropTarget(null);
+          return;
+        }
+
+        const hoveredEl = document.elementFromPoint(x, y) as HTMLElement | null;
+        const rowEl = hoveredEl?.closest<HTMLElement>("[data-ttn-row-path]") ?? null;
+
+        if (event.payload.type === "drop") {
+          updateDropTarget(null);
+          if (importState.importing) return;
+          const paths = event.payload.paths ?? [];
+          const mdPaths = paths.filter((p) => /\.md$/i.test(p));
+          const nonMdSkipped = paths.length - mdPaths.length;
+          importState.startImportBatch(mdPaths, rowEl?.dataset.ttnRowPath ?? null, nonMdSkipped);
+          return;
+        }
+
+        // "enter" / "over": live hover feedback only.
+        updateDropTarget(rowEl ? { kind: "row", path: rowEl.dataset.ttnRowPath!, position: "into" } : null);
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [importState, updateDropTarget]);
 
   // ---- context menu item construction ------------------------------------
   const buildContextMenuItems = (path: string): ContextMenuItem[] => {
@@ -717,6 +781,17 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
           }}
         />
       )}
+
+      {importState.pendingCollision && (
+        <ImportCollisionDialog
+          sourceName={importState.pendingCollision.sourceName}
+          renamePreview={importState.pendingCollision.renamePreview}
+          overwriteDisabled={importState.pendingCollision.overwriteDisabled}
+          onChoose={importState.resolveCollision}
+          onCancel={importState.cancelImport}
+        />
+      )}
+      <Toast toasts={importToast.toasts} onDismiss={importToast.dismissToast} />
     </div>
   );
 }
