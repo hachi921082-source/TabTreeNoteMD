@@ -14,6 +14,8 @@
 
 `spec.md` and `detailed-spec.md` are both long. Each has an **Index** near the top — read it first to find the relevant section number instead of reading the whole file.
 
+- Future version bumps (e.g. a `v1.2.0` branch) follow the same version-suffixed-file convention started by `spec.v1.1.0.md`: new/changed spec content goes into its own `docs/spec.v<version>.md` rather than being appended into `docs/spec.md`, and this separation extends to `docs/detailed-spec.v<version>.md` and version-labeled plan content under `docs/plans/<feature-name>/` — never append version-specific content into the frozen baseline or an earlier version's file. See [docs/README.md](docs/README.md)'s File Structure section for the current file list and what each one covers.
+
 ## Workflow
 
 Operated using a three-agent system: designer-lite → developer-lite → reviewer-lite (even if the user does not explicitly name the agent, work is always conducted through the corresponding agent). For details (rationale for adoption, documentation structure, escalation procedure), see [.claude/agents/README.md](.claude/agents/README.md).
