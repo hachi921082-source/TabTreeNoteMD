@@ -23,6 +23,7 @@ import {
   memoSetExpanded,
   memoSetLabel,
   treeOpen,
+  treeSetLastViewed,
 } from "../ipc/tree";
 import type { LabelColor, MemoEditorSettings, MemoProperties, MoveTarget, RecoveryKind, TreeNode, TreeSnapshot } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
@@ -75,6 +76,10 @@ export interface UseTreeResult {
   /** The memo currently shown in the editor pane, or `null` if none. Tree selection highlight
    * and scroll position auto-follow this (`[spec §2.2]`). */
   openMemoName: string | null;
+  /** `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §2 — this tab's raw persisted `lastViewedMemo`
+   * from the most recent `tree_open` snapshot, as-is (not reconciled against `flatOrder`).
+   * `state/useTabView.ts`'s `restoreTabView` is the only consumer. */
+  lastViewedMemo: string | null;
   /** One-shot "should the editor pane auto-focus" signal, bumped only by an explicit open (row
    * click, `focusOnMemo`) and left untouched by arrow-key navigation (`[spec §2.2]`: "After
    * clicking a row, editor auto-focuses" / "arrow key navigation does not steal editor focus").
@@ -125,6 +130,7 @@ export function useTree(tabId: string | null): UseTreeResult {
   const [lastErrorCode, setLastErrorCode] = useState<ErrorCode | null>(null);
   const [selection, setSelection] = useState<SelectionState>(clearSelection());
   const [openMemoName, setOpenMemoName] = useState<string | null>(null);
+  const [lastViewedMemo, setLastViewedMemo] = useState<string | null>(null);
   const [focusEditorToken, setFocusEditorToken] = useState(0);
 
   const flatOrder = useMemo(() => flattenVisible(nodes), [nodes]);
@@ -135,7 +141,22 @@ export function useTree(tabId: string | null): UseTreeResult {
     setLocked(snapshot.locked);
     setRecoveryPending(snapshot.recoveryPending);
     setRecoveryKind(snapshot.recoveryKind);
+    setLastViewedMemo(snapshot.lastViewedMemo);
   }, []);
+
+  /** Fire-and-forget: rides along with `openMemoName` becoming a new, non-null memo (memo click,
+   * arrow-key nav, `focusOnMemo` — `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4's "same trigger
+   * points... memo click, arrow-key nav, memo: link navigation, tab switch"). Never called with
+   * `null` (closing a memo does not erase the tab's memory of what was last viewed — that would
+   * defeat the whole point of restoring it next time). Errors are not surfaced via
+   * `lastErrorCode`: this is auxiliary bookkeeping, not a user-visible mutation. */
+  const persistLastViewed = useCallback(
+    (name: string) => {
+      if (!tabId) return;
+      void treeSetLastViewed(tabId, name);
+    },
+    [tabId],
+  );
 
   const refresh = useCallback(async () => {
     if (!tabId) {
@@ -144,6 +165,7 @@ export function useTree(tabId: string | null): UseTreeResult {
       setLocked(false);
       setRecoveryPending(false);
       setRecoveryKind(undefined);
+      setLastViewedMemo(null);
       setLoading(false);
       return;
     }
@@ -185,9 +207,10 @@ export function useTree(tabId: string | null): UseTreeResult {
         setOpenMemoName(memoName);
         // Click-open auto-focuses the editor (`[spec §2.2]`, `[spec §9.1 item 3]`).
         setFocusEditorToken((t) => t + 1);
+        persistLastViewed(memoName);
       }
     },
-    [flatOrder],
+    [flatOrder, persistLastViewed],
   );
 
   const handleEmptyAreaClick = useCallback(() => {
@@ -209,18 +232,24 @@ export function useTree(tabId: string | null): UseTreeResult {
       // Intentionally does NOT bump `focusEditorToken` — arrow-key nav must not steal focus into
       // the editor (`[spec §2.2]`).
       setOpenMemoName(next);
+      persistLastViewed(next);
     },
-    [flatOrder, selection.anchor],
+    [flatOrder, selection.anchor, persistLastViewed],
   );
 
+  /** Programmatic "open like a click" — also used by `state/useTabView.ts`'s `restoreTabView` to
+   * reopen a tab's `lastViewedMemo`, per `[detailed-spec v1.1.0 §2.3]`'s "same end visual state as
+   * if the user had just clicked that row manually" (selection + auto-focus, not just
+   * `openMemoName`). */
   const focusOnMemo = useCallback(
     (memoName: string) => {
       if (!flatOrder.includes(memoName)) return;
       setSelection({ selected: new Set([memoName]), anchor: memoName });
       setOpenMemoName(memoName);
       setFocusEditorToken((t) => t + 1);
+      persistLastViewed(memoName);
     },
-    [flatOrder],
+    [flatOrder, persistLastViewed],
   );
 
   const closeOpenMemo = useCallback(() => {
@@ -406,6 +435,7 @@ export function useTree(tabId: string | null): UseTreeResult {
     flatOrder,
     selection,
     openMemoName,
+    lastViewedMemo,
     focusEditorToken,
     handleRowClick,
     handleEmptyAreaClick,

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTabs } from "./state/useTabs";
 import { useTree } from "./state/useTree";
+import { useTabView } from "./state/useTabView";
 import { useSettings } from "./state/useSettings";
 import { useTabLock } from "./state/useTabLock";
 import { useWindowGeometry } from "./state/useWindowGeometry";
@@ -23,8 +24,23 @@ const DEFAULT_TREE_WIDTH = 260;
 function App() {
   const tabsState = useTabs();
   const treeState = useTree(tabsState.activeTabId);
+  const tabView = useTabView(treeState);
   const settingsState = useSettings();
   const tabLockState = useTabLock(tabsState.activeTabId, tabsState.refresh, treeState.refresh);
+
+  // Ordinary in-session tab switch (click, `tab.switchNext`/`switchPrev` shortcuts — both funnel
+  // through `TabBar`'s own `selectTab` calls) also queues a `restoreTabView` request
+  // (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §5). Deliberately NOT used by `openSearchHit`/
+  // `openLinkTarget` below (those call `tabsState.selectTab` directly, unwrapped) — selecting a
+  // cross-tab search hit or `memo:` link target opens a *specific* memo itself, bypassing
+  // `restoreTabView` for that switch (`PLAN.md` §6).
+  const selectTabAndRestore = useCallback(
+    (id: string) => {
+      tabsState.selectTab(id);
+      tabView.requestRestore(id);
+    },
+    [tabsState, tabView],
+  );
   useWindowGeometry(settingsState.settings, settingsState.patch);
   useAppearance(settingsState.settings);
 
@@ -115,17 +131,16 @@ function App() {
     setPendingLinkFocus(null);
   }, [pendingLinkFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
 
-  // Startup auto-open of the last-opened memo (`[spec §2.6]`: "On startup automatically open the
-  // last-opened memo (`AppSettings.lastOpened`). If tab/memo is deleted, do nothing.";
-  // `[detailed-spec §5.6]`). Once both `tabsState`/`settingsState` have finished their initial
-  // load, switch to `lastOpened.tabId` (if it's still in `AppSettings.tabs`) so its tree fetches
-  // and goes through §3.5 reconciliation, then hand off to the effect below via
-  // `pendingStartupOpen` — same two-step "switch tab, wait for its tree, then `focusOnMemo`"
-  // pattern already used above for cross-tab search hits / `memo:` links. Guarded by a ref so it
-  // only ever runs once per app session; a stale/deleted tab or memo silently does nothing (no
-  // error, no fallback memo), matching the spec text exactly.
+  // Startup restore (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §5 "App startup"; supersedes the
+  // old app-level `lastOpened.memoName` mechanism — `AppSettings.lastOpened` is now `{ tabId } |
+  // null`, `[spec §2.6]`'s "On startup automatically open the last-opened memo" now means "switch
+  // to that tab, then apply the same per-tab restore an ordinary tab switch uses",
+  // `[detailed-spec v1.1.0 §2.2]`). Once both `tabsState`/`settingsState` have finished their
+  // initial load, switch to `lastOpened.tabId` (if it's still in `AppSettings.tabs`) and queue a
+  // restore for it — `useTabView`'s own effect applies it once that tab's tree has actually
+  // loaded. Guarded by a ref so this only ever runs once per app session; a stale/deleted tab
+  // silently does nothing (no error, no fallback tab), matching the spec text exactly.
   const startupAutoOpenAttempted = useRef(false);
-  const [pendingStartupOpen, setPendingStartupOpen] = useState<{ tabId: string; memoName: string } | null>(null);
   useEffect(() => {
     if (startupAutoOpenAttempted.current) return;
     if (tabsState.loading || settingsState.loading) return;
@@ -134,38 +149,23 @@ function App() {
     if (!lastOpened) return;
     if (!tabsState.tabs.some((t) => t.id === lastOpened.tabId)) return;
     if (tabsState.activeTabId !== lastOpened.tabId) tabsState.selectTab(lastOpened.tabId);
-    setPendingStartupOpen(lastOpened);
-  }, [tabsState.loading, settingsState.loading, tabsState.tabs, tabsState.activeTabId, settingsState.settings, tabsState]);
-  useEffect(() => {
-    if (!pendingStartupOpen) return;
-    if (treeState.activeTabId !== pendingStartupOpen.tabId) return;
-    // Wait for that tab's tree fetch (and §3.5 reconciliation) to actually finish before deciding
-    // — unlike the search/link-focus effects above, this must reach a definitive one-shot
-    // decision (found -> open, not found -> do nothing) rather than keep waiting indefinitely.
-    if (treeState.loading) return;
-    if (treeState.flatOrder.includes(pendingStartupOpen.memoName)) {
-      treeState.focusOnMemo(pendingStartupOpen.memoName);
-    }
-    setPendingStartupOpen(null);
-  }, [pendingStartupOpen, treeState.activeTabId, treeState.loading, treeState.flatOrder, treeState.focusOnMemo]);
+    tabView.requestRestore(lastOpened.tabId);
+  }, [tabsState.loading, settingsState.loading, tabsState.tabs, tabsState.activeTabId, settingsState.settings, tabsState, tabView]);
 
-  // Persist `AppSettings.lastOpened` whenever a memo becomes the open one (`[spec §2.6]`) — covers
-  // every "open memo" path (row click, arrow-nav preview, `focusOnMemo`, including the startup
-  // auto-open above) since they all funnel through `treeState.openMemoName`. No debounce needed
-  // here (unlike the splitter-drag/toolbar-position patches elsewhere in this file) since this
-  // isn't edited continuously; guarded against redundant writes (`[detailed-spec §5.6]`'s "don't
-  // write if no change") and against firing before settings have loaded. Deliberately does NOT
-  // write when a memo closes (`openMemoName` -> `null`, e.g. tab switch/lock) — `lastOpened` tracks
-  // the *last* opened memo, not the currently-open one, which is exactly what makes it useful for
-  // the startup effect above.
+  // Persist `AppSettings.lastOpened.tabId` — "which tab was last active," narrowed from the old
+  // `{ tabId, memoName }` shape (which memo was open now lives per-tab, `PLAN.md` §1, written via
+  // `state/useTree.ts`'s own `persistLastViewed` at the memo-open call sites). Same trigger/dedup
+  // this app used before this feature: whenever a memo becomes the open one (row click, arrow-nav
+  // preview, `focusOnMemo`) — not on every plain tab switch with nothing open, a pre-existing scope
+  // limit this feature does not change.
   useEffect(() => {
     if (settingsState.loading || !settingsState.settings) return;
     const tabId = treeState.activeTabId;
     const memoName = treeState.openMemoName;
     if (!tabId || !memoName) return;
     const current = settingsState.settings.lastOpened;
-    if (current && current.tabId === tabId && current.memoName === memoName) return;
-    void settingsState.patch({ lastOpened: { tabId, memoName } });
+    if (current && current.tabId === tabId) return;
+    void settingsState.patch({ lastOpened: { tabId } });
   }, [treeState.activeTabId, treeState.openMemoName, settingsState.settings, settingsState.loading, settingsState.patch]);
 
   // Tree pane width/side/hide-toggle (`docs/plans/window-operation/PLAN.md` §2). `previewTreeWidth`
@@ -211,7 +211,7 @@ function App() {
   return (
     <div className="app-shell">
       <TabBar
-        tabsState={tabsState}
+        tabsState={{ ...tabsState, selectTab: selectTabAndRestore }}
         tabLockState={tabLockState}
         beforeLockTab={beforeLockTab}
         settings={settingsState.settings}

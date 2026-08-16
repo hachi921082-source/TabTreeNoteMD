@@ -14,7 +14,10 @@ export interface AppSettings {
   /** `docs/plans/appearance-theme/PLAN.md` §3 — "basic customization of colors/fonts/line
    * spacing" layered on top of the active theme's CSS variables. */
   appearance: AppearanceSettings;
-  lastOpened: { tabId: string; memoName: string } | null;
+  /** `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1: narrowed from `{ tabId, memoName }` — which
+   * memo was open now lives per-tab (`TreeSnapshot.lastViewedMemo`), not as a single app-level
+   * pointer, avoiding the two falling out of sync. */
+  lastOpened: { tabId: string } | null;
   editorDefaults: EditorDefaults;
   autosave: { plainDebounceMs: number };
   /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — preview pane re-render debounce, fully
@@ -109,7 +112,7 @@ export type AppSettingsPatch = {
   theme?: "light" | "dark";
   uiFontScale?: number;
   appearance?: Partial<AppearanceSettings>;
-  lastOpened?: { tabId: string; memoName: string } | null;
+  lastOpened?: { tabId: string } | null;
   editorDefaults?: Partial<EditorDefaults>;
   autosave?: Partial<{ plainDebounceMs: number }>;
   preview?: Partial<{ debounceMs: number }>;
@@ -195,6 +198,12 @@ export interface TreeSnapshot {
   /** Which recovery dialog to show when `recoveryPending` is `true`. Always present when
    * `recoveryPending` is `true`, absent otherwise. */
   recoveryKind?: RecoveryKind;
+  /** `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §2 — this tab's raw persisted (or, for a
+   * locked-with-session tab, active-session) "last viewed memo" pointer, unreconciled against
+   * `nodes`: if it names a memo reconciliation dropped, this is the raw value regardless —
+   * `state/useTabView.ts`'s `restoreTabView` is what checks it against `nodes`/`flatOrder` before
+   * acting on it. `null` for a recovery-pending or locked-no-session snapshot. */
+  lastViewedMemo: string | null;
 }
 
 export interface MemoProperties {
