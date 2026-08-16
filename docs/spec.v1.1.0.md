@@ -308,14 +308,20 @@ tree every time to open a known memo.
 
 - **Trigger**: a shortcut opens a small overlay containing a text input with a live-filtered result list
   displayed below it.
-- **Default shortcut: `Ctrl+Shift+P`.** Not `Ctrl+P` — already taken by PDF export
-  (`docs/MDEditor-spec.md`, "PDF export: `Ctrl+P`") and explicitly noted there as also colliding with
-  WebView2/Chromium's native browser-print shortcut (`docs/MDEditor-spec.md`, "`Ctrl+P` native-print
-  conflict"). Not `Ctrl+K` — already taken by link insert (`docs/plans/window-operation/PLAN.md`
-  shortcut table, "Link insert | `Ctrl+K`"). Like every other shortcut in this app, `Ctrl+Shift+P` is a
-  **default, not hardcoded** — it is recorded in and overridable via `AppSettings.shortcuts:
-  Record<string, string>` (`[spec §3.4]`), the same configurable-shortcut mechanism cited for window/
-  operation shortcuts generally (`[spec §2.7]`).
+- **Default shortcut: `Ctrl+O`.** Verified against the actual current default keymap
+  (`src/shared/shortcuts.ts`'s `DEFAULT_SHORTCUTS`), not just `docs/plans/window-operation/PLAN.md`'s
+  original table — the table alone misses bindings added by later plans, e.g. `markdown.paneModeCycle`'s
+  `Ctrl+Shift+P` (`docs/plans/markdown/markdown-preview/PLAN.md` §6.3) and `markdown.pdfExport`'s `Ctrl+P`
+  (`docs/plans/markdown/pdf-export/PLAN.md` §4), both added after that table was written. Not `Ctrl+P` —
+  taken by PDF export, also colliding with WebView2/Chromium's native browser-print shortcut
+  (`docs/MDEditor-spec.md`, "`Ctrl+P` native-print conflict"). Not `Ctrl+K` — taken by link insert. Not
+  `Ctrl+Shift+P` — already bound to `markdown.paneModeCycle` (the 3-state edit/split/preview pane-mode
+  cycle), an already-implemented/shipped v1.0.0 default this feature does not reassign, to avoid disturbing
+  existing users' muscle memory. `Ctrl+O` is unused in `DEFAULT_SHORTCUTS` as of this writing, and is a
+  reasonably mnemonic choice ("Open") for a feature whose purpose is to jump-open a memo. Like every other
+  shortcut in this app, `Ctrl+O` is a **default, not hardcoded** — it is recorded in and overridable via
+  `AppSettings.shortcuts: Record<string, string>` (`[spec §3.4]`), the same configurable-shortcut mechanism
+  cited for window/operation shortcuts generally (`[spec §2.7]`).
 - **Distinct from existing content search**: this is a different search surface from the in-memo/
   cross-tab-index **content** search already specified (`[spec §2.4]`), which searches memo *body text*.
   This feature searches memo *filenames/display-names* only, across all tabs, purely to jump-open a
@@ -464,8 +470,9 @@ viewable across all tabs at once without typing anything.
 - A **toolbar button** (e.g. a ★ icon) in the top toolbar, mirroring the existing 📌 always-on-top
   toggle button's own treatment (`[spec §2.1]`, "sits in the top toolbar immediately to the left of the
   search button") — a single always-visible click target, no default keyboard shortcut assigned. This
-  avoids picking a new default combo in an already-crowded shortcut space (`Ctrl+P`/`Ctrl+K`/
-  `Ctrl+Shift+P` already taken or reserved, this file §3.1) without ruling one out later: like every
+  avoids picking a new default combo in an already-crowded shortcut space (`Ctrl+P` taken by PDF export,
+  `Ctrl+K` taken by link insert, `Ctrl+Shift+P` taken by `markdown.paneModeCycle`, `Ctrl+O` taken by Quick
+  Open per this file §3.1) without ruling one out later: like every
   other action in this app, a shortcut could still be bound to it via `AppSettings.shortcuts`
   (`[spec §3.4]`) if the user configures one themselves, even though no default is preassigned.
 
@@ -481,11 +488,21 @@ timeout duration.
 
 ### 5.1 Scope of the Timer
 
-- Because a session is already discarded the instant the user leaves its tab (`[spec §4.1 pt.5]`), **at
-  most one locked session can ever be alive at a time, and only for whichever tab is currently active**.
-  This feature therefore needs only a **single global inactivity timer, not one per tab** — there is
-  never a second, backgrounded session for a timer to also have to track. This is what keeps this
-  feature's scope small: no per-tab timer bookkeeping, no need to reconcile multiple simultaneous timers.
+- **Scope: the foreground active tab only.** This feature adds a **single global inactivity timer, not
+  one per tab** — it tracks and can discard only whichever Tab-Lock session (if any) belongs to the tab
+  that is currently active, resetting on activity within that tab (§5.2) and tearing that one session down
+  on timeout (§5.3). This is what keeps the feature's scope small: no per-tab/per-session timer
+  bookkeeping, no need to reconcile multiple simultaneous timers.
+- **Deliberately does not cover backgrounded sessions.** Tab Lock's actual multi-session model allows more
+  than one session to be alive at once — e.g. a cross-tab drag-and-drop onto a locked tab unlocks that tab
+  in place (password entered at drop time) without the drag-source tab ever losing focus, so the
+  dropped-onto tab's session can stay alive in the background, never itself becoming the active tab, until
+  the user eventually visits and leaves it or the app exits. This feature's single global timer does not
+  reach that backgrounded session; it watches only the foreground active tab. This is a deliberate, accepted
+  scope boundary decided with the user, not an oversight: the backgrounded-session case is a pre-existing
+  condition of Tab Lock's multi-session model, unrelated to and not newly introduced by this feature, and it
+  is knowingly left unaddressed here to keep this feature's scope small (see `DECISIONS.md`). A backgrounded
+  session remains exactly as exposed after this feature ships as it was before it.
 
 ### 5.2 Activity Definition and Relationship to `[spec §4.1 pt.5]`
 
