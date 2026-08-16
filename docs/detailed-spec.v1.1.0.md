@@ -470,7 +470,7 @@ Elaborates `[spec v1.1.0 §3]`. Backend operation in §2.3 above.
 
 - **Overlay component**: built from the shared custom dialog component (`detailed-spec.md` §6.5) — text
   input (autofocused on open) plus a result list below it, Esc-closable (`[spec v1.1.0 §3.5]`).
-- **Trigger/shortcut**: default `Ctrl+Shift+P`, registered as an `AppSettings.shortcuts` entry
+- **Trigger/shortcut**: default `Ctrl+O`, registered as an `AppSettings.shortcuts` entry
   (`[spec v1.1.0 §3.1]`); rebindable via the Settings → ショートカット tab.
 - **Initial state on open, before typing**: shows the full candidate list (every index entry), sorted per
   the ordering rule below — not an empty result list (user decision, Q3-1).
@@ -543,11 +543,15 @@ Elaborates `[spec v1.1.0 §4]`. Data model in §1.1 above; backend operations in
 
 Elaborates `[spec v1.1.0 §5]`. Backend triggers in §2.4 above.
 
-- **Timer lifecycle**: the single global inactivity timer is created the moment a Tab Lock session starts
-  (`detailed-spec.md` §5.9, "Unlocking (starting a session)," step 3) and destroyed the moment that session
-  ends, by whatever path (leaving the tab, permanent-unlock completion, delete-after-unlock, or now also
-  inactivity-timeout or app-focus-loss, §2.4 above) — no timer exists while no session is active, per
-  `[spec v1.1.0 §5.1]`'s "at most one locked session can ever be alive at a time."
+- **Timer lifecycle**: the single global inactivity timer is created the moment the session belonging to
+  the currently active tab starts (`detailed-spec.md` §5.9, "Unlocking (starting a session)," step 3) and
+  destroyed the moment that session ends, by whatever path (leaving the tab, permanent-unlock completion,
+  delete-after-unlock, or now also inactivity-timeout or app-focus-loss, §2.4 above) — no timer exists while
+  the active tab holds no session, per `[spec v1.1.0 §5.1]`'s foreground-active-tab-only scope. This timer
+  does not track, and is never created for, a backgrounded session on a tab that is not currently active
+  (e.g. a session started via cross-tab drop-onto-a-locked-tab while the drag-source tab stays active) —
+  `[spec v1.1.0 §5.1]`'s "Deliberately does not cover backgrounded sessions" scope limitation applies here
+  verbatim.
 - **Reset ("activity") condition**: keyboard/pointer input at the app-window level, while a session is
   active and the timer is not currently paused, updates the last-activity timestamp and — if the pre-
   timeout warning (below) is currently showing — cancels/hides it (user decision, Q5-2-B).
