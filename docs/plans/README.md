@@ -52,6 +52,24 @@ note), not a duplicate or a relocation of it.
 | [`appearance-theme/PLAN.md`](appearance-theme/PLAN.md) | Light/dark theme, UI font scale, basic color/font/spacing customization |
 | [`window-operation/PLAN.md`](window-operation/PLAN.md) | Frameless window, pane layout/splitter, shortcuts, tray/autostart, multi-launch prevention, settings-screen shell |
 
+## v1.1.0 Feature Plans
+
+Plans for the five v1.1.0 features live under a separate `docs/plans/v1.1.0/` parent folder rather than
+being mixed in at the top level or appended into an existing feature's plan, mirroring the frozen-baseline
+convention `spec.v1.1.0.md`/`detailed-spec.v1.1.0.md` already established: no file in the table above was
+edited to add v1.1.0 content, even where a v1.1.0 feature extends a data structure or mechanism an
+existing plan defines (`TabMeta`, `MetaTreeNode`, the search index, Tab Lock's session lifecycle) — the
+new plans cite the relevant existing `PLAN.md` section for the base definition and describe only the
+v1.1.0-introduced delta.
+
+| Plan | Covers |
+|---|---|
+| [`v1.1.0/folder-import/PLAN.md`](v1.1.0/folder-import/PLAN.md) | OS-folder → tree-pane drag-and-drop import, copy-only, `.md`-only, Rename/Overwrite/Skip collision prompt |
+| [`v1.1.0/tab-memo-memory/PLAN.md`](v1.1.0/tab-memo-memory/PLAN.md) | Per-tab last-viewed-memo and tree-pane scroll/selection restore, extended to every in-session tab switch (not just startup) |
+| [`v1.1.0/quick-open/PLAN.md`](v1.1.0/quick-open/PLAN.md) | Cross-tab quick memo-name search (`Ctrl+O`), reuses the existing full-text index and `tab-memo-memory`'s MRU ordering |
+| [`v1.1.0/favorites/PLAN.md`](v1.1.0/favorites/PLAN.md) | Cross-tab favorites, reuses Quick Open's overlay/index/ordering/Tab-Lock-exclusion mechanics in a second mode |
+| [`v1.1.0/tab-lock-auto-relock/PLAN.md`](v1.1.0/tab-lock-auto-relock/PLAN.md) | Single global inactivity timer, foreground-active-tab-only, auto-ends a Tab Lock session; backgrounded drop-created sessions are a deliberate out-of-scope boundary |
+
 ## Independent Implementation, Mandatory Final Integration Pass
 
 Per-feature plans and their implementation may proceed **independently** — a feature can be planned,
