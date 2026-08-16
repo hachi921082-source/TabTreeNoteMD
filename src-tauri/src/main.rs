@@ -37,6 +37,7 @@ use fs::self_write_registry::SelfWriteRegistry;
 use search::index::SearchIndex;
 use settings::app_settings_store::AppSettingsStore;
 use store::lock_session_store::LockSessionStore;
+use store::tab_store::TabViewStore;
 use watch::active_memo::ActiveMemoTracker;
 
 fn main() {
@@ -66,6 +67,7 @@ fn main() {
         .manage(ActiveMemoTracker::new())
         .manage(LockSessionStore::new())
         .manage(SearchIndex::new())
+        .manage(TabViewStore::new())
         .setup(|app| {
             // Main window: created here programmatically rather than via `tauri.conf.json`'s
             // declarative `app.windows` array (which sets `"create": false` on the "main" entry
@@ -181,6 +183,7 @@ fn main() {
             commands::tree::memo_set_edit_lock,
             commands::tree::memo_get_properties,
             commands::tree::memo_open_location,
+            commands::tree::tree_set_last_viewed,
             commands::editor::editor_load,
             commands::editor::editor_save,
             commands::editor::editor_close,
