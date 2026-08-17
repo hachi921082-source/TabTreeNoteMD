@@ -79,8 +79,26 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "markdown.pdfExport": "Ctrl+P",
 };
 
+/** Action ids that are rebindable via the Settings screen's Shortcuts tab but ship with NO default
+ * combo in `DEFAULT_SHORTCUTS` above — so the row starts unbound and only fires once (if ever) a
+ * user configures one. Kept as its own list rather than adding `undefined`-valued entries to
+ * `DEFAULT_SHORTCUTS` (whose every value is a real combo string, matched exactly against
+ * `comboFromEvent`'s output elsewhere).
+ *
+ * - `favorites.open` — Cross-Tab Favorites list (`docs/plans/v1.1.0/favorites/PLAN.md` §6,
+ *   `[spec v1.1.0 §4.6]`): always reachable via its own toolbar ★ button, so no default keyboard
+ *   shortcut is required; this only exists so the action is still rebindable for users who want one.
+ */
+export const UNBOUND_ACTION_IDS: string[] = ["favorites.open"];
+
+/** Every rebindable action id, in the order the Settings screen's Shortcuts tab should list them —
+ * `DEFAULT_SHORTCUTS`'s own keys (each with a real default combo) followed by `UNBOUND_ACTION_IDS`
+ * (no default combo, `undefined` unless user-bound). */
+export const REBINDABLE_ACTION_IDS: string[] = [...Object.keys(DEFAULT_SHORTCUTS), ...UNBOUND_ACTION_IDS];
+
 /** Merges user overrides (`AppSettings.shortcuts`) over the defaults, by
- * action-id. */
+ * action-id. An action id in `UNBOUND_ACTION_IDS` resolves to `undefined` here unless `overrides`
+ * itself supplies a combo for it — `DEFAULT_SHORTCUTS` has no entry for those ids to spread in. */
 export function resolveShortcuts(overrides: Record<string, string> | undefined): Record<string, string> {
   return { ...DEFAULT_SHORTCUTS, ...(overrides ?? {}) };
 }
