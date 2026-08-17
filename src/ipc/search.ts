@@ -14,3 +14,10 @@ export async function searchQuery(query: string, options: CrossTabSearchOptions)
 export async function searchQuickOpen(query: string): Promise<Result<QuickOpenHit[]>> {
   return invoke<Result<QuickOpenHit[]>>("search_quick_open", { query });
 }
+
+/** Cross-Tab Favorites list (`docs/plans/v1.1.0/favorites/PLAN.md` §5) — every favorited,
+ * index-eligible memo across every unlocked tab, no query input and no result cap (unlike
+ * `searchQuickOpen` above). Reuses `QuickOpenHit`; `isFavorite` is always `true` per row. */
+export async function searchGetFavorites(): Promise<Result<QuickOpenHit[]>> {
+  return invoke<Result<QuickOpenHit[]>>("search_get_favorites");
+}
