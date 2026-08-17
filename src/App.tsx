@@ -18,6 +18,7 @@ import { TreeView } from "./components/Tree/TreeView";
 import { EditorPane } from "./components/Editor/EditorPane";
 import type { EditorPaneHandle } from "./components/Editor/EditorPane";
 import { TreeSplitter } from "./components/Layout/TreeSplitter";
+import { Toast } from "./components/Toast/Toast";
 import { locateNode } from "./shared/treeOps";
 import { editorClose } from "./ipc/editor";
 
@@ -264,6 +265,7 @@ function App() {
         onOpenSearchHit={openSearchHit}
         onOpenQuickOpenHit={openQuickOpenHit}
       />
+      <Toast toasts={toastState.toasts} onDismiss={toastState.dismissToast} />
       <div className="app-content">
         {!tabsState.loading && tabsState.tabs.length === 0 ? (
           <EmptyState tabsState={tabsState} />
