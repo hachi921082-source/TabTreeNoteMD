@@ -45,6 +45,16 @@ pub struct AppSettings {
     /// (`docs/plans/window-operation/PLAN.md` §4: "a boolean in `AppSettings`... implementation
     /// discretion for exact shape since `spec.md` only says 'setting available'").
     pub autostart: AutostartSettings,
+    /// Additive field, `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1 — inactivity timeout
+    /// (minutes) after which the foreground active tab's Tab-Lock session is automatically
+    /// discarded. `None`/`Some(0)` = disabled. `#[serde(default = "default_auto_relock_minutes")]`
+    /// so a `settings.json` predating this field (key entirely absent) resolves to the documented
+    /// default `15`, NOT to disabled — an explicit `null` written later by the Settings UI (§8)
+    /// deserializes as ordinary `Option<u32>` `None` and correctly means disabled, since
+    /// `#[serde(default = "...")]` only ever fires when the key is missing, never for an explicit
+    /// `null` value already present in the JSON.
+    #[serde(default = "default_auto_relock_minutes")]
+    pub tab_lock_auto_relock_minutes: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,8 +331,16 @@ impl Default for AppSettings {
             },
             shortcuts: HashMap::new(),
             autostart: AutostartSettings { enabled: false },
+            tab_lock_auto_relock_minutes: default_auto_relock_minutes(),
         }
     }
+}
+
+/// `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §3 / `[spec v1.1.0 §5.4]` — the documented
+/// default of 15 minutes, used both as `AppSettings::default()`'s value and as the `serde(default
+/// = ...)` fallback for a pre-upgrade `settings.json` that never had this key at all.
+fn default_auto_relock_minutes() -> Option<u32> {
+    Some(15)
 }
 
 /// The 16-slot fixed toolbar layout's default order

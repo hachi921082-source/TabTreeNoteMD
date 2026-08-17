@@ -62,6 +62,13 @@ pub struct AppSettingsPatch {
     pub shortcuts: Option<HashMap<String, String>>,
     #[serde(default)]
     pub autostart: Option<AutostartSettingsPatch>,
+    /// Additive field, `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1/§8. Nullable ("set to
+    /// disabled" vs "leave unchanged"), same `double_option` treatment as `last_opened`/
+    /// `toolbar_position`/`accent_color` above — a patch that never mentions this key must leave
+    /// the stored value untouched, while a patch carrying an explicit `null` (the Settings UI's
+    /// "無効" choice) must clear it to disabled.
+    #[serde(default, deserialize_with = "double_option")]
+    pub tab_lock_auto_relock_minutes: Option<Option<u32>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -220,6 +227,9 @@ impl AppSettingsPatch {
         }
         if let Some(autostart_patch) = self.autostart {
             autostart_patch.apply_to(&mut current.autostart);
+        }
+        if let Some(v) = self.tab_lock_auto_relock_minutes {
+            current.tab_lock_auto_relock_minutes = v;
         }
     }
 }
@@ -454,6 +464,51 @@ mod tests {
         patch.apply_to(&mut current);
         assert!(current.appearance.accent_color.is_none());
         assert_eq!(current.appearance.ui_font_family.as_deref(), Some("Meiryo"), "untouched sibling field must survive the merge");
+    }
+
+    /// `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1: the field-absent-from-JSON case (a
+    /// pre-upgrade `settings.json`) must resolve to the documented default `15`, not to disabled —
+    /// distinct from an explicit `null`, which DOES mean disabled (next test).
+    #[test]
+    fn missing_auto_relock_field_in_a_pre_existing_settings_json_falls_back_to_the_documented_default() {
+        let json = serde_json::to_value(AppSettings::default()).unwrap();
+        let mut without_field = json.as_object().unwrap().clone();
+        without_field.remove("tabLockAutoRelockMinutes");
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(without_field)).unwrap();
+        assert_eq!(parsed.tab_lock_auto_relock_minutes, Some(15));
+    }
+
+    /// An explicit `null` already written to `settings.json` (e.g. by a prior "無効" selection)
+    /// must deserialize as disabled, not silently fall back to the default like the absent-key case
+    /// above — the two must stay distinguishable.
+    #[test]
+    fn explicit_null_auto_relock_field_deserializes_as_disabled() {
+        let json = serde_json::to_value(AppSettings::default()).unwrap();
+        let mut with_null = json.as_object().unwrap().clone();
+        with_null.insert("tabLockAutoRelockMinutes".to_string(), serde_json::Value::Null);
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(with_null)).unwrap();
+        assert_eq!(parsed.tab_lock_auto_relock_minutes, None);
+    }
+
+    #[test]
+    fn auto_relock_patch_distinguishes_absent_from_explicit_null_and_a_value() {
+        let mut current = AppSettings::default();
+        assert_eq!(current.tab_lock_auto_relock_minutes, Some(15));
+
+        // Key absent -> leave unchanged.
+        let patch: AppSettingsPatch = serde_json::from_str("{}").unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.tab_lock_auto_relock_minutes, Some(15));
+
+        // Key present with a value -> set it.
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"tabLockAutoRelockMinutes":30}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.tab_lock_auto_relock_minutes, Some(30));
+
+        // Key present with explicit null -> disabled.
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"tabLockAutoRelockMinutes":null}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.tab_lock_auto_relock_minutes, None);
     }
 
     #[test]

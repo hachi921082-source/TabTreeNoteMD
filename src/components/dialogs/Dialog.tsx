@@ -6,6 +6,7 @@
 // (`docs/spec.md` §9.1 item 2).
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
+import { enterModal, exitModal } from "../../shared/modalActivityGate";
 import "./Dialog.css";
 
 export interface DialogProps {
@@ -27,6 +28,15 @@ export interface DialogProps {
 
 export function Dialog({ title, onClose, children, footer, className }: DialogProps) {
   const boxRef = useRef<HTMLDivElement>(null);
+
+  // `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §5 — every `Dialog` instance (Esc-disabled or
+  // not) pauses the auto-relock inactivity timer for as long as it stays mounted. Deliberately not
+  // gated on `onClose` (unlike the Escape-key effect below): even the one Esc-disabled dialog in
+  // this app (the external-change conflict dialog) must still pause the timer while it's up.
+  useEffect(() => {
+    enterModal();
+    return () => exitModal();
+  }, []);
 
   useEffect(() => {
     if (!onClose) return;

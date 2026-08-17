@@ -19,7 +19,13 @@ const AUTO_DISMISS_MS = 5000;
 
 export interface UseToastResult {
   toasts: ToastItem[];
-  pushToast: (message: string, kind?: ToastKind) => void;
+  /** `autoDismissMs` defaults to `AUTO_DISMISS_MS` (5s); pass `null` for a "sticky" toast that only
+   * ever goes away via an explicit `dismissToast` call — used by
+   * `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §6's pre-timeout warning, which must stay
+   * visible for as long as the timer keeps running (up to 30s, or indefinitely while paused), not a
+   * fixed 5s. Returns the new toast's id so a caller that needs to dismiss it early (e.g. on
+   * activity resetting the timer) can. */
+  pushToast: (message: string, kind?: ToastKind, autoDismissMs?: number | null) => number;
   dismissToast: (id: number) => void;
 }
 
@@ -32,10 +38,11 @@ export function useToast(): UseToastResult {
   }, []);
 
   const pushToast = useCallback(
-    (message: string, kind: ToastKind = "info") => {
+    (message: string, kind: ToastKind = "info", autoDismissMs: number | null = AUTO_DISMISS_MS): number => {
       const id = nextId.current++;
       setToasts((current) => [...current, { id, message, kind }]);
-      window.setTimeout(() => dismissToast(id), AUTO_DISMISS_MS);
+      if (autoDismissMs !== null) window.setTimeout(() => dismissToast(id), autoDismissMs);
+      return id;
     },
     [dismissToast],
   );
