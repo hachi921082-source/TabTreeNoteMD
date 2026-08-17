@@ -30,6 +30,12 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "tree.rename": "F2",
   "tree.forceDelete": "Ctrl+Delete",
 
+  // Cross-Tab Quick Open (`docs/plans/v1.1.0/quick-open/PLAN.md` §4, `[spec v1.1.0 §3.1]`) — opens
+  // the memo-name jump-open overlay. `Ctrl+O` verified unused against this very map as of this
+  // writing (not `Ctrl+P`: taken by `markdown.pdfExport` below, also the native browser-print
+  // shortcut; not `Ctrl+Shift+P`: taken by `markdown.paneModeCycle` below).
+  "search.quickOpen": "Ctrl+O",
+
   // Markdown toolbar (`docs/plans/markdown-editing/PLAN.md` §4; `docs/detailed-spec.md` §5.10:
   // "every toolbar action gets a default keyboard shortcut", now 18 actions after GitHub issue
   // #176; the original 16's combos fixed by `docs/plans/window-operation/PLAN.md` §3's table).
