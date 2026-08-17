@@ -34,6 +34,14 @@ export interface UseTabLockResult {
   clearLastError: () => void;
   lockTab: (tabId: string, password: string, hint?: string) => Promise<boolean>;
   unlockTab: (tabId: string, password: string) => Promise<boolean>;
+  /** Ends `tabId`'s active session WITHOUT switching away from it — used by
+   * `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §7's inactivity-timeout and app-focus-loss
+   * teardown triggers, both of which end the currently-active tab's own session while it stays the
+   * active tab. Unlike the tab-switch cleanup below (where a fresh `tree_open` for the newly-active
+   * tab happens for free via `state/useTree.ts`'s own `[tabId]`-keyed effect), `activeTabId` never
+   * changes here, so this explicitly triggers `onTreeChanged` itself — otherwise the tree pane would
+   * keep showing the just-torn-down decrypted tree until some unrelated refresh happened to fire. */
+  endSession: (tabId: string) => void;
   fetchRecoveryStatus: (tabId: string) => Promise<RecoveryStatus | null>;
   finishRecovery: (tabId: string, password: string) => Promise<boolean>;
   restoreRecovery: (tabId: string, password: string) => Promise<boolean>;
@@ -56,6 +64,22 @@ export function useTabLock(activeTabId: string | null, onTabsChanged: () => void
   const sessionsRef = useRef<Map<string, string>>(activeSessionRealNames);
   sessionsRef.current = activeSessionRealNames;
 
+  /** Discards `tabId`'s active session locally: fires the backend `tab_end_session` call
+   * (fire-and-forget, same convention this hook has always used for a tab-switch-triggered session
+   * end — nothing else needs to await it, `tab-lock/PLAN.md` §3's own "just discards the in-memory
+   * plaintext session state") and removes it from `activeSessionRealNames`. Shared by the tab-switch
+   * cleanup effect below and the `endSession` method exposed to
+   * `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §7's same-tab teardown triggers. */
+  const discardSession = useCallback((tabId: string) => {
+    void tabEndSession(tabId);
+    setActiveSessionRealNames((prev) => {
+      if (!prev.has(tabId)) return prev;
+      const next = new Map(prev);
+      next.delete(tabId);
+      return next;
+    });
+  }, []);
+
   // Ends the tab being switched AWAY FROM's session, if it has one (`tab-lock/PLAN.md` §3:
   // "triggered by the frontend the moment the user switches away from this tab"). A session that
   // was created via a cross-tab drop-onto-a-locked-tab (`PLAN.md` §5) and whose tab never
@@ -65,16 +89,18 @@ export function useTabLock(activeTabId: string | null, onTabsChanged: () => void
     return () => {
       const endingTabId = activeTabId;
       if (endingTabId && sessionsRef.current.has(endingTabId)) {
-        void tabEndSession(endingTabId);
-        setActiveSessionRealNames((prev) => {
-          if (!prev.has(endingTabId)) return prev;
-          const next = new Map(prev);
-          next.delete(endingTabId);
-          return next;
-        });
+        discardSession(endingTabId);
       }
     };
-  }, [activeTabId]);
+  }, [activeTabId, discardSession]);
+
+  const endSession = useCallback(
+    (tabId: string) => {
+      discardSession(tabId);
+      onTreeChanged();
+    },
+    [discardSession, onTreeChanged],
+  );
 
   const clearLastError = useCallback(() => setLastErrorCode(null), []);
 
@@ -211,6 +237,7 @@ export function useTabLock(activeTabId: string | null, onTabsChanged: () => void
     clearLastError,
     lockTab,
     unlockTab,
+    endSession,
     fetchRecoveryStatus,
     finishRecovery,
     restoreRecovery,
