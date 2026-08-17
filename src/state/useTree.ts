@@ -21,6 +21,7 @@ import {
   memoSetEditLock,
   memoSetEditorOverride,
   memoSetExpanded,
+  memoSetFavorite,
   memoSetLabel,
   treeOpen,
   treeSetLastViewed,
@@ -164,6 +165,8 @@ export interface UseTreeResult {
   setLabel: (path: string, color: LabelColor | null) => Promise<void>;
   setEditorOverride: (path: string, editor: MemoEditorSettings | null) => Promise<void>;
   setEditLock: (path: string, locked: boolean) => Promise<void>;
+  /** Cross-tab favorite flag (`docs/plans/v1.1.0/favorites/PLAN.md` §2/§4). */
+  setFavorite: (path: string, favorite: boolean) => Promise<void>;
   getProperties: (path: string) => Promise<MemoProperties | null>;
   /** "ファイルの場所を開く" — reveals the memo's file (or the tab's folder, for locked/session
    * tabs) in Explorer. Reports failure via `lastErrorCode`, same convention as every other
@@ -513,6 +516,16 @@ export function useTree(tabId: string | null): UseTreeResult {
     [tabId, applySnapshot],
   );
 
+  const setFavorite = useCallback(
+    async (path: string, favorite: boolean) => {
+      if (!tabId) return;
+      const result = await memoSetFavorite(tabId, path, favorite);
+      if (result.ok) applySnapshot(result.value);
+      else setLastErrorCode(result.error.code);
+    },
+    [tabId, applySnapshot],
+  );
+
   const getProperties = useCallback(
     async (path: string): Promise<MemoProperties | null> => {
       if (!tabId) return null;
@@ -565,6 +578,7 @@ export function useTree(tabId: string | null): UseTreeResult {
     setLabel,
     setEditorOverride,
     setEditLock,
+    setFavorite,
     getProperties,
     openLocation,
     refresh,
