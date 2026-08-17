@@ -10,7 +10,7 @@
 // mandate one, and every value here is a cheap settings-file write).
 import { useState } from "react";
 import type { AppSettings, AppSettingsPatch } from "../../shared/models";
-import { DEFAULT_SHORTCUTS, comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
+import { REBINDABLE_ACTION_IDS, comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { autostartSetEnabled } from "../../ipc/autostart";
 import { Dialog } from "../dialogs/Dialog";
 import "./Settings.css";
@@ -36,6 +36,7 @@ const SHORTCUT_LABELS: Record<string, string> = {
   "tree.rename": "名前を変更",
   "tree.forceDelete": "強制削除",
   "search.quickOpen": "クイックオープン",
+  "favorites.open": "お気に入り一覧を開く",
   "markdown.undo": "元に戻す",
   "markdown.redo": "やり直し",
   "markdown.color": "文字色",
@@ -246,13 +247,15 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
           <section className="ttn-settings-section">
             <h3>ショートカット</h3>
             <div className="ttn-settings-shortcut-list">
-              {Object.keys(DEFAULT_SHORTCUTS).map((actionId) => {
+              {REBINDABLE_ACTION_IDS.map((actionId) => {
                 const isOverridden = settings.shortcuts[actionId] !== undefined;
                 return (
                   <div className="ttn-settings-shortcut-row" key={actionId}>
                     <span className="ttn-settings-shortcut-label">{SHORTCUT_LABELS[actionId] ?? actionId}</span>
                     <button type="button" className="ttn-settings-shortcut-combo" onClick={() => startRecording(actionId)}>
-                      {recordingActionId === actionId ? "キー入力待ち..." : effectiveShortcuts[actionId]}
+                      {/* `favorites.open`-style unbound actions (`shared/shortcuts.ts`'s
+                          `UNBOUND_ACTION_IDS`) resolve to `undefined` here unless user-bound. */}
+                      {recordingActionId === actionId ? "キー入力待ち..." : (effectiveShortcuts[actionId] ?? "未設定")}
                     </button>
                     {isOverridden && (
                       <button type="button" className="ttn-settings-shortcut-reset" title="既定に戻す" onClick={() => resetShortcut(actionId)}>
