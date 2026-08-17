@@ -8,158 +8,227 @@
 >
 > **Before acting on anything below, verify it against actual current state** (`git status`, `git log`,
 > `git branch`, whether files described here still exist/match) — this file is a snapshot and can go
-> stale before it's even read.
->
-> This rewrite supersedes the prior `docs/HANDOFF.md` (committed `cae6121`) — that version's "next step"
-> (Phase 2 implementation of `folder-import`) is now done and merged; nothing from it needed to carry
-> forward except what's restated below.
+> stale before it's even read. The prior version of this file (as it stood when this session started)
+> went stale almost immediately — its own "next step" was already two features out of date by the time
+> this session read it, because the branch it named (`feature/v1.1.0-quick-open`, empty) had been
+> superseded by decisions made mid-session (see §3 below). Don't assume a fresh HANDOFF.md is safe to
+> skim past its own verification instruction.
 
 ## Index
 
 1. Where the project stands
-2. What this session did
-3. `folder-import` implementation summary (merged)
-4. Remaining 4 v1.1.0 features
-5. Branch policy (unchanged from prior handoff)
-6. Committed/pushed state
-7. Next step
-8. Minor unconfirmed observation worth watching
+2. `favorites` §1-4 implementation summary (merged)
+3. `quick-open` implementation summary (merged) — and why the branch order changed mid-session
+4. `favorites` §5-6 implementation summary (merged) — Cross-Tab Favorites now fully complete
+5. Process change this session: confirm before merge/push/branch-delete (§5's own flow is NOT a standing rule)
+6. Remaining 1 v1.1.0 feature
+7. Branch policy (amended)
+8. Committed/pushed state
+9. Next step
+10. Non-blocking observation worth watching
 
 ## 1. Where the project stands
 
-- v1.1.0 planning is complete (unchanged from prior handoff): `docs/spec.v1.1.0.md`,
-  `docs/detailed-spec.v1.1.0.md`, and all 5 feature `docs/plans/v1.1.0/<feature-name>/PLAN.md` files.
-- **`folder-import` is now implemented, reviewed, and merged into `V1.1.0`** (see §3). `V1.1.0` has been
-  pushed to `origin/V1.1.0` (currently at `d6c2385`).
-- `docs/QA.md` is empty (no open questions) — nothing from this session's implementation/review work
-  needed spec-level escalation.
-- Currently checked out on a new branch, `feature/v1.1.0-tab-memo-memory`, created off `V1.1.0` at
-  `d6c2385` to hold `tab-memo-memory`'s implementation — **no commits on it yet**, working tree otherwise
-  matches `V1.1.0`.
+- v1.1.0 planning is complete (unchanged from before): `docs/spec.v1.1.0.md`, `docs/detailed-spec.v1.1.0.md`,
+  all 5 feature `docs/plans/v1.1.0/<feature-name>/PLAN.md` files.
+- **4 of 5 features are implemented, reviewed, and merged into `V1.1.0`**: `folder-import`,
+  `tab-memo-memory` (both merged before this session), and now `favorites` (§1-6, complete — see §2/§4)
+  and `quick-open` (see §3), both merged this session. `V1.1.0` is pushed to `origin/V1.1.0`, currently at
+  `a95b942`.
+- `docs/QA.md` is empty.
+- Only `tab-lock-auto-relock` remains unimplemented (§6).
+- No feature branch currently checked out — this session ends on `V1.1.0` itself, about to create
+  `feature/v1.1.0-tab-lock-auto-relock` as its very next action (§9).
 
-## 2. What this session did
+## 2. `favorites` §1-4 implementation summary (merged, part of `d575cf1`)
 
-Picked up from the prior handoff (`docs/HANDOFF.md` as it stood at commit `cae6121`), whose next step was
-"run `developer-lite` Phase 2 for `folder-import`, on `feature/v1.1.0-folder-import`". This session:
+Cross-Tab Favorites, data model + backend command + index extension + tree toggle only (PLAN §1-§4),
+`docs/plans/v1.1.0/favorites/PLAN.md`. This was **deliberately split** from the rest of the plan — see §3
+below for why.
 
-1. Read the prior handoff, verified it against actual `git status`/`git log`/`git branch` (matched).
-2. Ran the full worker/reviewer cycle for `folder-import` (`.claude/agents/README.md`'s documented flow):
-   `developer-lite` implementation → `reviewer-lite` review (found 1 real bug + a live-testing gap it
-   couldn't close) → `developer-lite` fix → `reviewer-lite` live E2E retest → **Approved**. Full detail in
-   §3.
-3. Merged `feature/v1.1.0-folder-import` into `V1.1.0` (merge commit `d6c2385`), pushed `V1.1.0` to
-   `origin`, and deleted the now-merged `feature/v1.1.0-folder-import` branch (local only; it was never
-   pushed to origin, so nothing to clean up there).
-4. Per the branch policy in §5, cut the next feature branch: user chose `tab-memo-memory` (of the
-   remaining 4) as the next feature to implement. Created `feature/v1.1.0-tab-memo-memory` from `V1.1.0`.
-   **Stopped here to write this handoff, before starting Phase 2 implementation for `tab-memo-memory`.**
+- `MetaTreeNode.favorite: Option<bool>` (`src-tauri/src/model/tree.rs`), mirrored to
+  `src/shared/models.ts`'s `TreeNode`. `TAB_META_SCHEMA_VERSION` was **not** re-bumped — confirmed already
+  `2` (bumped earlier by the merged `tab-memo-memory` feature); this plan's own coordination note says the
+  second-implemented plan should verify, not re-bump.
+- `memo_set_favorite(tab_id, path, favorite)` command (`src-tauri/src/commands/tree.rs`), structurally
+  identical to `memo_set_edit_lock`, plus a post-success `search_index.set_favorite` call.
+- `IndexEntry.favorite: bool` + `SearchIndex::set_favorite()` (`src-tauri/src/search/index.rs`) —
+  `upsert()`'s existing-entry branch preserves `favorite` across rename/save/re-import; only the
+  brand-new-entry branch defaults it to `false`.
+- Tree right-click context-menu toggle (`src/components/Tree/TreeView.tsx`), label-flipping
+  "お気に入りに追加"/"お気に入りから削除", same single-selection-only precondition as Edit Lock.
+- `developer-lite` implemented in 8 file-scoped commits (2 more were compile-fix test-literal updates in
+  `import.rs`/`tab_lock.rs`), left uncommitted for the orchestrator to organize per this session's revised
+  convention (see §3's "commit organization" note) — 168/168 backend tests, clean `tsc`/`vite build`.
+- `reviewer-lite`'s first pass found no code issues but could not complete live E2E testing — a running
+  **production** instance (`G:\TabTreeNote\tabtreenotemd.exe`) blocked the debug build via Tauri's
+  single-instance plugin (same class of blocker as `folder-import`'s prior review round). User confirmed
+  closing it; `reviewer-lite` resumed and completed live testing (toggle on/off + label flip, persistence
+  across tab reload, single-selection-only disabling) — all confirmed working. **Approved.** User did not
+  ask for the production instance to be relaunched; it was left closed.
+- Merged into `V1.1.0` as part of the `d575cf1` merge commit, pushed, `feature/v1.1.0-favorites` (first
+  incarnation) deleted.
 
-## 3. `folder-import` implementation summary (merged)
+## 3. `quick-open` implementation summary (merged, `6f01404`)
 
-OS-Folder → Tree-Pane Drag-and-Drop Import, per `docs/plans/v1.1.0/folder-import/PLAN.md`. Copy-only,
-`.md`-only, in-app Rename/Overwrite/Skip collision prompt, Tab-Lock session-aware.
+Cross-Tab Quick Open, `docs/plans/v1.1.0/quick-open/PLAN.md`, full implementation (all sections).
 
-- **`developer-lite`** implemented backend (`src-tauri/src/commands/import.rs` new `import_file` command;
-  `tab_lock.rs`'s new `session_import_file` for the Tab-Lock session path) and frontend
-  (`state/useImport.ts` collision-resolution loop, `components/dialogs/ImportCollisionDialog.tsx`, a new
-  reusable `Toast` primitive under `state/useToast.ts` + `components/Toast/`, `ipc/import.ts`,
-  `shared/uniqueName.ts`, and the drop listener wired into `components/Tree/TreeView.tsx`). 12 commits,
-  one file each. Backend tests (148/148) and frontend build passed at this point.
-- **`reviewer-lite`**'s first pass found a real, reproducible bug: `useImport.ts`'s `overwriteDisabled`
-  check (deciding whether the Overwrite option is disabled for an edit-locked collision target) used an
-  exact-case lookup (`findNode`), while collision detection elsewhere in the same file and the backend's
-  own lock check are case-insensitive. Net effect: a collision that only matches case-insensitively (e.g.
-  dropped `note.md` vs. existing `Note`) let the user click a Overwrite button that should have been
-  disabled — backend still rejected it safely (no data-integrity risk), but the UI-level restriction
-  from `detailed-spec.v1.1.0.md` §2.1 wasn't honored. Also flagged (non-blocking): no dedicated unit test
-  for `session_import_file`. Live E2E testing could not be completed in that pass — the reviewer's debug
-  build kept forwarding to the user's already-running production instance
-  (`G:\TabTreeNote\tabtreenotemd.exe`) via Tauri's single-instance plugin, and the reviewer correctly
-  declined to close another running instance without asking first.
-- User confirmed (via `AskUserQuestion`): send the bug back to `developer-lite`, and close the production
-  instance so `reviewer-lite` could retest live.
-- **`developer-lite`** fixed the case-sensitivity bug (commit `0e71f9a`, new `findNodeCI` helper matching
-  the existing lowercase convention; `treeOps.ts`'s general-purpose `findNode` was deliberately left
-  exact-match, only this call site was fixed) and added the two missing `session_import_file` unit tests
-  (commit `607d81a`, mirroring the `session_create_memo`/`session_delete_memo` pattern). 150/150 backend
-  tests, clean build.
-- **`reviewer-lite`**'s second pass: production instance was confirmed no longer running (`tasklist`), so
-  the reviewer launched its own debug build (had to use `npx tauri build --debug --no-bundle` — a plain
-  `cargo build` produces a binary pointed at `localhost:1420` dev mode instead of embedded assets) and
-  performed live E2E testing. Since genuine OS-level drag input isn't achievable in this sandboxed
-  environment, and Tauri v2 delivers file-drop via backend-emitted `tauri://drag-*` events (not DOM drag
-  events), the reviewer replayed those exact events via `window.__TAURI__.event.emit(...)` from the page's
-  own JS context over CDP — this exercises 100% of this feature's own frontend+backend logic, but not
-  wry's native `IDropTarget` glue itself; flagged explicitly rather than claimed as a full native-level
-  test. Every scenario passed (basic import, 3-way collision resolution + apply-to-all, Esc-cancel,
-  Tab-Lock session import with the bug-fix verified live, non-`.md` filtering, toast). **Verdict:
-  Approved.** One minor unconfirmed anomaly was also flagged — see §8.
-- Merged into `V1.1.0` (`d6c2385`), pushed. `feature/v1.1.0-folder-import` deleted (local only).
+**Why the branch order changed**: the prior HANDOFF.md (as this session found it) said to implement
+`quick-open` next. Reading both PLAN.md files revealed a genuine **mutual dependency**: `quick-open`'s star
+click needs `favorites`' `memo_set_favorite` command and `IndexEntry.favorite`; `favorites`' own list-view
+(§5) needs `quick-open`'s `QuickOpenDialog` component. Neither plan can be fully implemented first without
+the other. User agreed to split `favorites` into an independent backend+tree-toggle part (§1-4, §2 above)
+done first, `quick-open` in full second (this section), and a third small branch for `favorites`' remaining
+list-UI/toolbar-button part (§4 below) built on top of `quick-open`'s dialog. This is why this session ran
+three feature branches instead of two.
 
-## 4. Remaining 4 v1.1.0 features
+- **Backend** (`src-tauri/src/commands/search.rs`): `QuickOpenHit { tab_id, tab_name, memo_name,
+  is_last_viewed, is_favorite }`, `search_quick_open(query)` (split into a testable
+  `search_quick_open_impl`). Empty query = every candidate (not empty results); non-empty query =
+  case-insensitive substring match on `plaintext_name`; `is_last_viewed` sorts first, then alphabetical
+  (case-insensitive); `QUICK_OPEN_RESULT_CAP = 50`. 11 new unit tests.
+- **Frontend**: `src/state/useQuickOpen.ts` (new hook — open/close, live per-keystroke re-query with a
+  request-id guard against out-of-order responses, keyboard highlight nav, `resolveSelected()`,
+  `toggleFavorite()` calling `memo_set_favorite` directly and patching `hits` in place without re-sorting),
+  `src/components/dialogs/QuickOpenDialog.tsx`+`.css` (new — built on shared `Dialog.tsx`, two-column rows,
+  star as a separate click target via `stopPropagation`), `Ctrl+O` added to `DEFAULT_SHORTCUTS`
+  (`src/shared/shortcuts.ts`, confirmed unused against the live map — the PLAN's original citation was
+  stale, already-taken combos had grown since it was written), `src/App.tsx`'s `pendingQuickOpenFocus`
+  state machine (mirrors the existing `openSearchHit`/`openLinkTarget` pattern — `focusOnMemo` already
+  calls `tree_set_last_viewed` internally, satisfying the plan's `restoreTabView`-bypass requirement with
+  no extra call needed), `src/components/TabBar/TabBar.tsx` wiring (global focus-unconstrained `Ctrl+O`
+  listener honoring user rebinds, no toolbar button — shortcut-only trigger per the plan).
+- `developer-lite` implemented across 10 files, left uncommitted per this session's revised convention (see
+  below); 177/177 backend tests, clean `tsc`/`vite build`, confirmed `Ctrl+O` collision-free (28 unique
+  combos).
+- `reviewer-lite` live-tested via CDP against a **freshly rebuilt** debug binary (a prior review round
+  found a stale cached debug binary can silently miss newly-registered Tauri commands — always
+  `cargo build` before trusting one) — confirmed initial full list on open, locked-tab exclusion, live
+  filtering, fast-typing race safety (one pass), cross-tab selection (switches tab AND focuses the right
+  memo), star-click isolation (no navigation triggered), Esc dismissal (no revert of an
+  already-committed star toggle). **Approved**, no findings.
+- Merged into `V1.1.0` (`6f01404`), pushed, `feature/v1.1.0-quick-open` deleted.
 
-Per `docs/plans/README.md`, still not meant to be implemented in a fixed sequence — each is independently
-plannable/buildable/testable:
+**Commit-organization convention change**: starting with this branch, `developer-lite` was told to
+implement and verify (tests/build) but leave the working tree **uncommitted**, and the orchestrator
+reviewed the diff and organized commits itself (one file per commit, per `CLAUDE.md`'s convention) rather
+than trusting `developer-lite` to self-organize. Kept for `favorites` §5-6 too (§4 below). No decision was
+made to keep or drop this going forward — worth asking the user, or just continuing it, if it's working.
 
-1. **`tab-memo-memory`** (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md`) — **chosen as next, branch already
-   created.** Per-Tab Last-Viewed-Memo and Scroll-Position Memory, extended to every in-session tab switch
-   (not just startup). Quick Open's MRU ordering depends on this, so doing it before `quick-open` keeps
-   that dependency direction clean (not a hard requirement, just why it was picked first here).
-2. **`quick-open`** (`docs/plans/v1.1.0/quick-open/PLAN.md`) — Cross-Tab Quick Open (`Ctrl+O`), reuses the
-   existing full-text index. Favorites reuses this feature's overlay in a second mode.
-3. **`favorites`** (`docs/plans/v1.1.0/favorites/PLAN.md`) — Cross-Tab Favorites, adds `favorite` to
-   `MetaTreeNode`; builds on Quick Open's overlay/index/ordering mechanics — safest done after
-   `quick-open`.
-4. **`tab-lock-auto-relock`** (`docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md`) — Tab-Lock Auto-Relock on
-   Inactivity, single global timer, foreground-active-tab-only. Independent of the other 3 remaining
-   features; can slot in anywhere.
+## 4. `favorites` §5-6 implementation summary (merged, `a95b942`) — feature now fully complete
 
-## 5. Branch policy (unchanged from prior handoff)
+Cross-Tab Favorites list view + toolbar trigger, `docs/plans/v1.1.0/favorites/PLAN.md` §5-§6 — the part
+deferred in §2 above. With this merge, **Cross-Tab Favorites (all of §1-6) is done.**
 
-- **One branch per feature implementation**, cut from `V1.1.0`, named **`feature/v1.1.0-<feature-name>`**.
-- Flow: branch → `developer-lite` Phase 2 implementation → `reviewer-lite` review (with escalation back to
-  `developer-lite` for fixes as needed, like `folder-import`'s case-sensitivity bug) → merge back into
-  `V1.1.0` → push → delete the merged feature branch → repeat for the next feature. Order across the
-  remaining features is arbitrary, chosen by the user each time.
-- Distinct from the GitHub-issue workflow (`fix/<short-slug>` branches, documented in this repo's
-  `CLAUDE.md`) — that convention is unchanged.
-- Current branch: **`feature/v1.1.0-tab-memo-memory`** (created from `V1.1.0` at `d6c2385`, no
-  implementation commits on it yet).
+- **Backend**: `search_get_favorites()` (`src-tauri/src/commands/search.rs`) reuses `QuickOpenHit`
+  verbatim, filters by `favorite == true`, **no result cap** (unlike Quick Open's 50-item cap). Sorting
+  logic extracted into a shared `sort_quick_open_hits()` helper, reused by both this and
+  `search_quick_open_impl` (not re-derived). 6 new unit tests.
+- **Frontend**: `useQuickOpen`/`QuickOpenDialog` extended in place with a `mode: "quickOpen" | "favorites"`
+  parameter — the PLAN's own explicitly-chosen approach (reuse over a separate component). Favorites mode:
+  no query input (hidden entirely, arrow/Enter nav rewired to a window-level listener since there's no
+  input to attach `onKeyDown` to), star rendered as a **read-only** `<span>` (not a button — removal is
+  tree-right-click-menu-only), dialog title "お気に入り". New ★ toolbar button in `TabBar.tsx`, immediately
+  left of the pin ("最前面に固定") button, no default shortcut — `favorites.open` added to a new
+  `UNBOUND_ACTION_IDS`/`REBINDABLE_ACTION_IDS` split in `shared/shortcuts.ts` so it's still bindable via
+  Settings but ships inactive by default.
+- `developer-lite` implemented across 9 files (183/183 backend tests, clean `tsc`/`vite build`), left
+  uncommitted; orchestrator organized into 9 file-scoped commits.
+- `reviewer-lite` live-tested (fresh debug rebuild): star genuinely non-interactive as a toggle in this
+  mode, no result cap (confirmed via the dedicated backend test rather than manufacturing 50+ real
+  favorites), toolbar button placement (★ → 📌 → 🔍 → ⇄ → ⚙ via DOM order + bounding rects), the
+  `favorites.open` shortcut (unbound by default, works once bound via Settings, resets to "未設定"
+  correctly), removal-only-via-tree-menu, empty-state message. **Approved** — see §10 for one non-blocking
+  observation from this round.
+- Merged into `V1.1.0` (`a95b942`), pushed, `feature/v1.1.0-favorites` (second incarnation) deleted.
 
-## 6. Committed/pushed state
+## 5. Process change this session: confirm before merge/push/branch-delete
 
-- `V1.1.0` is at `d6c2385` (merge commit for `folder-import`) and **is pushed** to `origin/V1.1.0`.
-- `feature/v1.1.0-folder-import` was merged and deleted (local-only branch, nothing to clean up on
-  origin).
-- `feature/v1.1.0-tab-memo-memory` exists locally only, at the same commit as `V1.1.0` (`d6c2385`), not
-  yet pushed (nothing to push — no new commits on it yet).
+Mid-session, after two merge+push+branch-delete cycles had already run automatically (favorites §1-4,
+then quick-open), the user asked where this "merge → push → delete branch" flow was actually written down
+as a rule. It turned out to exist **only** in the prior session's `docs/HANDOFF.md` §5 ("Branch policy") —
+a file that is explicitly disposable/session-scoped by its own header, not a permanent rule, and not
+present anywhere in `CLAUDE.md` or `.claude/agents/README.md`. The orchestrator had been treating a
+prior session's informal note as standing policy and pushing to `origin/V1.1.0` + deleting branches without
+asking. **This was flagged as a real gap, not just process pedantry** — push and branch-deletion are
+exactly the "hard-to-reverse / affects shared state" category of action this project's own global
+`CLAUDE.md`-adjacent conventions already say needs confirmation, not silent continuation on inferred
+precedent. Recorded as a global auto-memory,
+`feedback_confirm_before_merge_push_delete.md` — read it for the fuller rationale.
 
-Uncommitted in the working tree right now:
+**Going forward**: once `reviewer-lite` approves a `feature/v1.1.0-<name>` branch, **ask the user before
+each of** `git merge`, `git push`, and `git branch -d` — do not auto-continue. The user was offered the
+option to codify the merge→push→delete flow into `CLAUDE.md` as a standing automatic rule and explicitly
+declined; it stays a per-instance confirmation. (The `favorites` §5-6 merge in §4 above was done correctly
+under this new rule — confirmed with the user first.)
+
+## 6. Remaining 1 v1.1.0 feature
+
+Per `docs/plans/README.md`:
+
+1. **`tab-lock-auto-relock`** (`docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md`) — single global timer,
+   foreground-active-tab-only (see `docs/DECISIONS.md` for the deliberate backgrounded-session scope
+   limitation). Fully independent of everything else implemented this session — no cross-plan
+   dependencies to worry about, unlike the `favorites`/`quick-open` tangle in §3.
+
+This is the **last** v1.1.0 feature. Once it's merged, all 5 features (`folder-import`, `tab-memo-memory`,
+`favorites`, `quick-open`, `tab-lock-auto-relock`) will be done — worth treating that merge as a trigger to
+ask the user whether a final whole-app integration pass is wanted, per this file's own past note that a
+single-feature review is not a substitute for that (not required by any written rule found so far, just a
+sensible checkpoint to raise, not to assume).
+
+## 7. Branch policy (amended)
+
+- One branch per feature implementation, cut from `V1.1.0`, named `feature/v1.1.0-<feature-name>`.
+- Flow: branch → `developer-lite` implements (leaves working tree **uncommitted**, per §3's convention
+  change) → orchestrator reviews the diff and organizes commits (one file per commit) →
+  `reviewer-lite` reviews/live-tests (Live-Testing Scope & Efficiency Discipline still applies) → fix loop
+  if needed → **ask the user** → merge into `V1.1.0` → **ask the user** → push → **ask the user** → delete
+  branch → repeat. The three asks in the merge/push/delete tail are new this session (§5) — don't collapse
+  them back into silent auto-continuation.
+- Distinct from the GitHub-issue workflow (`fix/<short-slug>` branches) — unchanged.
+- Current branch: **`V1.1.0`** itself (`a95b942`) — no feature branch checked out as this file is written;
+  creating `feature/v1.1.0-tab-lock-auto-relock` is the immediate next action (§9).
+
+## 8. Committed/pushed state
+
+- `V1.1.0` is at `a95b942` and is pushed to `origin/V1.1.0` (verified via the `git push` output itself,
+  fast-forward, no conflicts, at each of this session's three merges).
+- `feature/v1.1.0-favorites` (both incarnations) and `feature/v1.1.0-quick-open` were merged and deleted
+  (local-only branches, nothing to clean up on origin — none of them were ever pushed).
+- No feature branch currently exists.
+
+Uncommitted in the working tree right now (besides this file, mid-rewrite):
 
 ```
 ?? .claude/files/
 ?? "CLAUDE - コピー.md"
 ```
 
-These are **pre-existing, unrelated to any v1.1.0 work** (present since before this file's predecessor was
-written) — do not assume they need handling.
+Pre-existing, unrelated to any v1.1.0 work — do not assume they need handling (carried forward unverified
+from prior sessions' notes; still present, still presumed pre-existing, but worth a fresh `git log`/`git
+blame` check by whichever session first has reason to touch either).
 
-## 7. Next step
+## 9. Next step
 
-On branch `feature/v1.1.0-tab-memo-memory`: run `developer-lite` Phase 2 (implementation) for the
-`tab-memo-memory` feature, based on `docs/plans/v1.1.0/tab-memo-memory/PLAN.md`. Follow the same
-worker/reviewer cycle used for `folder-import` (§3) — `developer-lite` implements → `reviewer-lite`
-reviews and live-tests → fix/retest loop if needed → merge into `V1.1.0` → push → delete branch → pick the
-next feature from §4.
+From `V1.1.0` at `a95b942`: create `feature/v1.1.0-tab-lock-auto-relock`, then run `developer-lite` based
+on `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md`. Follow the same flow as §7 — implementation left
+uncommitted for the orchestrator to organize into commits, `reviewer-lite` reviews/live-tests under the
+scope discipline, and **ask the user before merge, before push, and before branch-delete** (§5) — this is
+the one part of the flow that must NOT run on autopilot this time, unlike earlier in this session.
 
-## 8. Minor unconfirmed observation worth watching
+## 10. Non-blocking observation worth watching
 
-During `folder-import`'s live E2E retest, `reviewer-lite` observed a generic error banner
-(`.ttn-tree-error`, bottom-left — distinct from this feature's own `Toast`, bottom-right) reading
-`"対象が見つかりませんでした"` (`NOT_FOUND`) appear once, right after a plain memo-creation dialog
-confirm, unconnected to any import/drop action just performed. It did not recur across ~10 subsequent
-drop scenarios in the same session, and every import scenario's own success/skip counts and on-disk file
-state were independently verified correct regardless — so this was **not** treated as a blocker or
-attributed to `folder-import`. Worth keeping an eye out for if it resurfaces during `tab-memo-memory`
-testing (which also touches memo creation/tab-switch flows) — if it reproduces with a clear trigger, it
-should go to `docs/QA.md` or a GitHub issue rather than being re-discovered from scratch.
+During `favorites` §5-6's live E2E retest (§4), `reviewer-lite` ran one extended, rapid-fire batched CDP
+sequence (favorite → open list → star-click-select → context-menu check → shortcut-bind test → settings →
+unfavorite, each step only ~300-400ms apart, far faster than real user pacing) and saw a `.ttn-editor-error`
+banner ("対象が見つかりませんでした" / `NOT_FOUND`) appear transiently once, after the sequence finished.
+Two clean, normally-paced, single-step-at-a-time reproduction attempts immediately after did **not**
+reproduce it. This looks consistent with the same general race class already documented and partially
+fixed in a prior session (`tab-memo-memory`'s Finding #1 — "outgoing-tab flush lands late" /
+`restoreTabView`-bypass timing) — possibly resurfacing under the favorites list's own direct
+`tree_set_last_viewed` call when state-changing actions are chained faster than any real user would ever
+perform them. Per the Live-Testing Scope & Efficiency Discipline, this was **not** chased further — flagged
+here as an FYI. If it ever reproduces under genuinely normal-paced usage with a clear trigger, it should go
+to `docs/QA.md` or a GitHub issue rather than being re-discovered from scratch; until then, it is not a
+blocker and does not need proactive investigation.
