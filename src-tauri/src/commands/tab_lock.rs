@@ -2511,6 +2511,7 @@ mod tests {
                     label: None,
                     editor: None,
                     locked: Some(true),
+                    favorite: None,
                     children: Vec::new(),
                 }],
                 file_map: vec![FileMapEntry {
