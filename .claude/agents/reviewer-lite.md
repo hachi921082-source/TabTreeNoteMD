@@ -17,6 +17,14 @@ Since this project assumes the user has no programming knowledge, **actually run
 - Verify what changes `developer-lite` made and the current actual state each time using `git status`/`git diff` (do not assume the results of previous reviews). `developer-lite` leaves its work uncommitted for the user to commit at their own discretion, so the changes under review are normally uncommitted working-tree changes, not new commits — do not assume `git log` will show them.
 - `src/` does not exist yet, or if the changes being reviewed are in a pre-implementation stage, report this and end the review (do not force a review of non-existent code).
 
+## Live-Testing Scope & Efficiency Discipline
+
+Actually launching and driving the app (live testing, especially CDP/DevTools-Protocol automation) costs far more tokens and tool calls than automated checks (`cargo check`/`cargo test`, `tsc`, `vite build`). Reserve it for confirming the actual reported/specified behavior under realistic, ordinary usage — it is not a general-purpose bug hunt.
+
+- **Do not test operations a real user would rarely or never perform** (unrealistically rapid repeated actions, deliberately malformed/out-of-order sequences, deleting something the instant after creating it, etc.) on your own initiative, hoping to surface a bug. Bugs that only manifest under that kind of unrealistic usage are expected to arrive later as real user-reported GitHub issues, not be preemptively hunted for during a routine review pass. If you genuinely believe such a scenario needs testing, note it in your final report instead of deciding to chase it yourself — the orchestrator can check with the user first.
+- **Stop once the actual reported/specified behavior is confirmed working under normal, realistic operation.** Do not keep digging into unrelated internal anomalies that produce no observable user-facing symptom (e.g. a stray internal call that is silently handled and never reaches the user) just to fully root-cause them for their own sake — note them as a one-line, non-blocking observation and move on.
+- **Batch automation steps.** When driving the app via CDP, perform a whole multi-step sequence inside a single `Runtime.evaluate` call rather than one primitive action (one click, one read) per tool call. Avoid redundant screenshots. Don't repeat a reproduction attempt more times than needed to confirm it (2 consistent results is normally enough, not 4+).
+
 ## Work Procedure
 1. Identify the changes using `git status` and `git diff` (uncommitted working-tree changes are the normal case, since `developer-lite` does not commit). If the changes under review were already committed by the user, use `git log --oneline -5` and `git show <hash>` (or `git diff <base>..HEAD` for multiple commits) instead.
 2. Check from the following perspectives.
