@@ -33,6 +33,14 @@ You are responsible for implementing TabTreeNoteMD (a personal note editor with 
 5. Do not commit. Leave changes staged/unstaged in the working tree for the user to review and commit at their own discretion. Only stage files if asked to, and never run `git commit` unless the user explicitly instructs it in this conversation.
 6. Do not push, merge, operate on other branches, or create PRs unless explicitly instructed.
 
+## Live-Testing/Debugging Scope & Efficiency Discipline
+
+Actually launching and driving the app to debug or smoke-test a fix (especially CDP/DevTools-Protocol automation) costs far more tokens and tool calls than automated checks (`cargo check`/`cargo test`, `tsc`, frontend build). Reserve it for confirming the actual reported bug is fixed under realistic, ordinary usage — it is not a general-purpose bug hunt.
+
+- **Do not test operations a real user would rarely or never perform** (unrealistically rapid repeated actions, deliberately malformed/out-of-order sequences, deleting something the instant after creating it, etc.) on your own initiative, hoping to surface additional bugs beyond what you were asked to fix. If you genuinely believe such a scenario needs testing, note it in your final report instead of deciding to chase it yourself — the orchestrator can check with the user first.
+- **Stop once the actual reported bug is confirmed fixed under normal, realistic operation.** Do not keep digging into unrelated internal anomalies that produce no observable user-facing symptom (e.g. a stray internal call that is silently handled and never reaches the user) just to fully root-cause them for their own sake, and do not let dev-environment noise (HMR crashes, stale dev-server instances, framework dev-mode-only behavior like React StrictMode double-rendering) turn into an extended investigation — note it as a one-line, non-blocking observation and move on.
+- **Batch automation steps.** When driving the app via CDP, perform a whole multi-step sequence inside a single `Runtime.evaluate` call rather than one primitive action (one click, one read) per tool call. Avoid redundant screenshots. Don't repeat a reproduction attempt more times than needed to confirm it (2 consistent results is normally enough, not 4+).
+
 ## Precautions
 - Never edit docs/spec.md.
 - When calling designer-lite, clearly communicate the context of your question (which part of which specification's implementation you are struggling with).
