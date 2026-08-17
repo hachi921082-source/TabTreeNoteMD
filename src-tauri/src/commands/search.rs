@@ -181,8 +181,66 @@ pub(crate) fn search_quick_open_impl(query: &str, entries: &[IndexEntry], settin
     // Ordering (`docs/plans/v1.1.0/quick-open/PLAN.md` §2, `[spec v1.1.0 §3.2]`): `is_last_viewed`
     // first, tie-broken alphabetically by `memo_name` (case-insensitive) — applies identically to
     // the empty-query full list and any filtered subset.
-    hits.sort_by(|a, b| b.is_last_viewed.cmp(&a.is_last_viewed).then_with(|| a.memo_name.to_lowercase().cmp(&b.memo_name.to_lowercase())));
+    sort_quick_open_hits(&mut hits);
     hits.truncate(QUICK_OPEN_RESULT_CAP);
+    hits
+}
+
+/// Shared ordering rule for `QuickOpenHit` lists — `docs/plans/v1.1.0/quick-open/PLAN.md` §2,
+/// `[spec v1.1.0 §3.2]`: own-tab `is_last_viewed` first, then alphabetical by `memo_name`
+/// (case-insensitive). Reused verbatim by `search_get_favorites_impl` below
+/// (`docs/plans/v1.1.0/favorites/PLAN.md` §5 — "reuse the sorting logic, don't re-derive it").
+fn sort_quick_open_hits(hits: &mut [QuickOpenHit]) {
+    hits.sort_by(|a, b| b.is_last_viewed.cmp(&a.is_last_viewed).then_with(|| a.memo_name.to_lowercase().cmp(&b.memo_name.to_lowercase())));
+}
+
+// ---------------------------------------------------------------------------
+// §5 Cross-Tab Favorites List — `docs/plans/v1.1.0/favorites/PLAN.md` §5, `[spec v1.1.0 §4.5]`.
+// Distinct from `search_quick_open` above: no query string input, filters by `IndexEntry.favorite
+// == true` instead of a name-substring match, and does NOT truncate (every favorited,
+// index-eligible memo is returned — `[spec v1.1.0 §4.3]` Q4-2).
+// ---------------------------------------------------------------------------
+
+/// Reuses `QuickOpenHit` verbatim (`docs/plans/v1.1.0/favorites/PLAN.md` §5) — `is_favorite` is
+/// always `true` for every row here, kept in the shape for row-rendering consistency with Quick
+/// Open, since every entry returned already passed the `favorite == true` filter below.
+#[tauri::command]
+pub fn search_get_favorites(index: State<SearchIndex>, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>, tab_view: State<TabViewStore>) -> AppResult<Vec<QuickOpenHit>> {
+    let (settings, _outcome) = store.get(&registry);
+    let entries = index.snapshot();
+    AppResult::ok(search_get_favorites_impl(&entries, &settings, &tab_view))
+}
+
+/// Core logic, split out from the `#[tauri::command]` wrapper above for the same direct-unit-test
+/// reason `search_quick_open_impl` above is split out.
+pub(crate) fn search_get_favorites_impl(entries: &[IndexEntry], settings: &AppSettings, tab_view: &TabViewStore) -> Vec<QuickOpenHit> {
+    let mut hits: Vec<QuickOpenHit> = Vec::new();
+    for entry in entries {
+        if !entry.favorite {
+            continue;
+        }
+        // Defense in depth (same rationale as `search_quick_open_impl` above): a locked tab's
+        // entries should already be absent from the index (`favorites/PLAN.md` §7 "Tab Lock
+        // Exclusion is automatic via the shared index"), but re-check against the live tab
+        // registry anyway.
+        let Some(tab) = settings.tabs.iter().find(|t| t.id == entry.tab_id) else {
+            continue; // e.g. the tab was unregistered (`tab_remove`) since this entry was indexed
+        };
+        if tab.locked.unwrap_or(false) {
+            continue;
+        }
+
+        let is_last_viewed = tab_view.get(&entry.tab_id).as_deref() == Some(entry.memo_name.as_str());
+        hits.push(QuickOpenHit {
+            tab_id: entry.tab_id.clone(),
+            tab_name: tab.name.clone(),
+            memo_name: entry.memo_name.clone(),
+            is_last_viewed,
+            is_favorite: true,
+        });
+    }
+
+    sort_quick_open_hits(&mut hits);
     hits
 }
 
@@ -368,5 +426,73 @@ mod tests {
 
         let hits = search_quick_open_impl("", &entries, &settings, &tab_view);
         assert_eq!(hits.len(), QUICK_OPEN_RESULT_CAP);
+    }
+
+    // ---- search_get_favorites_impl (`docs/plans/v1.1.0/favorites/PLAN.md` §5) --------------------
+
+    #[test]
+    fn only_favorited_entries_are_returned() {
+        let entries = vec![entry("tab-1", "Diary", true), entry("tab-1", "Notes", false)];
+        let settings = settings_with_tab("tab-1", "Work", false);
+        let tab_view = TabViewStore::new();
+
+        let hits = search_get_favorites_impl(&entries, &settings, &tab_view);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memo_name, "Diary");
+        assert!(hits[0].is_favorite, "is_favorite is always true for every row here (§5)");
+    }
+
+    #[test]
+    fn favorites_list_locked_tabs_are_excluded() {
+        let entries = vec![entry("tab-1", "Secret", true)];
+        let settings = settings_with_tab("tab-1", "Locked", true);
+        let tab_view = TabViewStore::new();
+
+        assert!(search_get_favorites_impl(&entries, &settings, &tab_view).is_empty());
+    }
+
+    #[test]
+    fn favorites_list_entries_for_an_unregistered_tab_are_excluded() {
+        let entries = vec![entry("gone-tab", "Orphan", true)];
+        let settings = AppSettings::default();
+        let tab_view = TabViewStore::new();
+
+        assert!(search_get_favorites_impl(&entries, &settings, &tab_view).is_empty());
+    }
+
+    #[test]
+    fn favorites_list_enrichment_resolves_tab_name_and_last_viewed() {
+        let entries = vec![entry("tab-1", "Diary", true)];
+        let settings = settings_with_tab("tab-1", "Work", false);
+        let tab_view = TabViewStore::new();
+        tab_view.set("tab-1", Some("Diary".to_string()));
+
+        let hits = search_get_favorites_impl(&entries, &settings, &tab_view);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].tab_id, "tab-1");
+        assert_eq!(hits[0].tab_name, "Work");
+        assert!(hits[0].is_last_viewed);
+    }
+
+    #[test]
+    fn favorites_list_ordering_puts_last_viewed_first_then_alphabetical_case_insensitive() {
+        let entries = vec![entry("tab-1", "zebra", true), entry("tab-1", "Apple", true), entry("tab-1", "banana", true)];
+        let settings = settings_with_tab("tab-1", "Work", false);
+        let tab_view = TabViewStore::new();
+        tab_view.set("tab-1", Some("zebra".to_string()));
+
+        let hits = search_get_favorites_impl(&entries, &settings, &tab_view);
+        let names: Vec<&str> = hits.iter().map(|h| h.memo_name.as_str()).collect();
+        assert_eq!(names, vec!["zebra", "Apple", "banana"]);
+    }
+
+    #[test]
+    fn favorites_list_is_not_truncated_past_the_quick_open_result_cap() {
+        let entries: Vec<IndexEntry> = (0..(QUICK_OPEN_RESULT_CAP + 10)).map(|i| entry("tab-1", &format!("memo{i:03}"), true)).collect();
+        let settings = settings_with_tab("tab-1", "Work", false);
+        let tab_view = TabViewStore::new();
+
+        let hits = search_get_favorites_impl(&entries, &settings, &tab_view);
+        assert_eq!(hits.len(), QUICK_OPEN_RESULT_CAP + 10, "no result cap (§5 Q4-2), unlike search_quick_open_impl");
     }
 }
