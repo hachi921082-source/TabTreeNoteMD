@@ -35,6 +35,10 @@ pub struct MetaTreeNode {
     /// block, no password. Distinct from tab lock (`tab-lock/PLAN.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
+    /// Cross-tab favorite flag (`docs/plans/v1.1.0/favorites/PLAN.md` §1, `[spec v1.1.0 §4.1]`).
+    /// Absent and `Some(false)` are equivalent, mirroring `locked`/`label`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favorite: Option<bool>,
     #[serde(default)]
     pub children: Vec<MetaTreeNode>,
 }
@@ -49,6 +53,7 @@ impl MetaTreeNode {
             label: None,
             editor: None,
             locked: Some(false),
+            favorite: None,
             children: Vec::new(),
         }
     }
@@ -160,6 +165,7 @@ mod tests {
         assert!(node.label.is_none());
         assert!(node.editor.is_none());
         assert_eq!(node.locked, Some(false));
+        assert!(node.favorite.is_none());
         assert!(node.children.is_empty());
     }
 
@@ -171,10 +177,12 @@ mod tests {
             label: Some(Label { color: Some(LabelColor::Blue.hex().to_string()), kind: None }),
             editor: Some(MemoEditorSettings { wrap: Some(WrapMode::Window), ..Default::default() }),
             locked: Some(false),
+            favorite: Some(true),
             children: vec![],
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json["memoName"], "Diary");
+        assert_eq!(json["favorite"], true);
         assert_eq!(json["label"]["color"], "#4a90d9");
         let back: MetaTreeNode = serde_json::from_value(json).unwrap();
         assert_eq!(back, node);
