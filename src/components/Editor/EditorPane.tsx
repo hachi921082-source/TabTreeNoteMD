@@ -12,7 +12,7 @@ import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useEditor } from "../../state/useEditor";
 import { useSearch } from "../../state/useSearch";
-import { memoGetProperties, memoOpenLocation } from "../../ipc/tree";
+import { memoGetProperties, memoOpenLocation, memoSetEditorOverride } from "../../ipc/tree";
 import type { AppSettings, AppSettingsPatch, EditorDefaults, ExternalLinkKind, MemoEditorSettings, MemoProperties, PaneMode } from "../../shared/models";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { formatDateTime } from "../../shared/formatDateTime";
@@ -362,28 +362,60 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const setEditorOverrideRef = useRef(setEditorOverride);
   setEditorOverrideRef.current = setEditorOverride;
   const scrollDebounceRef = useRef<number | null>(null);
-  // Which memo `viewRef.current` actually belongs to (and that memo's override snapshot at the
-  // time its view was created) — set ONLY inside the view-(re)creation effect below, once a view
-  // has actually been (re)created for a given `ed.loadGeneration`. Unlike `memoNameRef`/
-  // `overrideRef` above (which track the live `memoName`/`memoEditorOverride` props and can flip
-  // to the NEXT memo before this effect's next run, since `useTree.ts`'s `setOpenMemoName` is
-  // synchronous while the load itself is async), these two stay pinned to the OUTGOING memo until
-  // the next effect run overwrites them for the memo it just loaded. This is what lets the
-  // outgoing-flush at the top of that next run target the correct (previous) memo instead of
-  // whatever the props have already drifted to (GitHub issue #28 follow-up review finding).
+  // Which memo (and which TAB) `viewRef.current` actually belongs to (and that memo's override
+  // snapshot at the time its view was created) — set ONLY inside the view-(re)creation effect
+  // below, once a view has actually been (re)created for a given `ed.loadGeneration`. Unlike
+  // `memoNameRef`/`overrideRef` above (which track the live `memoName`/`memoEditorOverride` props
+  // and can flip to the NEXT memo/tab before this effect's next run, since `useTree.ts`'s
+  // `setOpenMemoName` is synchronous while the load itself is async), these stay pinned to the
+  // OUTGOING memo/tab until the next effect run overwrites them for the memo it just loaded. This
+  // is what lets the outgoing-flush at the top of that next run target the correct (previous)
+  // memo/tab instead of whatever the props have already drifted to (GitHub issue #28 follow-up
+  // review finding; `loadedTabIdRef` added for `docs/plans/v1.1.0/tab-memo-memory` reviewer
+  // finding #1 retest below).
   const loadedMemoNameRef = useRef<string | null>(null);
   const loadedOverrideRef = useRef<MemoEditorSettings | undefined>(undefined);
+  const loadedTabIdRef = useRef<string | null>(null);
 
-  // Persists both the scroll position and the cursor/selection for `name` — grabbed together from
-  // `view` since both are read at the same trigger points (switching memos, debounced scroll,
-  // unmount), so one combined write avoids a second `memo_set_editor_override` round-trip per
-  // trigger. `name`/`override` are passed explicitly (rather than read from the live
-  // `memoNameRef`/`overrideRef` internally) because the outgoing-view-flush call site needs the
-  // PREVIOUS memo's identity, which the live refs no longer hold by the time this fires.
+  // Persists both the scroll position and the cursor/selection for `name`, in the CURRENTLY active
+  // tab — grabbed together from `view` since both are read at the same trigger points (debounced
+  // scroll, unmount), so one combined write avoids a second `memo_set_editor_override` round-trip
+  // per trigger. Routes through `treeState.setEditorOverride` (via `setEditorOverrideRef`), which
+  // is safe here specifically because both call sites below are documented to only ever fire while
+  // `name` is still the memo open in the tab that's still active (see each call site's own
+  // comment) — unlike the OUTGOING-memo flush at the top of the view-(re)creation effect, which
+  // uses `flushOutgoingEditorViewState` below instead, precisely because that guarantee does NOT
+  // hold there.
   const persistEditorViewState = (view: EditorView, name: string | null, override: MemoEditorSettings | undefined) => {
     if (!name) return;
     const { anchor, head } = view.state.selection.main;
     void setEditorOverrideRef.current(name, {
+      ...override,
+      scrollPosition: computeTopVisibleLine(view),
+      cursorAnchor: anchor,
+      cursorHead: head,
+    });
+  };
+
+  // Outgoing-memo variant of `persistEditorViewState` above, for the view-(re)creation effect's own
+  // outgoing-flush only (`docs/plans/v1.1.0/tab-memo-memory` reviewer finding #1 retest): calls
+  // `ipc/tree.ts`'s `memoSetEditorOverride` directly with an EXPLICIT `tabId` rather than going
+  // through `treeState.setEditorOverride`/`setEditorOverrideRef`. `setEditorOverrideRef.current` is
+  // always bound to whichever tab is CURRENTLY active (`useTree.ts`'s own `tabId` closure) — by the
+  // time this fires (on a switch to a different tab whose own memo just finished loading), the
+  // active tab has already moved on, so `setEditorOverrideRef.current` would silently target the
+  // NEW tab with the OUTGOING memo's name, most often getting a `NotFound` back (surfaced as
+  // `useTree.ts`'s `.ttn-tree-error` banner even though nothing is actually wrong) whenever no
+  // same-named memo happens to exist there too. `outgoingTabId`/`name` are `loadedTabIdRef`/
+  // `loadedMemoNameRef`'s pinned-to-the-outgoing-view values, not the live `tabId`/`memoName` props.
+  // Bypasses `applySnapshot`/`treeState.nodes` on purpose and swallows errors — same "best-effort
+  // bookkeeping for a tab the user has already left, not a user-visible mutation" rationale as
+  // `state/useTree.ts`'s `persistLastViewed`; the position fields written here are read back
+  // directly from `editor_load`'s own response on next open, never from `treeState.nodes`.
+  const flushOutgoingEditorViewState = (view: EditorView, outgoingTabId: string | null, name: string | null, override: MemoEditorSettings | undefined) => {
+    if (!outgoingTabId || !name) return;
+    const { anchor, head } = view.state.selection.main;
+    void memoSetEditorOverride(outgoingTabId, name, {
       ...override,
       scrollPosition: computeTopVisibleLine(view),
       cursorAnchor: anchor,
@@ -399,27 +431,32 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
     // Flush this memo's scroll position immediately when switching away, same trigger point as
     // the autosave flush (`editor-save/PLAN.md` §2 "Scroll Position Write Path"). Targets
-    // `loadedMemoNameRef`/`loadedOverrideRef` (the memo `outgoingView` actually belongs to), NOT
-    // the live `memoName`/`memoEditorOverride` props — those already point at the memo being
-    // switched TO by the time this effect runs (see the refs' declaration comment above).
+    // `loadedTabIdRef`/`loadedMemoNameRef`/`loadedOverrideRef` (the tab/memo `outgoingView` actually
+    // belongs to), NOT the live `tabId`/`memoName`/`memoEditorOverride` props — those already point
+    // at the tab/memo being switched TO by the time this effect runs (see the refs' declaration
+    // comment above). Uses `flushOutgoingEditorViewState`, not `persistEditorViewState` — the
+    // outgoing tab may already differ from the active one (`docs/plans/v1.1.0/tab-memo-memory`
+    // reviewer finding #1 retest; see that function's own comment).
     const outgoingView = viewRef.current;
     if (outgoingView) {
       if (scrollDebounceRef.current !== null) window.clearTimeout(scrollDebounceRef.current);
-      persistEditorViewState(outgoingView, loadedMemoNameRef.current, loadedOverrideRef.current);
+      flushOutgoingEditorViewState(outgoingView, loadedTabIdRef.current, loadedMemoNameRef.current, loadedOverrideRef.current);
       outgoingView.destroy();
       viewRef.current = null;
     }
 
     if (!ed.content) {
+      loadedTabIdRef.current = null;
       loadedMemoNameRef.current = null;
       loadedOverrideRef.current = undefined;
       setRenderTick((n) => n + 1);
       return;
     }
-    // From here on `memoName`/`memoEditorOverride` (the props captured by this effect's closure,
-    // from the same render that bumped `ed.loadGeneration`) correctly identify the memo this view
-    // is being built for — snapshot them now so the NEXT effect run's outgoing-flush (above) reads
-    // the right memo once the props have moved on again.
+    // From here on `tabId`/`memoName`/`memoEditorOverride` (the props captured by this effect's
+    // closure, from the same render that bumped `ed.loadGeneration`) correctly identify the tab/memo
+    // this view is being built for — snapshot them now so the NEXT effect run's outgoing-flush
+    // (above) reads the right tab/memo once the props have moved on again.
+    loadedTabIdRef.current = tabId;
     loadedMemoNameRef.current = memoName;
     loadedOverrideRef.current = memoEditorOverride;
 
