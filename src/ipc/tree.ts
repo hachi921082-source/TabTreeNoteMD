@@ -51,6 +51,11 @@ export async function memoSetEditLock(tabId: string, path: string, locked: boole
   return invoke<Result<TreeSnapshot>>("memo_set_edit_lock", { tabId, path, locked });
 }
 
+/** Cross-tab favorite flag (`docs/plans/v1.1.0/favorites/PLAN.md` §2, `[spec v1.1.0 §4.1]`). */
+export async function memoSetFavorite(tabId: string, path: string, favorite: boolean): Promise<Result<TreeSnapshot>> {
+  return invoke<Result<TreeSnapshot>>("memo_set_favorite", { tabId, path, favorite });
+}
+
 export async function memoGetProperties(tabId: string, path: string): Promise<Result<MemoProperties>> {
   return invoke<Result<MemoProperties>>("memo_get_properties", { tabId, path });
 }
