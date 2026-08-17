@@ -8,6 +8,8 @@ import { useTree } from "./state/useTree";
 import { useTabView } from "./state/useTabView";
 import { useSettings } from "./state/useSettings";
 import { useTabLock } from "./state/useTabLock";
+import { useTabLockAutoRelock } from "./state/useTabLockAutoRelock";
+import { useToast } from "./state/useToast";
 import { useWindowGeometry } from "./state/useWindowGeometry";
 import { useAppearance } from "./state/useAppearance";
 import { TabBar } from "./components/TabBar/TabBar";
@@ -27,6 +29,11 @@ function App() {
   const tabView = useTabView(treeState);
   const settingsState = useSettings();
   const tabLockState = useTabLock(tabsState.activeTabId, tabsState.refresh, treeState.refresh);
+  // Single app-wide notification queue (`state/useToast.ts`) — shared by `TreeView`'s folder-import
+  // toasts and `useTabLockAutoRelock`'s inactivity warning/auto-relock toasts below, so both render
+  // in one stack instead of two independently-positioned ones (`docs/plans/v1.1.0/
+  // tab-lock-auto-relock/PLAN.md` §6).
+  const toastState = useToast();
 
   // Ordinary in-session tab switch (click, `tab.switchNext`/`switchPrev` shortcuts — both funnel
   // through `TabBar`'s own `selectTab` calls) also queues a `restoreTabView` request
@@ -70,6 +77,17 @@ function App() {
     },
     [treeState],
   );
+
+  // `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §7: the inactivity-timeout/app-focus-loss
+  // teardown triggers reuse `beforeLockTab` verbatim as their own "flush pending edit, then close"
+  // step — same routine `tab_lock` already uses before locking a tab, no new teardown logic.
+  useTabLockAutoRelock({
+    activeTabId: tabsState.activeTabId,
+    tabLockState,
+    settings: settingsState.settings,
+    toast: toastState,
+    flushAndCloseActiveMemo: beforeLockTab,
+  });
 
   const openMemoOverride = treeState.openMemoName ? locateNode(treeState.nodes, treeState.openMemoName)?.node.editor : undefined;
   // Live Edit Lock state for the open memo (GitHub issue #12) — read from the current tree state
@@ -220,7 +238,7 @@ function App() {
       className={`app-tree-pane app-tree-pane-${treeSide}${treeCollapsed ? " app-tree-pane-collapsed" : ""}`}
       style={{ width: treeCollapsed ? 0 : treeWidth }}
     >
-      <TreeView tree={treeState} tabLock={tabLockState} appSettings={settingsState.settings} />
+      <TreeView tree={treeState} tabLock={tabLockState} appSettings={settingsState.settings} toast={toastState} />
     </div>
   );
   const splitter = (
