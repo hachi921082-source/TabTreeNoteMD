@@ -19,7 +19,6 @@ import { PasswordDialog } from "../dialogs/PasswordDialog";
 import { RecoveryDialog } from "../dialogs/RecoveryDialog";
 import { PermanentUnlockRecoveryDialog } from "../dialogs/PermanentUnlockRecoveryDialog";
 import { ImportCollisionDialog } from "../dialogs/ImportCollisionDialog";
-import { Toast } from "../Toast/Toast";
 import { validateNameStrict } from "../../shared/nameSanitize";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { formatDateTime } from "../../shared/formatDateTime";
@@ -799,7 +798,6 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
           onCancel={importState.cancelImport}
         />
       )}
-      <Toast toasts={toast.toasts} onDismiss={toast.dismissToast} />
     </div>
   );
 }
