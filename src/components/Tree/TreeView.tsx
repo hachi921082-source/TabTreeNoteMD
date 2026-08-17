@@ -27,7 +27,7 @@ import { findNode, locateNode, subtreeHasLocked } from "../../shared/treeOps";
 import type { UseTreeResult } from "../../state/useTree";
 import type { UseTabLockResult } from "../../state/useTabLock";
 import { useImport } from "../../state/useImport";
-import { useToast } from "../../state/useToast";
+import type { UseToastResult } from "../../state/useToast";
 import type { AppSettings, LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import "./Tree.css";
@@ -38,6 +38,11 @@ export interface TreeViewProps {
   /** Needed for the rebindable F2-rename/Ctrl+Delete-force-delete shortcuts
    * (`docs/plans/window-operation/PLAN.md` §3). */
   appSettings: AppSettings | null;
+  /** Shared app-wide toast queue (`state/useToast.ts`), lifted to `App.tsx` so this tree's own
+   * folder-import notifications and `state/useTabLockAutoRelock.ts`'s inactivity warning/auto-relock
+   * notifications render in a single stack rather than two independently-positioned ones
+   * (`docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §6). */
+  toast: UseToastResult;
 }
 
 type PendingDialog =
@@ -80,7 +85,7 @@ const LABEL_CHOICES: { label: string; color: LabelColor }[] = [
   { label: "🟡 黄", color: "yellow" },
 ];
 
-export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
+export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const hoveredTabElRef = useRef<HTMLElement | null>(null);
@@ -107,8 +112,7 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
   const { nodes, loading, locked, recoveryPending, recoveryKind, selection, openMemoName, lastErrorCode, clearLastError, activeTabId } = tree;
 
   // OS-folder -> tree-pane drag-and-drop import (`docs/plans/v1.1.0/folder-import/PLAN.md`).
-  const importToast = useToast();
-  const importState = useImport(activeTabId, nodes, tree.refresh, importToast);
+  const importState = useImport(activeTabId, nodes, tree.refresh, toast);
 
   // GitHub issue #156: `true` if any of `paths` (or one of their descendants — deleting a node
   // deletes its whole subtree, `[spec §2.2]`) carries the per-memo Edit Lock. Shared by the
@@ -795,7 +799,7 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
           onCancel={importState.cancelImport}
         />
       )}
-      <Toast toasts={importToast.toasts} onDismiss={importToast.dismissToast} />
+      <Toast toasts={toast.toasts} onDismiss={toast.dismissToast} />
     </div>
   );
 }
