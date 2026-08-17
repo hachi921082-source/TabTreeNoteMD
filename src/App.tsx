@@ -108,6 +108,32 @@ function App() {
     setPendingSearchFocus(null);
   }, [pendingSearchFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
 
+  // Quick Open result -> "open memo" (`docs/plans/v1.1.0/quick-open/PLAN.md` §3): identical
+  // tab-switch + `focusOnMemo` mechanism as `openSearchHit` above (`focusOnMemo` itself already
+  // calls `tree_set_last_viewed` via `useTree.ts`'s `persistLastViewed`, which is exactly this
+  // feature's required `restoreTabView`-bypass — `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §6).
+  // Kept as its own independent pending-focus state machine, not merged into `openSearchHit`, same
+  // "each open-memo trigger source gets its own state machine" convention `openLinkTarget` below
+  // already follows.
+  const [pendingQuickOpenFocus, setPendingQuickOpenFocus] = useState<{ tabId: string; memoName: string } | null>(null);
+  const openQuickOpenHit = useCallback(
+    (tabId: string, memoName: string) => {
+      if (tabId === treeState.activeTabId) {
+        treeState.focusOnMemo(memoName);
+      } else {
+        tabsState.selectTab(tabId);
+        setPendingQuickOpenFocus({ tabId, memoName });
+      }
+    },
+    [tabsState, treeState],
+  );
+  useEffect(() => {
+    if (!pendingQuickOpenFocus || treeState.activeTabId !== pendingQuickOpenFocus.tabId) return;
+    if (!treeState.flatOrder.includes(pendingQuickOpenFocus.memoName)) return;
+    treeState.focusOnMemo(pendingQuickOpenFocus.memoName);
+    setPendingQuickOpenFocus(null);
+  }, [pendingQuickOpenFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
+
   // `memo:` link click -> "open memo" (`docs/plans/link/PLAN.md` §2, §5): same tab-switch +
   // `focusOnMemo` mechanism as `openSearchHit` above, kept as its own independent state machine
   // (not merged into `openSearchHit`) since a resolved link's `memoName` may be `null` for the
@@ -218,6 +244,7 @@ function App() {
         patchSettings={settingsState.patch}
         applyFetched={settingsState.applyFetched}
         onOpenSearchHit={openSearchHit}
+        onOpenQuickOpenHit={openQuickOpenHit}
       />
       <div className="app-content">
         {!tabsState.loading && tabsState.tabs.length === 0 ? (

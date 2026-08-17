@@ -35,6 +35,7 @@ const SHORTCUT_LABELS: Record<string, string> = {
   "editor.findReplace": "検索/置換を開く",
   "tree.rename": "名前を変更",
   "tree.forceDelete": "強制削除",
+  "search.quickOpen": "クイックオープン",
   "markdown.undo": "元に戻す",
   "markdown.redo": "やり直し",
   "markdown.color": "文字色",

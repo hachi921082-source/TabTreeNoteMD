@@ -22,6 +22,11 @@
 // here, immediately to the right of the pin button per `[spec §2.1]`'s layout note ("pin sits to
 // its left") — opens `CrossTabSearchDialog`, whose "open a hit" callback is threaded down from
 // `App.tsx` since it needs both tab-switch and tree-focus state this component doesn't own.
+//
+// Cross-Tab Quick Open (`docs/plans/v1.1.0/quick-open/PLAN.md`) IS also implemented here — no
+// toolbar button of its own (shortcut-only trigger, default `Ctrl+O`), instantiating `useQuickOpen`
+// and rendering `QuickOpenDialog`, same "open a hit" callback-threaded-from-`App.tsx` pattern as
+// `CrossTabSearchDialog` above.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -40,6 +45,8 @@ import { TitleBarControls } from "./TitleBarControls";
 import { SettingsDialog } from "../Settings/SettingsDialog";
 import { CrossTabSearchDialog } from "../Search/CrossTabSearchDialog";
 import { useCrossTabSearch } from "../../state/useCrossTabSearch";
+import { QuickOpenDialog } from "../dialogs/QuickOpenDialog";
+import { useQuickOpen } from "../../state/useQuickOpen";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -58,6 +65,11 @@ export interface TabBarProps {
   /** Opens a cross-tab search hit (`docs/plans/search-index/PLAN.md` §5) — switches tabs if
    * needed and follows tree selection. Wired from `App.tsx`, which owns both tab and tree state. */
   onOpenSearchHit: (tabId: string, memoName: string) => void;
+  /** Opens a selected Quick Open result (`docs/plans/v1.1.0/quick-open/PLAN.md` §3) — same
+   * switch-tab-and-follow-tree-selection mechanism as `onOpenSearchHit` above, kept as its own prop
+   * (not reused) since it's its own independent pending-focus state machine in `App.tsx`, matching
+   * that file's existing `openSearchHit`/`openLinkTarget` split. */
+  onOpenQuickOpenHit: (tabId: string, memoName: string) => void;
 }
 
 type PendingDialog =
@@ -85,7 +97,7 @@ function baseNameOf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched, onOpenSearchHit }: TabBarProps) {
+export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched, onOpenSearchHit, onOpenQuickOpenHit }: TabBarProps) {
   const {
     tabs,
     activeTabId,
@@ -112,6 +124,7 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const crossTabSearch = useCrossTabSearch(activeTabId);
+  const quickOpen = useQuickOpen();
 
   useEffect(() => {
     if (draggingIdRef.current) return; // don't clobber an in-progress drag's local order
@@ -137,6 +150,22 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [orderIds, activeTabId, selectTab]);
+
+  // Cross-Tab Quick Open trigger (`docs/plans/v1.1.0/quick-open/PLAN.md` §4, default `Ctrl+O`) —
+  // global, focus-unconstrained (works regardless of what currently has focus, same treatment as
+  // `markdown.paneModeCycle`/`markdown.pdfExport`'s own focus-unconstrained shortcuts in
+  // `EditorPane.tsx`), since Quick Open is meant to jump to a memo from anywhere in the app.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const shortcuts = resolveShortcuts(settings?.shortcuts);
+      if (comboFromEvent(e) === shortcuts["search.quickOpen"]) {
+        e.preventDefault();
+        quickOpen.open();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [settings?.shortcuts, quickOpen.open]);
 
   const handleRegisterExisting = useCallback(
     async (path: string) => {
@@ -554,6 +583,17 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           onOpenHit={(tabId, memoName) => {
             onOpenSearchHit(tabId, memoName);
             crossTabSearch.close();
+          }}
+        />
+      )}
+
+      {quickOpen.isOpen && (
+        <QuickOpenDialog
+          quickOpen={quickOpen}
+          onClose={quickOpen.close}
+          onOpenHit={(tabId, memoName) => {
+            onOpenQuickOpenHit(tabId, memoName);
+            quickOpen.close();
           }}
         />
       )}
