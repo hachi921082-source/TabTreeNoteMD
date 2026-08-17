@@ -73,3 +73,10 @@
 .ttn-quick-open-star-active {
   color: #d4a017;
 }
+
+/* Read-only favorites-mode star (`docs/plans/v1.1.0/favorites/PLAN.md` §5) — a `<span>`, not a
+   `<button>`, so it has no default pointer cursor; explicit override in case a future rule changes
+   that default, so it never looks like a click target here. */
+.ttn-quick-open-star[aria-hidden="true"] {
+  cursor: default;
+}
