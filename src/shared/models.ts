@@ -31,6 +31,12 @@ export interface AppSettings {
    * login" setting. Actual OS registration happens via `ipc/autostart.ts`'s commands whenever
    * this is toggled from the Settings screen. */
   autostart: { enabled: boolean };
+  /** Additive field, `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1 — inactivity timeout
+   * (minutes) after which the foreground active tab's Tab-Lock session is automatically discarded.
+   * `null` (or `0`) means disabled/never. The backend always resolves an absent-from-disk value to
+   * the documented default (`15`) before this ever reaches the frontend, so `null` here always
+   * means an explicit, user-chosen "無効," never "not yet loaded." */
+  tabLockAutoRelockMinutes: number | null;
 }
 
 /** "Basic customization" values layered on top of the active theme's CSS variables
@@ -121,6 +127,7 @@ export type AppSettingsPatch = {
   eol?: Partial<{ policy: "preserve" | "crlf" | "lf" | "cr" }>;
   shortcuts?: Record<string, string>;
   autostart?: Partial<{ enabled: boolean }>;
+  tabLockAutoRelockMinutes?: number | null;
 };
 
 // ---------------------------------------------------------------------------
