@@ -351,6 +351,20 @@ export interface SearchHit {
 }
 
 // ---------------------------------------------------------------------------
+// Cross-Tab Quick Open (`docs/plans/v1.1.0/quick-open/PLAN.md` §2; mirrors Rust
+// `commands/search.rs`'s `search_quick_open` I/O types). Distinct from `SearchHit` above — matches
+// memo display names only, never body content.
+// ---------------------------------------------------------------------------
+
+export interface QuickOpenHit {
+  tabId: string;
+  tabName: string;
+  memoName: string;
+  isLastViewed: boolean;
+  isFavorite: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Link domain (`docs/plans/link/PLAN.md` §2; mirrors Rust `commands/link.rs`'s command I/O types).
 // ---------------------------------------------------------------------------
 
