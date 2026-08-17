@@ -440,6 +440,7 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
     const singleSelection = selection.selected.size <= 1 || !selection.selected.has(path);
     const selectedPaths = selection.selected.has(path) && selection.selected.size > 0 ? Array.from(selection.selected) : [path];
     const isLocked = findNode(nodes, path)?.locked === true;
+    const isFavorite = findNode(nodes, path)?.favorite === true;
     return [
       // GitHub issue #156: an edit-locked memo must not be renamed or deleted either, not just
       // have its body protected from edits. "削除" additionally checks every selected node's
@@ -467,6 +468,9 @@ export function TreeView({ tree, tabLock, appSettings }: TreeViewProps) {
       isLocked
         ? { label: "編集ロック解除", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, false) }
         : { label: "編集ロック", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, true) },
+      isFavorite
+        ? { label: "お気に入りから削除", disabled: !singleSelection, onSelect: () => void tree.setFavorite(path, false) }
+        : { label: "お気に入りに追加", disabled: !singleSelection, onSelect: () => void tree.setFavorite(path, true) },
     ];
   };
 

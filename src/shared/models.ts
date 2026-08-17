@@ -180,6 +180,9 @@ export interface TreeNode {
   readonly label?: Label;
   readonly editor?: MemoEditorSettings;
   readonly locked?: boolean;
+  /** Cross-tab favorite flag (`docs/plans/v1.1.0/favorites/PLAN.md` §1, `[spec v1.1.0 §4.1]`).
+   * Absent and `false` are equivalent, mirroring `locked`/`label`. */
+  readonly favorite?: boolean;
   readonly children: readonly TreeNode[];
 }
 

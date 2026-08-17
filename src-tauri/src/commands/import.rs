@@ -212,6 +212,7 @@ mod tests {
             label: None,
             editor: None,
             locked: Some(false),
+            favorite: None,
             children: vec![MetaTreeNode::default_for_new_file("Child Memo".to_string())],
         }];
         assert!(find_node_ci(&tree, "parent").is_some());

@@ -912,6 +912,33 @@ pub fn memo_set_edit_lock(
     })
 }
 
+/// Toggles the cross-tab favorite flag (`docs/plans/v1.1.0/favorites/PLAN.md` §2,
+/// `[spec v1.1.0 §4.1]`). Structurally identical to `memo_set_edit_lock` above, plus one extra
+/// side effect: patches the full-text index's mirrored `IndexEntry.favorite` on success
+/// (`favorites/PLAN.md` §3) so `search_get_favorites` (out of scope on this branch) will see it
+/// without a rebuild. `search_index.set_favorite` is a harmless no-op for locked tabs (no matching
+/// index entry ever exists there, `search-index/PLAN.md` §1's unconditional locked-tab exclusion).
+#[tauri::command]
+pub fn memo_set_favorite(
+    app: AppHandle,
+    tab_id: String,
+    path: NodePath,
+    favorite: bool,
+    store: State<AppSettingsStore>,
+    registry: State<SelfWriteRegistry>,
+    sessions: State<LockSessionStore>,
+    search_index: State<SearchIndex>,
+) -> AppResult<TreeSnapshot> {
+    let result = mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
+        node.favorite = Some(favorite);
+        Ok(())
+    });
+    if let AppResult::Ok(_) = &result {
+        search_index.set_favorite(&tab_id, &path, favorite);
+    }
+    result
+}
+
 // ---------------------------------------------------------------------------
 // tree_set_last_viewed
 // ---------------------------------------------------------------------------
