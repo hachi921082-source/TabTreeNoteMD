@@ -189,6 +189,7 @@ fn main() {
             commands::editor::editor_save,
             commands::editor::editor_close,
             commands::search::search_query,
+            commands::search::search_quick_open,
             commands::link::link_resolve,
             commands::link::link_open_external,
             commands::image::image_save_pasted,
