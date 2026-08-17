@@ -239,6 +239,26 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
             </label>
             {autostartError && <p className="ttn-settings-error">{autostartError}</p>}
           </section>
+
+          <section className="ttn-settings-section">
+            <h3>タブロック</h3>
+            <label className="ttn-settings-row">
+              <span>非アクティブによる自動ロック</span>
+              <select
+                value={settings.tabLockAutoRelockMinutes ?? "disabled"}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  void patchSettings({ tabLockAutoRelockMinutes: raw === "disabled" ? null : Number(raw) });
+                }}
+              >
+                <option value={5}>5分</option>
+                <option value={15}>15分</option>
+                <option value={30}>30分</option>
+                <option value={60}>60分</option>
+                <option value="disabled">無効</option>
+              </select>
+            </label>
+          </section>
         </div>
       )}
 
