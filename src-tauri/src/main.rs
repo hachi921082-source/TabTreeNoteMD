@@ -181,6 +181,7 @@ fn main() {
             commands::tree::memo_set_label,
             commands::tree::memo_set_editor_override,
             commands::tree::memo_set_edit_lock,
+            commands::tree::memo_set_favorite,
             commands::tree::memo_get_properties,
             commands::tree::memo_open_location,
             commands::tree::tree_set_last_viewed,
