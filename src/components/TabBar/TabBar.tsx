@@ -27,6 +27,12 @@
 // toolbar button of its own (shortcut-only trigger, default `Ctrl+O`), instantiating `useQuickOpen`
 // and rendering `QuickOpenDialog`, same "open a hit" callback-threaded-from-`App.tsx` pattern as
 // `CrossTabSearchDialog` above.
+//
+// Cross-Tab Favorites (`docs/plans/v1.1.0/favorites/PLAN.md` §5-§6) IS also implemented here — a
+// dedicated ★ toolbar button, immediately to the left of the pin button, with no default keyboard
+// shortcut (`favorites.open` in `shared/shortcuts.ts` has no entry in `DEFAULT_SHORTCUTS`, so it's
+// only reachable via a user-configured binding). Reuses `useQuickOpen`/`QuickOpenDialog` in their
+// second "favorites" mode rather than a separate hook/component.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -68,7 +74,10 @@ export interface TabBarProps {
   /** Opens a selected Quick Open result (`docs/plans/v1.1.0/quick-open/PLAN.md` §3) — same
    * switch-tab-and-follow-tree-selection mechanism as `onOpenSearchHit` above, kept as its own prop
    * (not reused) since it's its own independent pending-focus state machine in `App.tsx`, matching
-   * that file's existing `openSearchHit`/`openLinkTarget` split. */
+   * that file's existing `openSearchHit`/`openLinkTarget` split. Also reused verbatim for selecting
+   * a Cross-Tab Favorites result (`docs/plans/v1.1.0/favorites/PLAN.md` §5 — "identical
+   * jump-to-tab-and-open behavior as Quick Open's Selecting a result") — favorites-mode's own
+   * `QuickOpenDialog` instance below is wired to this same callback, no separate prop needed. */
   onOpenQuickOpenHit: (tabId: string, memoName: string) => void;
 }
 
@@ -125,6 +134,9 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
   const [settingsOpen, setSettingsOpen] = useState(false);
   const crossTabSearch = useCrossTabSearch(activeTabId);
   const quickOpen = useQuickOpen();
+  // Cross-Tab Favorites list (`docs/plans/v1.1.0/favorites/PLAN.md` §5) — the same `useQuickOpen`
+  // hook in its second "favorites" mode, per that plan's own chosen reuse approach.
+  const favorites = useQuickOpen("favorites");
 
   useEffect(() => {
     if (draggingIdRef.current) return; // don't clobber an in-progress drag's local order
@@ -166,6 +178,23 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [settings?.shortcuts, quickOpen.open]);
+
+  // Cross-Tab Favorites trigger (`docs/plans/v1.1.0/favorites/PLAN.md` §6) — ships with NO default
+  // combo (`favorites.open` is absent from `DEFAULT_SHORTCUTS`), so `shortcuts["favorites.open"]`
+  // is `undefined` unless the user has bound one via Settings → Shortcuts; `comboFromEvent(e)` never
+  // equals `undefined`, so this simply never fires for a user who hasn't configured one. Same
+  // focus-unconstrained treatment as the Quick Open shortcut above.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const shortcuts = resolveShortcuts(settings?.shortcuts);
+      if (shortcuts["favorites.open"] && comboFromEvent(e) === shortcuts["favorites.open"]) {
+        e.preventDefault();
+        favorites.open();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [settings?.shortcuts, favorites.open]);
 
   const handleRegisterExisting = useCallback(
     async (path: string) => {
@@ -339,6 +368,13 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
             (`docs/plans/tab-management/PLAN.md` §4). The theme-toggle button
             is added here by `appearance-theme/PLAN.md` when implemented. */}
         <div className="ttn-tab-bar-toolbar">
+          {/* Cross-Tab Favorites (`docs/plans/v1.1.0/favorites/PLAN.md` §6) — immediately to the
+              left of the pin button, mirroring how the pin button itself sits immediately to the
+              left of the search button (`[spec §2.1]`). Always visible, single click target, no
+              default keyboard shortcut (bindable via Settings → Shortcuts). */}
+          <button type="button" className="ttn-toolbar-btn" title="お気に入り" aria-label="お気に入り" onClick={favorites.open}>
+            ★
+          </button>
           <button
             type="button"
             className={`ttn-toolbar-btn${alwaysOnTop ? " ttn-toolbar-btn-active" : ""}`}
@@ -594,6 +630,17 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           onOpenHit={(tabId, memoName) => {
             onOpenQuickOpenHit(tabId, memoName);
             quickOpen.close();
+          }}
+        />
+      )}
+
+      {favorites.isOpen && (
+        <QuickOpenDialog
+          quickOpen={favorites}
+          onClose={favorites.close}
+          onOpenHit={(tabId, memoName) => {
+            onOpenQuickOpenHit(tabId, memoName);
+            favorites.close();
           }}
         />
       )}
