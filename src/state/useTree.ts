@@ -9,7 +9,7 @@
 // applied anywhere here: switching to that tab later re-fetches it fresh via
 // `tree_open` regardless (`docs/shared/models.ts`'s `MemoMoveResult` doc
 // comment).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   memoCreate,
   memoCreateChild,
@@ -55,10 +55,62 @@ function lastChildName(nodes: TreeNode[], parent: string | undefined): string | 
   return null;
 }
 
+/** Everything about the currently-active tab that must change ATOMICALLY together, bundled into a
+ * single `useState` rather than one `useState` per field. This is load-bearing, not just tidiness:
+ * with N separate `useState` calls, React can commit an intermediate render where some of them
+ * (e.g. a just-updated `loadedTabId`) reflect the new tab while others (e.g. `openMemoName`) still
+ * hold the previous tab's value — observed live via a reviewer-lite CDP repro of
+ * `docs/plans/v1.1.0/tab-memo-memory` finding #1's fix: even with the tab-switch reset issuing all
+ * of `setNodes`/`setOpenMemoName`/`setLoadedTabId`/etc. together during render, an in-between
+ * `useEditor.ts` effect run was observed to fire with `{ tabId: <new tab>, memoName: <previous
+ * tab's memo> }`, re-creating the exact same "new tabId + stale memo name" bug the fields-in-one-
+ * object refactor eliminates for good: a consumer reading `perTab` only ever sees either the
+ * complete previous-tab snapshot or the complete new-tab one, never a mix, because React guarantees
+ * a single state value is swapped atomically with no intermediate reads. */
+interface PerTabState {
+  /** The tab whose `tree_open` snapshot the REST of this object actually reflects, or `null`
+   * while nothing has loaded yet for the current `activeTabId`. See `UseTreeResult.loadedTabId`'s
+   * doc comment for why consumers must gate on this instead of `!loading`. */
+  loadedTabId: string | null;
+  nodes: TreeNode[];
+  tabName: string;
+  locked: boolean;
+  recoveryPending: boolean;
+  recoveryKind: RecoveryKind | undefined;
+  lastViewedMemo: string | null;
+  openMemoName: string | null;
+  selection: SelectionState;
+}
+
+function makeEmptyPerTab(): PerTabState {
+  return {
+    loadedTabId: null,
+    nodes: [],
+    tabName: "",
+    locked: false,
+    recoveryPending: false,
+    recoveryKind: undefined,
+    lastViewedMemo: null,
+    openMemoName: null,
+    selection: clearSelection(),
+  };
+}
+
 export interface UseTreeResult {
   /** The tab this tree instance is bound to (`null` when no tab is active). Used by
    * `TreeView`'s cross-tab DND to no-op a drop back onto the tree's own already-active tab. */
   activeTabId: string | null;
+  /** The tab whose `tree_open` snapshot `nodes`/`lastViewedMemo` (and the rest of this tab's
+   * loaded state) actually reflects right now, or `null` while nothing has loaded yet for the
+   * current `activeTabId`. Distinct from `activeTabId` itself: `activeTabId` is a same-render
+   * pass-through of this hook's `tabId` argument, but the snapshot for a newly-active tab can only
+   * become available after its `tree_open` fetch resolves. Consumers that must not act on a stale
+   * snapshot (`state/useTabView.ts`'s restore effect) should gate on `loadedTabId ===
+   * activeTabId`, not on `!loading` alone — `!loading` was found to spuriously pass during the
+   * one-render window where `activeTabId` already named the new tab but the previous tab's
+   * `loading === false` from before the switch hadn't been overwritten yet
+   * (`docs/plans/v1.1.0/tab-memo-memory` reviewer finding #1). */
+  loadedTabId: string | null;
   nodes: TreeNode[];
   tabName: string;
   locked: boolean;
@@ -121,28 +173,72 @@ export interface UseTreeResult {
 }
 
 export function useTree(tabId: string | null): UseTreeResult {
-  const [nodes, setNodes] = useState<TreeNode[]>([]);
-  const [tabName, setTabName] = useState("");
-  const [locked, setLocked] = useState(false);
-  const [recoveryPending, setRecoveryPending] = useState(false);
-  const [recoveryKind, setRecoveryKind] = useState<RecoveryKind | undefined>(undefined);
+  const [perTab, setPerTab] = useState<PerTabState>(makeEmptyPerTab);
   const [loading, setLoading] = useState(true);
   const [lastErrorCode, setLastErrorCode] = useState<ErrorCode | null>(null);
-  const [selection, setSelection] = useState<SelectionState>(clearSelection());
-  const [openMemoName, setOpenMemoName] = useState<string | null>(null);
-  const [lastViewedMemo, setLastViewedMemo] = useState<string | null>(null);
   const [focusEditorToken, setFocusEditorToken] = useState(0);
+
+  const { loadedTabId, nodes, tabName, locked, recoveryPending, recoveryKind, lastViewedMemo, openMemoName, selection } = perTab;
 
   const flatOrder = useMemo(() => flattenVisible(nodes), [nodes]);
 
-  const applySnapshot = useCallback((snapshot: TreeSnapshot) => {
-    setNodes(snapshot.nodes);
-    setTabName(snapshot.tabName);
-    setLocked(snapshot.locked);
-    setRecoveryPending(snapshot.recoveryPending);
-    setRecoveryKind(snapshot.recoveryKind);
-    setLastViewedMemo(snapshot.lastViewedMemo);
-  }, []);
+  // Always holds the latest `tabId` argument, updated synchronously during render (not via an
+  // effect) so `refresh`'s in-flight fetch can detect, after its `await`, whether the active tab
+  // has since moved on and its result is now stale (e.g. a fast switch to another tab and back).
+  const currentTabIdRef = useRef<string | null>(tabId);
+  currentTabIdRef.current = tabId;
+
+  // Reset ALL per-tab state atomically (single `setPerTab`, see `PerTabState`'s doc comment)
+  // synchronously during render, the moment `tabId` changes, instead of waiting for a post-commit
+  // `useEffect`. React re-renders immediately when state is set during render (see "adjusting
+  // state when a prop changes" in the React docs), so this closes the one-render window where
+  // `activeTabId` (a same-render pass-through of `tabId` below) already named the new tab while
+  // `nodes`/`lastViewedMemo`/`flatOrder` still held the previous tab's stale values — the root
+  // cause of reviewer finding #1 (`docs/plans/v1.1.0/tab-memo-memory` review).
+  const prevTabIdRef = useRef<string | null>(tabId);
+  if (prevTabIdRef.current !== tabId) {
+    prevTabIdRef.current = tabId;
+    setPerTab(makeEmptyPerTab());
+    setLoading(tabId !== null);
+  }
+
+  /** Applies a `perTab` update only if `tabId` (the specific tab THIS closure was created for) is
+   * still the active tab. Bundling all per-tab fields into one atomic `perTab` object (above) is
+   * necessary but not sufficient on its own: a functional `setPerTab((prev) => ({ ...prev, ... }))`
+   * update still MERGES onto whatever `perTab` happens to be at the moment it's actually applied —
+   * which, for a mutator whose own promise/effect resolves asynchronously, can be well AFTER the
+   * active tab has already moved on and `perTab` has already been reset for the NEW tab. Live-
+   * reproduced via CDP for `focusOnMemo`: `useTabView`'s restore effect for tab A can be flushed by
+   * React only after a subsequent synchronous switch to tab B has already reset+re-rendered
+   * `perTab` for B, so `focusOnMemo`'s belated `setPerTab` call — still closed over A's own
+   * `memoName` — smeared A's `openMemoName` onto B's now-otherwise-correctly-reset state
+   * (`docs/plans/v1.1.0/tab-memo-memory` reviewer finding #1). Every mutator that resolves after an
+   * `await` (`applySnapshot`, called by every tree-mutating command) or fires from a deferred
+   * effect (`focusOnMemo`) is exposed to this same hazard, so they all route their `perTab` writes
+   * through here rather than each reasoning individually about whether a delay is possible. */
+  const applyIfCurrent = useCallback(
+    (updater: (prev: PerTabState) => PerTabState) => {
+      if (currentTabIdRef.current !== tabId) return;
+      setPerTab(updater);
+    },
+    [tabId],
+  );
+
+  const applySnapshot = useCallback(
+    (snapshot: TreeSnapshot) => {
+      applyIfCurrent((prev) => ({
+        ...prev,
+        loadedTabId: tabId,
+        nodes: snapshot.nodes,
+        tabName: snapshot.tabName,
+        locked: snapshot.locked,
+        recoveryPending: snapshot.recoveryPending,
+        recoveryKind: snapshot.recoveryKind,
+        lastViewedMemo: snapshot.lastViewedMemo,
+      }));
+    },
+    [tabId, applyIfCurrent],
+  );
 
   /** Fire-and-forget: rides along with `openMemoName` becoming a new, non-null memo (memo click,
    * arrow-key nav, `focusOnMemo` — `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4's "same trigger
@@ -160,17 +256,16 @@ export function useTree(tabId: string | null): UseTreeResult {
 
   const refresh = useCallback(async () => {
     if (!tabId) {
-      setNodes([]);
-      setTabName("");
-      setLocked(false);
-      setRecoveryPending(false);
-      setRecoveryKind(undefined);
-      setLastViewedMemo(null);
+      setPerTab(makeEmptyPerTab());
       setLoading(false);
       return;
     }
     setLoading(true);
     const result = await treeOpen(tabId);
+    // Bail if the active tab has since moved on (e.g. a fast switch to another tab and back) —
+    // applying this response now would overwrite the newer tab's already-loading/loaded state
+    // with this stale one.
+    if (currentTabIdRef.current !== tabId) return;
     if (result.ok) {
       applySnapshot(result.value);
     } else {
@@ -179,11 +274,10 @@ export function useTree(tabId: string | null): UseTreeResult {
     setLoading(false);
   }, [tabId, applySnapshot]);
 
-  // Reload the tree, and reset per-tab selection/open-memo state, whenever
-  // the active tab changes.
+  // Reload the tree whenever the active tab changes. Per-tab selection/open-memo/loaded-snapshot
+  // state is already reset synchronously above, during render — this effect only needs to kick
+  // off the actual fetch.
   useEffect(() => {
-    setSelection(clearSelection());
-    setOpenMemoName(null);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
@@ -193,45 +287,44 @@ export function useTree(tabId: string | null): UseTreeResult {
   // drop it rather than pointing at a stale id.
   useEffect(() => {
     if (openMemoName && !flatOrder.includes(openMemoName)) {
-      setOpenMemoName(null);
-      setSelection(clearSelection());
+      setPerTab((prev) => ({ ...prev, openMemoName: null, selection: clearSelection() }));
     }
   }, [flatOrder, openMemoName]);
 
   const handleRowClick = useCallback(
     (memoName: string, modifiers: ClickModifiers) => {
-      setSelection((current) => applyClick(current, flatOrder, memoName, modifiers));
       // Plain click = single-select + open memo; Ctrl/Shift-click manage a
       // multi-select without changing what's open (`[spec §2.2]`).
       if (!modifiers.ctrlKey && !modifiers.shiftKey) {
-        setOpenMemoName(memoName);
+        setPerTab((prev) => ({ ...prev, selection: applyClick(prev.selection, flatOrder, memoName, modifiers), openMemoName: memoName }));
         // Click-open auto-focuses the editor (`[spec §2.2]`, `[spec §9.1 item 3]`).
         setFocusEditorToken((t) => t + 1);
         persistLastViewed(memoName);
+      } else {
+        setPerTab((prev) => ({ ...prev, selection: applyClick(prev.selection, flatOrder, memoName, modifiers) }));
       }
     },
     [flatOrder, persistLastViewed],
   );
 
   const handleEmptyAreaClick = useCallback(() => {
-    setSelection(clearSelection());
+    setPerTab((prev) => ({ ...prev, selection: clearSelection() }));
   }, []);
 
   /** Selects `memoName` alone without changing `openMemoName` — used when a right-click lands
    * on a row that isn't already part of the selection (the context menu should act on that row,
    * but a right-click alone shouldn't switch which memo is open, unlike a plain left click). */
   const selectOnly = useCallback((memoName: string) => {
-    setSelection({ selected: new Set([memoName]), anchor: memoName });
+    setPerTab((prev) => ({ ...prev, selection: { selected: new Set([memoName]), anchor: memoName } }));
   }, []);
 
   const handleArrowNav = useCallback(
     (direction: "up" | "down") => {
       const next = moveSelection(flatOrder, selection.anchor, direction);
       if (next === null) return;
-      setSelection({ selected: new Set([next]), anchor: next });
       // Intentionally does NOT bump `focusEditorToken` — arrow-key nav must not steal focus into
       // the editor (`[spec §2.2]`).
-      setOpenMemoName(next);
+      setPerTab((prev) => ({ ...prev, selection: { selected: new Set([next]), anchor: next }, openMemoName: next }));
       persistLastViewed(next);
     },
     [flatOrder, selection.anchor, persistLastViewed],
@@ -243,17 +336,21 @@ export function useTree(tabId: string | null): UseTreeResult {
    * `openMemoName`). */
   const focusOnMemo = useCallback(
     (memoName: string) => {
+      // Guards against exactly the delayed-effect hazard `applyIfCurrent` documents — this is the
+      // one mutator here most exposed to it, since `state/useTabView.ts`'s restore effect (and
+      // `App.tsx`'s cross-tab search/link-focus effects) can call it well after the tab it was
+      // queued for is no longer active.
+      if (currentTabIdRef.current !== tabId) return;
       if (!flatOrder.includes(memoName)) return;
-      setSelection({ selected: new Set([memoName]), anchor: memoName });
-      setOpenMemoName(memoName);
+      setPerTab((prev) => ({ ...prev, selection: { selected: new Set([memoName]), anchor: memoName }, openMemoName: memoName }));
       setFocusEditorToken((t) => t + 1);
       persistLastViewed(memoName);
     },
-    [flatOrder, persistLastViewed],
+    [tabId, flatOrder, persistLastViewed],
   );
 
   const closeOpenMemo = useCallback(() => {
-    setOpenMemoName(null);
+    setPerTab((prev) => ({ ...prev, openMemoName: null }));
   }, []);
 
   const clearLastError = useCallback(() => setLastErrorCode(null), []);
@@ -262,14 +359,24 @@ export function useTree(tabId: string | null): UseTreeResult {
    * right after creation (GitHub issue #143). Operates on the FRESH snapshot's `nodes` directly
    * (via `lastChildName`) rather than reading `flatOrder`/`nodes` state, which wouldn't reflect
    * this creation yet within the same synchronous callback (state updates from `applySnapshot`
-   * above haven't flushed). */
-  const focusJustCreated = useCallback((nodes: TreeNode[], parent: string | undefined) => {
-    const createdName = lastChildName(nodes, parent);
-    if (!createdName) return;
-    setSelection({ selected: new Set([createdName]), anchor: createdName });
-    setOpenMemoName(createdName);
-    setFocusEditorToken((t) => t + 1);
-  }, []);
+   * above haven't flushed). Also persists `lastViewedMemo`, same as every other call site that
+   * changes which memo is open (`handleRowClick`/`handleArrowNav`/`focusOnMemo`) — creation isn't
+   * in `[docs/plans/v1.1.0/tab-memo-memory/PLAN.md]` §4's "not called by" exclusion list, and
+   * `[docs/detailed-spec.v1.1.0.md]` §2.2 states this is folded into whatever operation already
+   * changes the open memo (reviewer finding #2). */
+  const focusJustCreated = useCallback(
+    (nodes: TreeNode[], parent: string | undefined) => {
+      // Same delayed-continuation hazard `applyIfCurrent` documents — `createMemo`/`createChildMemo`
+      // call this right after their own `await`, so the active tab may have already moved on.
+      if (currentTabIdRef.current !== tabId) return;
+      const createdName = lastChildName(nodes, parent);
+      if (!createdName) return;
+      setPerTab((prev) => ({ ...prev, selection: { selected: new Set([createdName]), anchor: createdName }, openMemoName: createdName }));
+      setFocusEditorToken((t) => t + 1);
+      persistLastViewed(createdName);
+    },
+    [tabId, persistLastViewed],
+  );
 
   const createMemo = useCallback(
     async (name: string, parent?: string): Promise<TreeMutationOutcome> => {
@@ -307,13 +414,14 @@ export function useTree(tabId: string | null): UseTreeResult {
       const result = await memoRename(tabId, path, newName);
       if (result.ok) {
         applySnapshot(result.value);
-        if (openMemoName === path) setOpenMemoName(newName.trim());
+        const trimmed = newName.trim();
+        applyIfCurrent((prev) => (prev.openMemoName === path ? { ...prev, openMemoName: trimmed } : prev));
         return { ok: true };
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
     },
-    [tabId, applySnapshot, openMemoName],
+    [tabId, applySnapshot, applyIfCurrent],
   );
 
   const deleteMemo = useCallback(
@@ -322,14 +430,17 @@ export function useTree(tabId: string | null): UseTreeResult {
       const result = await memoDelete(tabId, paths, forceDirect);
       if (result.ok) {
         applySnapshot(result.value);
-        if (openMemoName && paths.includes(openMemoName)) setOpenMemoName(null);
-        setSelection(clearSelection());
+        applyIfCurrent((prev) => ({
+          ...prev,
+          openMemoName: prev.openMemoName && paths.includes(prev.openMemoName) ? null : prev.openMemoName,
+          selection: clearSelection(),
+        }));
         return { ok: true };
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
     },
-    [tabId, applySnapshot, openMemoName],
+    [tabId, applySnapshot, applyIfCurrent],
   );
 
   const moveWithinTab = useCallback(
@@ -424,6 +535,7 @@ export function useTree(tabId: string | null): UseTreeResult {
 
   return {
     activeTabId: tabId,
+    loadedTabId,
     nodes,
     tabName,
     locked,
