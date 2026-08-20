@@ -613,3 +613,44 @@ because of point (2) above: unlike most "adjacent gap, could be deferred" findin
 merely adjacent to §4, it is load-bearing for §4's own stated purpose in the common case for this app's
 actual users, so deferring it would ship a headline v1.2.0 feature in a state that looks broken for most
 realistic inputs rather than genuinely deferring an unrelated concern.
+
+## i18n Mechanism: Hand-Rolled React Context, Not `react-i18next` Package (2026-08-20)
+
+**Decision**: v1.2.0's UI-internationalization mechanism (`[spec v1.2.0 §1.4]`, which delegated the exact
+library/mechanism to the detailed-spec pass) is a small hand-rolled React Context + `useT()` hook
+(`src/i18n/`), not the `react-i18next` package itself.
+
+**Rationale**: `[spec v1.2.0 §1.4]` itself frames the request as "a `react-i18next`-**like** mechanism,"
+not the package by name. This app's architecture doc (`docs/plans/project-architecture/PLAN.md`) states
+the app deliberately uses "plain hooks... no external state library," confirmed by inspection: every
+other cross-cutting piece of app state (`useSettings.ts`, `useTree.ts`, `useTabs.ts`, etc.) is a plain
+hook, and `package.json` has zero state-management dependencies today (`redux`/`zustand`/`jotai` all
+absent). Adopting `react-i18next` would be the first external state-management dependency in the app,
+contradicting that established architectural choice, for a need (runtime string lookup + re-render on
+language change) a ~40-line Context/hook fully covers.
+
+**Where elaborated**: `detailed-spec.v1.2.0.md` §1.1.
+
+## Preview-Pane Zoom CSS Mechanism: `zoom` Property, Not `transform: scale()` (2026-08-20)
+
+**Decision**: v1.2.0's preview-pane zoom (`[spec v1.2.0 §6]`, which specified the range/steps/scope but
+not the CSS mechanism) is implemented with the CSS `zoom` property (e.g. `style={{ zoom: "${percent}%" }}`
+on `PreviewPane.tsx`'s content element), not `transform: scale(...)`.
+
+**Rationale**: `zoom` triggers real layout reflow at the new size (text rewraps, images/tables resize
+within their containers at the new effective width) — matching `[spec v1.2.0 §6]`'s "affects... text
+size, images, tables" description of a genuine content-size change, not merely a visual magnification.
+`transform: scale()` does not reflow layout — it visually magnifies a box whose layout box stays at its
+original size, clipping content past 100% or leaving dead space below 100%, requiring extra width/height
+compensation math `zoom` needs none of. `zoom` is a long-standing Chromium/WebView2-native CSS property
+(not W3C standard, but universally supported in every Chromium-based engine — this app's one and only
+rendering target per its Tauri+WebView2 architecture, so no cross-browser-compatibility concern applies).
+It also interacts correctly, with no extra work, with `[MDEditor-spec §4]`'s existing wide-table
+horizontal-scroll rule and the preview's `max-width: 100%` image rule, since `zoom` affects the box's own
+effective CSS pixel size for every descendant's percentage/auto calculations.
+
+**Caveat**: this interaction is argued from code/CSS semantics only, not visually confirmed — whether the
+table horizontal-scroll container and image `max-width` actually look right at the range's upper bound
+(180%) in a real running preview pane is left as a manual check for the user during/after implementation.
+
+**Where elaborated**: `detailed-spec.v1.2.0.md` §6.2.
