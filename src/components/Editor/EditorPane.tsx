@@ -25,6 +25,7 @@ import { ConflictDialog } from "./ConflictDialog";
 import { MarkdownToolbar } from "./Toolbar/MarkdownToolbar";
 import type { MarkdownToolbarHandle } from "./Toolbar/MarkdownToolbar";
 import { PreviewPane } from "./PreviewPane";
+import type { PreviewPaneHandle } from "./PreviewPane";
 import type { ToolbarActionId } from "../../editor/toolbarSlots";
 import {
   buildMarkdownExtensions,
@@ -34,6 +35,7 @@ import {
   sourceImageMarkerViewExtension,
 } from "../../editor/codeMirrorSetup";
 import type { MarkdownDecorationConfig } from "../../editor/markdownDecorations";
+import { resolveAndScrollToHeadingAnchor } from "../../editor/links";
 import { imagePasteExtension } from "../../editor/imagePaste";
 import { releaseMemoImages } from "../../editor/imageLoader";
 import { exportMemoToPdf } from "../../editor/pdfExport";
@@ -113,8 +115,19 @@ export interface EditorPaneProps {
   patchSettings: (patch: AppSettingsPatch) => Promise<void>;
   /** `memo:` link click target (`docs/plans/link/PLAN.md` §5) — reuses `App.tsx`'s shared "open
    * memo" path (same one `TabBar`'s cross-tab search-result click uses). `memoName: null` for the
-   * `memo:TabName/` (tab-only) resolved form. */
-  onOpenMemoLink: (tabId: string, memoName: string | null) => void;
+   * `memo:TabName/` (tab-only) resolved form. `anchorSlug` is the parsed `#slug` half of a
+   * `memo:...#slug` link (`docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §2). */
+  onOpenMemoLink: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
+  /** `App.tsx`'s deferred anchor-jump signal for a link-navigation-triggered `focusOnMemo`
+   * (`docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §3) — `pendingAnchorSlug` is the `#slug` to
+   * jump to (`null` if this open's link carried no anchor, or this open wasn't link-triggered at
+   * all). `pendingAnchorToken` is a DEDICATED monotonic counter (deliberately NOT the shared
+   * `focusEditorToken` above) bumped only by `App.tsx`'s link-focus effect, so the view-(re)creation
+   * effect below can tell "this load is the one a `#slug` link asked for" apart from any later,
+   * unrelated memo load (ordinary tree-row click/arrow-nav) that would otherwise incorrectly replay
+   * a stale slug if it merely reused `focusEditorToken`. */
+  pendingAnchorSlug: string | null;
+  pendingAnchorToken: number;
 }
 
 /** Imperative handle so `App.tsx` can force-flush the currently-open memo's pending save and
@@ -127,7 +140,19 @@ export interface EditorPaneHandle {
 }
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
-  { tabId, memoName, focusEditorToken, appSettings, memoEditorOverride, isMemoEditLocked, setEditorOverride, patchSettings, onOpenMemoLink },
+  {
+    tabId,
+    memoName,
+    focusEditorToken,
+    appSettings,
+    memoEditorOverride,
+    isMemoEditLocked,
+    setEditorOverride,
+    patchSettings,
+    onOpenMemoLink,
+    pendingAnchorSlug,
+    pendingAnchorToken,
+  },
   ref,
 ) {
   const ed = useEditor(tabId, memoName, appSettings, isMemoEditLocked);
@@ -136,6 +161,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // `docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §4.2/§4.3 — lets this component call
+  // `PreviewPane`'s readiness gate/container accessor for a `preview`-pane-mode `#slug` anchor jump.
+  const previewRef = useRef<PreviewPaneHandle>(null);
   // Bumped after view (re)creation and on every CodeMirror update (doc change or cursor/selection
   // move), so the status bar's char/line/cursor-position derived state stays live. Also reused,
   // unmodified, as `PreviewPane.tsx`'s own re-render trigger (`docs/plans/markdown/markdown-
@@ -359,6 +387,22 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const focusEditorTokenRef = useRef(focusEditorToken);
   focusEditorTokenRef.current = focusEditorToken;
   const consumedFocusTokenRef = useRef<number | null>(null);
+  // Same one-shot-signal shape as `focusEditorTokenRef`/`consumedFocusTokenRef` above, but for the
+  // `#slug` anchor-jump signal (`docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §3) — kept as its
+  // OWN token (not reusing `focusEditorToken`) precisely so an ordinary tree-row-click/arrow-nav
+  // open (which never bumps `pendingAnchorToken`) can never accidentally replay a stale anchor left
+  // over from an earlier `#slug` link navigation.
+  const pendingAnchorSlugRef = useRef(pendingAnchorSlug);
+  pendingAnchorSlugRef.current = pendingAnchorSlug;
+  const pendingAnchorTokenRef = useRef(pendingAnchorToken);
+  pendingAnchorTokenRef.current = pendingAnchorToken;
+  const consumedAnchorTokenRef = useRef(pendingAnchorToken);
+  // `preview`-pane-mode anchor jump target, deferred until `PreviewPane` actually mounts for this
+  // memo (`PLAN.md` §4.2) — the view-(re)creation effect below runs in the SAME tick as the
+  // governed-pane-mode reset/auto-reveal (`revealSplitIfPreviewOnly`), whose OWN state update has
+  // not yet re-rendered `paneMode`/mounted `<PreviewPane ref={previewRef}>` for the just-opened
+  // memo, so `previewRef.current` cannot be relied on synchronously here.
+  const pendingPreviewAnchorRef = useRef<{ memoKey: string; slug: string } | null>(null);
   const setEditorOverrideRef = useRef(setEditorOverride);
   setEditorOverrideRef.current = setEditorOverride;
   const scrollDebounceRef = useRef<number | null>(null);
@@ -524,6 +568,31 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       revealSplitIfPreviewOnly();
     }
 
+    // `memo:...#slug` anchor jump (`docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §3/§4) — a
+    // ONE-SHOT signal, consumed exactly once per distinct `pendingAnchorToken`, the same "compare
+    // against the last-consumed value" shape as `focusEditorTokenRef`/`consumedFocusTokenRef`
+    // directly above. Deliberately gated on its OWN token (not `focusEditorTokenRef`'s), so an
+    // ordinary tree-row-click/arrow-nav open occurring later never replays a stale anchor.
+    if (pendingAnchorTokenRef.current !== consumedAnchorTokenRef.current) {
+      consumedAnchorTokenRef.current = pendingAnchorTokenRef.current;
+      const anchorSlug = pendingAnchorSlugRef.current;
+      if (anchorSlug) {
+        // Split by this memo's own GOVERNED pane-mode (`PLAN.md` §4: `MemoEditorSettings.paneMode ??
+        // AppSettings.editorDefaults.paneMode`) — `edit`/`split` reuse the existing CodeMirror-based
+        // `resolveAndScrollToHeadingAnchor` (§4.1: works for `split` too, since `PreviewPane`'s own
+        // scroll-sync listener follows the CodeMirror `scroll` event this produces as a side effect,
+        // no preview-specific code needed). `preview` acts on the preview DOM directly instead (§4.2:
+        // a zero-height `scrollDOM` can't compute a meaningful scroll offset there) — deferred via
+        // `pendingPreviewAnchorRef` below rather than reading `previewRef.current` here, because it
+        // may not be mounted for this memo yet on this exact render (see that ref's own comment).
+        if (resolvedPaneMode === "preview") {
+          pendingPreviewAnchorRef.current = memoKey ? { memoKey, slug: anchorSlug } : null;
+        } else {
+          resolveAndScrollToHeadingAnchor(view, anchorSlug);
+        }
+      }
+    }
+
     const savedScrollLine = ed.content.scrollPosition;
     let raf = 0;
     if (savedScrollLine) {
@@ -551,6 +620,30 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // not by recreating the whole view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ed.loadGeneration]);
+
+  // Deferred `preview`-pane-mode anchor-jump consumer (`docs/plans/v1.2.0/cross-tab-anchor-links/
+  // PLAN.md` §4.2/§4.3): the view-(re)creation effect above may run before `<PreviewPane
+  // ref={previewRef}>` is actually mounted for this memo — `paneModeOverride`'s own reset (also
+  // queued in that same effect) hasn't re-rendered yet. Re-checked on every `paneMode`/`memoKey`
+  // change until `previewRef.current` exists AND still belongs to the pending target memo (a
+  // pending entry for an abandoned memo is simply left inert — a later navigation either overwrites
+  // it with its own target before this ever matches, or never matches at all, matching this app's
+  // silent-no-op-on-edge-case convention). `paneMode === "edit"` means `PreviewPane` never mounts
+  // for this memo at all (governed mode was, and stayed, `edit` — should not happen when the
+  // deferred entry was set for `resolvedPaneMode === "preview"`, but guarded defensively).
+  useEffect(() => {
+    const pending = pendingPreviewAnchorRef.current;
+    if (!pending || pending.memoKey !== memoKey) return;
+    if (paneMode === "edit") return;
+    const handle = previewRef.current;
+    if (!handle) return;
+    pendingPreviewAnchorRef.current = null;
+    void handle.waitForRender(pending.memoKey).then((ready) => {
+      if (!ready) return;
+      const container = handle.getContainer();
+      container?.querySelector(`#${CSS.escape(pending.slug)}`)?.scrollIntoView({ block: "start" });
+    });
+  }, [paneMode, memoKey]);
 
   // Reconfigure (not recreate) on settings / read-only / whitespace changes.
   useEffect(() => {
@@ -775,6 +868,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         />
         {paneMode !== "edit" && (
           <PreviewPane
+            ref={previewRef}
             getView={() => viewRef.current}
             renderTick={renderTick}
             debounceMs={appSettings?.preview.debounceMs ?? FALLBACK_PREVIEW_DEBOUNCE_MS}
