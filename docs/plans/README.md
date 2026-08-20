@@ -70,6 +70,31 @@ v1.1.0-introduced delta.
 | [`v1.1.0/favorites/PLAN.md`](v1.1.0/favorites/PLAN.md) | Cross-tab favorites, reuses Quick Open's overlay/index/ordering/Tab-Lock-exclusion mechanics in a second mode |
 | [`v1.1.0/tab-lock-auto-relock/PLAN.md`](v1.1.0/tab-lock-auto-relock/PLAN.md) | Single global inactivity timer, foreground-active-tab-only, auto-ends a Tab Lock session; backgrounded drop-created sessions are a deliberate out-of-scope boundary |
 
+## v1.2.0 Feature Plans
+
+Plans for the nine v1.2.0 items live under a separate `docs/plans/v1.2.0/` parent folder, mirroring the
+same convention `v1.1.0/` above established: no file in the top-level table, and no file under
+`v1.1.0/`, was edited to add v1.2.0 content, even where a v1.2.0 feature extends a mechanism an existing
+plan defines (`memo:` link resolution, the `pendingXxxFocus` cross-tab-navigation state machine, the
+`AppSettings` schema) — the new plans cite the relevant existing `PLAN.md` section for the base
+definition and describe only the v1.2.0-introduced delta. `detailed-spec.v1.2.0.md` §10's cross-cutting
+preview-render-readiness-gate primitive is defined once, in `cross-tab-anchor-links/PLAN.md` §4.3, and
+referenced by name (not repeated) from `preview-scroll-fix/PLAN.md` §4 — the same "referenced by name
+from the others rather than repeated" convention this file's intro paragraph already establishes for
+`project-architecture`/`persistence-fs`.
+
+| Plan | Covers |
+|---|---|
+| [`v1.2.0/i18n/PLAN.md`](v1.2.0/i18n/PLAN.md) | Runtime UI-language switching (`ja`/`en`), hand-rolled React Context + `useT()` hook, `AppSettings.language`, string-extraction scope/sequencing across `src/components/` |
+| [`v1.2.0/math-rendering/PLAN.md`](v1.2.0/math-rendering/PLAN.md) | KaTeX math typesetting in the preview pane only (`$...$`/`$$...$$`), live-view placeholder badge, source-view mark-decoration marker (extends the `SourceImageMarkerPlugin` precedent) |
+| [`v1.2.0/pane-mode-toolbar-semantics/PLAN.md`](v1.2.0/pane-mode-toolbar-semantics/PLAN.md) | Flips the pane-mode and live/source toggle buttons to show the *next* state instead of the current state (modifies existing v1.0.0 behavior) |
+| [`v1.2.0/cross-tab-anchor-links/PLAN.md`](v1.2.0/cross-tab-anchor-links/PLAN.md) | `memo:TabName/MemoName#slug` cross-tab/cross-memo heading-anchor links; defines the shared preview-render-readiness-gate primitive (§4.3) |
+| [`v1.2.0/tab-double-click-jump/PLAN.md`](v1.2.0/tab-double-click-jump/PLAN.md) | Double-click the active tab to jump to document start, with a `ChangeDesc.mapPos()`-based toggle-back to the prior position |
+| [`v1.2.0/preview-zoom/PLAN.md`](v1.2.0/preview-zoom/PLAN.md) | Preview-pane-only zoom (± toolbar buttons, 70–180%/10% steps, session-only), CSS `zoom` mechanism, `Ctrl+=`/`Ctrl+-` plus numpad alias shortcuts |
+| [`v1.2.0/quick-open-discoverability/PLAN.md`](v1.2.0/quick-open-discoverability/PLAN.md) | Tooltip-only extension of the existing 🔍 search button to also name Quick Open and its shortcut |
+| [`v1.2.0/preview-scroll-fix/PLAN.md`](v1.2.0/preview-scroll-fix/PLAN.md) | Bug fix: `scrollPosition` save/restore in preview-only pane mode reads/writes the preview pane's own scroll state instead of the (frozen, hidden) editor's; reuses `cross-tab-anchor-links/PLAN.md`'s readiness-gate primitive |
+| [`v1.2.0/preview-link-encoding-fix/PLAN.md`](v1.2.0/preview-link-encoding-fix/PLAN.md) | Bug fix: preview-pane `#slug` anchor clicks and `memo:` link clicks both fail to resolve non-ASCII names due to markdown-it's `normalizeLink` percent-encoding; `decodeURIComponent` fix on both branches of `handleAnchorClick` — a correctness prerequisite for `cross-tab-anchor-links/PLAN.md` |
+
 ## Independent Implementation, Mandatory Final Integration Pass
 
 Per-feature plans and their implementation may proceed **independently** — a feature can be planned,
