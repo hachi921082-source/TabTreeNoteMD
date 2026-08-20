@@ -7,14 +7,13 @@
 > [detailed-spec.md](detailed-spec.md) plays for `spec.md` — it does not introduce new product decisions;
 > it translates and refines what `spec.v1.2.0.md` already decided, down to concrete file/function touch
 > points, data-model fields, and edge cases, grounded in direct inspection of the currently-shipping
-> `src/`/`src-tauri/` code (not just the prior spec documents, several of which now lag slightly behind
-> what has actually shipped via the GitHub-issue fix workflow — e.g. `MemoEditorSettings.cursorAnchor`/
-> `cursorHead`/`previewLocked`, none of which are documented in `spec.md`/`detailed-spec.md`/
-> `MDEditor-spec.md` but all of which exist in `src/shared/models.ts` today and are load-bearing context
-> for this document's own elaboration). Where a genuine ambiguity was found that `spec.v1.2.0.md` did not
-> already decide or explicitly delegate, it is **not** decided here — it is logged in
-> [QA.md](QA.md) instead (one item was raised this way, `Q-v1.2.0-1`, §4.4/§9.2/§12 below; the user has
-> since answered it and it has been resolved and removed from `QA.md`, per that file's own convention).
+> `src/`/`src-tauri/` code (not just the prior spec documents, several of which lag slightly behind what
+> has actually shipped via the GitHub-issue fix workflow — e.g. `MemoEditorSettings.cursorAnchor`/
+> `cursorHead`/`previewLocked` exist in `src/shared/models.ts` today but are undocumented in
+> `spec.md`/`detailed-spec.md`/`MDEditor-spec.md`, and are load-bearing context for this document's own
+> elaboration). A genuine ambiguity `spec.v1.2.0.md` did not decide or delegate is never decided here — it
+> is logged in [QA.md](QA.md) instead (see §4.4/§9.2/§12 for the one case this pass found, since resolved
+> by the user — rationale in `DECISIONS.md`).
 >
 > **Citation convention** (matches `detailed-spec.v1.1.0.md`'s own convention, extended one more level):
 > - `[spec §x]` — cites `docs/spec.md` (the frozen v1.0.0 baseline).
@@ -57,10 +56,9 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   - §4.1 Target-String Parsing (No Backend Change Needed)
   - §4.2 Cross-Tab Navigation State Machine — New `pendingLinkFocus.anchorSlug`
   - §4.3 Anchor-Jump Execution, Pane-Mode-Dependent
-  - §4.4 Adjacent `memo:`-Branch Encoding Bug — Bundled Into §9's Fix (Resolved, Was `QA.md` `Q-v1.2.0-1`)
-  - §4.5 Tab Lock and Unresolved-Cases Behavior (Elaborates `[spec v1.2.0 §4.4]`; gap found and closed
-    during a later review pass — this document's own §4.4 above reused that section number for an
-    unrelated topic)
+  - §4.4 Adjacent `memo:`-Branch Encoding Bug — Bundled Into §9's Fix (resolved; see `DECISIONS.md`)
+  - §4.5 Tab Lock and Unresolved-Cases Behavior (elaborates `[spec v1.2.0 §4.4]`; note its numbering here
+    diverges from `spec.v1.2.0.md`'s own §4.4, see §4.5's own note)
 - **§5 Double-Click Active Tab — Jump-to-Position — Elaboration** (elaborates `[spec v1.2.0 §5]`)
   - §5.1 Trigger Wiring (`TabBar.tsx` → `App.tsx` → `EditorPaneHandle`)
   - §5.2 Saved-Position Shape and Position-Mapping Mechanism
@@ -96,17 +94,12 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   established by `spec.md`/`detailed-spec.md`/`spec.v1.1.0.md`/`detailed-spec.v1.1.0.md`/
   `MDEditor-spec.md` rather than redefining it. Neither document dictates Rust module layout or Tauri
   command naming — that stays `PLAN.md`-level.
-- Unlike `detailed-spec.v1.1.0.md` (settled through a dedicated 16-question Q&A round with the user after
-  `spec.v1.1.0.md` was written), `spec.v1.2.0.md` was itself already written to a very high level of
-  detail through direct dialogue with the user (its own §0 notes "all nine items... fully decided; no
-  open points remain"). This document's job is therefore less about resolving open questions (there were
-  almost none left) and more about **grounding** each decided behavior against the actual, current
-  `src/`/`src-tauri/` implementation — concrete function names, concrete data flow, and edge cases that
-  only become visible once a decided behavior is mapped onto real code. One genuine gap was found this
-  way (§4.4) that `spec.v1.2.0.md` had not decided or delegated; it was escalated to `QA.md` (`Q-v1.2.0-
-  1`) rather than resolved unilaterally, per this project's process (`.claude/agents/README.md` step 2).
-  The user has since answered it — bundle a fix into this same v1.2.0 pass — and §4.4/§9.2 below now
-  reflect that as a decided, elaborated item; §12 records the resolution.
+- `spec.v1.2.0.md` itself already reaches a very high level of detail (its own §0 notes "all nine
+  items... fully decided; no open points remain"). This document's job is therefore **grounding** each
+  decided behavior against the actual, current `src/`/`src-tauri/` implementation — concrete function
+  names, concrete data flow, and edge cases that only become visible once a decided behavior is mapped
+  onto real code. One gap was found this way (§4.4/§9.2, resolved — rationale in `DECISIONS.md`, resolution
+  recorded in §12).
 - **Implementation-discretion calls made in this pass** (§1.1, §2.2, §2.3, §6.2): `spec.v1.2.0.md` itself
   explicitly delegated these to "`developer-lite`/`designer-lite`'s detailed-spec pass" (see each
   section's own citation). Each is stated with its reasoning inline, same "starting default, not a fixed
@@ -137,17 +130,9 @@ to this pass. Decisions made here, with reasoning:
   shared/` — confirmed by inspection, no nested `src/lib/` or `src/utils/` catch-all exists anywhere in
   the tree), so `src/i18n/` sits at the same level as `src/shared/` for the same reason `src/shared/
   shortcuts.ts` and `src/shared/models.ts` do: cross-cutting, not owned by one feature/component.
-- **Mechanism: a small hand-rolled React Context + hook**, not the `react-i18next` package itself.
-  Reasoning: `[spec v1.2.0 §1.4]` itself frames this as "a `react-i18next`-**like** mechanism was
-  requested, not necessarily the `react-i18next` package itself by name," and this app's own architecture
-  doc already states the app deliberately uses "plain hooks... no external state library"
-  (`docs/plans/project-architecture/PLAN.md`, cited verbatim by `spec.v1.2.0.md` itself at this point) —
-  confirmed consistent by inspection: every other cross-cutting piece of app state in this codebase
-  (`useSettings.ts`, `useTree.ts`, `useTabs.ts`, etc.) is a plain hook, not a third-party state library,
-  and `package.json` has zero state-management dependencies today (`redux`, `zustand`, `jotai`, etc. are
-  all absent). A dedicated i18n library would be the first external state-management dependency in the
-  app, contradicting an established, deliberate architectural choice, for a need (runtime string lookup +
-  re-render on language change) a ~40-line Context/hook fully covers.
+- **Mechanism: a small hand-rolled React Context + hook**, not the `react-i18next` package — matches this
+  app's deliberate "plain hooks, no external state library" architecture (see `DECISIONS.md`, "i18n
+  Mechanism: Hand-Rolled React Context, Not `react-i18next` Package," for the full rationale).
 - **Concrete shape**: `src/i18n/index.ts` exports (a) a `translations: Record<"ja" | "en", TranslationMap>`
   object assembled from the two locale files, (b) an `I18nProvider` wrapping `<App />` (mounted once in
   `src/main.tsx`) that reads the resolved language (§1.2 below) from `useSettings()`'s already-loaded
@@ -317,12 +302,6 @@ is specified here"). Decision made here:
   behavior a `markdown-it-texmath`-class plugin already gives "for free" if that's the plugin chosen in
   §2.1, and is simple enough to replicate in a hand-rolled rule if a different plugin/custom
   implementation is chosen instead.
-- **Reasoning for making this call now rather than escalating**: `[spec v1.2.0 §2.2]` itself already
-  states the false-positive risk "is accepted as-is for this first pass" and that "refining that
-  heuristic is left to `developer-lite`'s implementation planning if real false positives turn up in
-  practice" — i.e. the user already decided *some* reasonable heuristic is acceptable and explicitly
-  delegated picking one; adopting the standard, already-widely-shipped heuristic (rather than a novel one)
-  is the lowest-risk way to exercise that delegation.
 
 ### 2.3 Live-View Marker (Implementation-Discretion Call Made In This Pass)
 
@@ -390,9 +369,8 @@ inspection of `src/editor/markdownDecorations.ts` (lines ~527–605) and `src/ed
 
 ### 2.5 Preview Rendering Pipeline Tie-In (Debounce/Scroll-Sync Reuse, Wide-Formula Wrapping, Asset Bundling)
 
-Elaborates `[spec v1.2.0 §2.5]` in full — this section covers all three of that spec section's points, not
-asset bundling alone (retitled from this document's earlier draft, which covered only the third point and
-silently dropped the first two — a gap found and closed during a later review pass).
+Elaborates `[spec v1.2.0 §2.5]` in full — covers all three of that spec section's points (debounce/
+scroll-sync reuse, wide-formula wrapping, asset bundling), not asset bundling alone.
 
 - **No debounce/scroll-sync/image-pipeline change, restated concretely**: math rendering is registered as
   an ordinary `markdown-it` rule/plugin inside the same `createPreviewMarkdownIt()` instance §2.1 already
@@ -629,37 +607,27 @@ compared against actual scroll-sync wiring:
   — see §10.1 for the shared primitive proposed to solve both at once, rather than each implementing its
   own ad hoc polling/timeout.
 
-### 4.4 Adjacent `memo:`-Branch Encoding Bug — Bundled Into §9's Fix (Resolved, Was `QA.md` `Q-v1.2.0-1`)
+### 4.4 Adjacent `memo:`-Branch Encoding Bug — Bundled Into §9's Fix (resolved; see `DECISIONS.md`)
 
-While grounding this section against actual `previewInteractions.ts` behavior, empirically confirmed
-(via the same `mdurl` inspection technique `[spec v1.2.0 §9]`'s own root-cause section used) that
 `memo:TabName/MemoName` hrefs with **non-ASCII tab/memo names** are *also* percent-encoded by markdown-
-it's `normalizeLink` when rendered in the preview pane — the identical mechanism `[spec v1.2.0 §9]`
-originally fixed for bare `#slug` hrefs, but on the **`memo:`-prefixed branch**, which that fix's initial
-scope did not touch. This is a pre-existing bug in today's baseline `memo:` cross-tab links
-(`[spec §2.8]`), not something introduced by this feature, but it directly undermined §4 working for any
-Japanese-named tab/memo when clicked from the preview or split pane — the memo-target half of a
-`memo:TabName/MemoName#slug` link would fail to resolve at all in that case, regardless of whether the
-anchor half was even present.
+it's `normalizeLink` when rendered in the preview pane — the identical mechanism `[spec v1.2.0 §9]` fixes
+for bare `#slug` hrefs, but on the **`memo:`-prefixed branch**. This is a pre-existing bug in today's
+baseline `memo:` cross-tab links (`[spec §2.8]`), not introduced by this feature, but it directly
+undermines §4 for any Japanese-named tab/memo when clicked from the preview or split pane — the
+memo-target half of a `memo:TabName/MemoName#slug` link fails to resolve in that case, regardless of
+whether the anchor half is even present.
 
-This was escalated as `QA.md`'s `Q-v1.2.0-1` rather than fixed unilaterally in the first pass of this
-document, since it was a genuinely new finding `spec.v1.2.0.md` had not decided or delegated. **The user
-has since answered**: bundle the fix into this same v1.2.0 implementation pass, using the identical fix
-pattern already decided for the `#slug` branch (see `DECISIONS.md`, "Preview-Pane `memo:` Link Non-ASCII
-Name Encoding Bug: Bundled into v1.2.0's §9 Fix, Not Deferred," for the full rationale and the rejected
-"track separately" alternative). `spec.v1.2.0.md` §9 now records this as a decided, in-scope bundled
-follow-up. The concrete fix is elaborated in §9.2 below — it is the same shape as §9.1's `#slug`-branch
-fix, on the sibling branch of the identical function, so no new mechanism is introduced here beyond what
-§9.1 already establishes.
+Per the user's decision (rationale and rejected "track separately" alternative in `DECISIONS.md`,
+"Preview-Pane `memo:` Link Non-ASCII Name Encoding Bug: Bundled into v1.2.0's §9 Fix, Not Deferred"), the
+fix is bundled into this same v1.2.0 pass, using the identical pattern already decided for the `#slug`
+branch. `spec.v1.2.0.md` §9 records this as a decided, in-scope bundled follow-up; the concrete fix is
+§9.2 below (same shape as §9.1's `#slug`-branch fix, sibling branch of the identical function).
 
 ### 4.5 Tab Lock and Unresolved-Cases Behavior (Elaborates `[spec v1.2.0 §4.4]`)
 
-**Gap found and closed during a later review pass**: `[spec v1.2.0 §4.4]`'s own heading is "Tab Lock and
-Unresolved Cases," but this document's own §4.4 above (added afterward, for the bundled `memo:`-branch
-encoding-bug fix) reused that section number for an unrelated topic, leaving `[spec v1.2.0 §4.4]`'s actual
-three requirements below without their own elaboration anywhere in this document. This subsection closes
-that gap; the §4.4 numbering above is left as-is (already cross-referenced from §9, §12, `DECISIONS.md`,
-and `spec.v1.2.0.md` itself — renumbering it now would create more cross-reference drift than it fixes).
+Note: this document's own §4.4 (above) covers a different topic (the bundled `memo:`-branch encoding
+bug) than `spec.v1.2.0.md`'s §4.4 ("Tab Lock and Unresolved Cases") — the section numbering below tracks
+this document's own order, not a 1:1 mapping to `spec.v1.2.0.md`'s subsection numbers.
 
 All three of `[spec v1.2.0 §4.4]`'s requirements turn out to be satisfied automatically by the exact
 mechanisms §4.1 and §4.3 already specify — confirmed by direct inspection, not merely asserted:
@@ -878,28 +846,14 @@ Elaborates `[spec v1.2.0 §6]` in full.
 `[spec v1.2.0 §6]` specifies the *range/steps/scope* (70–180%, 10% steps, `paneMode === "preview"` only)
 but not the CSS mechanism. Decision made here: **use the CSS `zoom` property** (e.g. `style={{ zoom:
 `${previewZoomPercent}%` }}` on `PreviewPane.tsx`'s `.ttn-editor-preview-pane-content` element, §6.1's
-prop threaded in) rather than `transform: scale(...)`. Reasoning:
-- `zoom` triggers real layout reflow at the new size (text rewraps, images/tables resize within their
-  containers at the new effective width) — matching `[spec v1.2.0 §6]`'s "affects... text size, images,
-  tables" description of a genuine content-size change, not merely a visual magnification.
-- `transform: scale()` does not reflow layout — it visually magnifies a box whose layout box stays at its
-  original size, which would either clip content at the pane's edges past 100% or leave dead space below
-  100%, requiring extra width/height compensation math to avoid — `zoom` needs none of this.
-- `zoom` is a long-standing Chromium/WebView2-native CSS property (not a W3C standard, but universally
-  supported in every Chromium-based engine, which is exactly this app's one and only rendering target per
-  its Tauri+WebView2 architecture — no cross-browser-compatibility concern applies here the way it would
-  for a web-facing product).
-- Interacts correctly, with no extra work, with `[MDEditor-spec §4]`'s existing "wrap in a horizontal-
-  scroll container... never auto-shrink" wide-table rule and the preview's `max-width: 100%` image rule —
-  both already operate in the zoomed coordinate space automatically once `zoom` is applied to their common
-  ancestor, since `zoom` affects the box's own effective CSS pixel size for every descendant's percentage/
-  auto calculations.
-- **This interaction is argued from code/CSS semantics only, not yet visually confirmed** — whether the
-  table horizontal-scroll container and image `max-width` actually look right at the range's upper bound
-  (180%) in a real running preview pane is a visual/subjective judgment call, not something `reviewer-lite`
-  should adjudicate on its own. Leave it as a manual check for the user during/after implementation, the
-  same way any other purely visual "does this look right" question in this app is settled directly with the
-  user rather than by an agent's own aesthetic judgment.
+prop threaded in) rather than `transform: scale(...)` — `zoom` triggers real layout reflow at the new
+size, matching `[spec v1.2.0 §6]`'s "affects... text size, images, tables" description of a genuine
+content-size change; see `DECISIONS.md`, "Preview-Pane Zoom CSS Mechanism: `zoom` Property, Not
+`transform: scale()`," for the full comparative rationale.
+- **Not yet visually confirmed**: whether the existing wide-table horizontal-scroll container and image
+  `max-width` rule actually look right at the range's upper bound (180%) in a real running preview pane is
+  a visual/subjective judgment call, not something `reviewer-lite` should adjudicate on its own — leave it
+  as a manual check for the user during/after implementation.
 
 ### 6.3 Button Placement and Bounds-Disabled Rendering
 
@@ -1313,18 +1267,11 @@ CSS/Rust plumbing shape" choice with no observable behavioral consequence either
 
 ## 12. Open Questions Requiring User Decision
 
-**None remaining.** One item was found during this elaboration pass that `spec.v1.2.0.md` had not
-decided or delegated — logged in `QA.md` as `Q-v1.2.0-1` (whether to bundle a fix for the preview-pane
-`memo:TabName/MemoName` non-ASCII-name percent-encoding bug, §4.4 above, into this same v1.2.0
-implementation pass or track it separately) — and was correctly **not** resolved unilaterally in this
-document's first pass. The user has since answered `Q-v1.2.0-1`: bundle it into this same pass, using the
-identical fix pattern already decided for `[spec v1.2.0 §9]`'s `#slug` branch. This is now reflected as a
-decided item in `spec.v1.2.0.md` §9 (bundled-follow-up paragraph) and in this document's §4.4/§9.2 above,
-and `Q-v1.2.0-1` has been removed from `QA.md` per that file's own "resolved items are removed, not
-marked resolved in place" convention — see `DECISIONS.md` ("Preview-Pane `memo:` Link Non-ASCII Name
-Encoding Bug: Bundled into v1.2.0's §9 Fix, Not Deferred") for the full rationale and rejected
-alternative.
+**None remaining.** `Q-v1.2.0-1` (whether to bundle the §4.4 `memo:`-branch encoding-bug fix into this
+v1.2.0 pass) was resolved by the user — bundle it, using `[spec v1.2.0 §9]`'s already-decided `#slug`-
+branch fix pattern. Reflected in `spec.v1.2.0.md` §9 and this document's §4.4/§9.2; full rationale in
+`DECISIONS.md` ("Preview-Pane `memo:` Link Non-ASCII Name Encoding Bug: Bundled into v1.2.0's §9 Fix, Not
+Deferred").
 
 Every other point in `spec.v1.2.0.md`'s nine items was either already fully decided there, or was an
-implementation-discretion item this pass resolved directly (§1.1, §2.2, §2.3, §6.2 above), consistent
-with what `spec.v1.2.0.md` itself explicitly delegated.
+implementation-discretion item this pass resolved directly (§1.1, §2.2, §2.3, §6.2 above).
