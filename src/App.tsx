@@ -153,25 +153,41 @@ function App() {
     setPendingQuickOpenFocus(null);
   }, [pendingQuickOpenFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
 
-  // `memo:` link click -> "open memo" (`docs/plans/link/PLAN.md` §2, §5): same tab-switch +
-  // `focusOnMemo` mechanism as `openSearchHit` above, kept as its own independent state machine
-  // (not merged into `openSearchHit`) since a resolved link's `memoName` may be `null` for the
-  // `memo:TabName/` (tab-only, no memo selected) form — a tab switch with nothing to focus.
-  const [pendingLinkFocus, setPendingLinkFocus] = useState<{ tabId: string; memoName: string } | null>(null);
+  // `memo:` link click -> "open memo" (`docs/plans/link/PLAN.md` §2, §5; `#slug` anchor suffix added
+  // by `docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §2/§3): same tab-switch + `focusOnMemo`
+  // mechanism as `openSearchHit` above, kept as its own independent state machine (not merged into
+  // `openSearchHit`) since a resolved link's `memoName` may be `null` for the `memo:TabName/`
+  // (tab-only, no memo selected) form — a tab switch with nothing to focus.
+  //
+  // BOTH the cross-tab and same-tab cases route through the same deferred `pendingLinkFocus` ->
+  // effect -> `focusOnMemo` pipeline below (unlike `openSearchHit`/`openQuickOpenHit`, which call
+  // `focusOnMemo` synchronously for the same-tab case) — opening a *different* memo within the same
+  // tab is already async (`focusOnMemo` triggers `EditorPane.tsx`'s `editor_load` IPC round-trip via
+  // its own load-generation effect), so an anchor jump can never apply synchronously even then; both
+  // branches need the identical "stash the anchor, let the effect call `focusOnMemo` once the target
+  // is actually reachable" treatment (`PLAN.md` §3).
+  const [pendingLinkFocus, setPendingLinkFocus] = useState<{ tabId: string; memoName: string; anchorSlug: string | null } | null>(null);
+  // `pendingAnchorToken` is a DEDICATED monotonic counter for the anchor-jump signal threaded down
+  // into `EditorPane.tsx` — deliberately NOT `treeState.focusEditorToken` (which also bumps for
+  // ordinary tree-row-click/arrow-nav opens that carry no anchor at all), so `EditorPane.tsx`'s own
+  // consumption guard can tell "this load is the one a `#slug` link asked for" apart from any later,
+  // unrelated load that would otherwise incorrectly replay a stale anchor (`PLAN.md` §3).
+  const pendingAnchorTokenCounterRef = useRef(0);
+  const pendingAnchorSlugRef = useRef<string | null>(null);
+  const pendingAnchorTokenRef = useRef(0);
   const openLinkTarget = useCallback(
-    (tabId: string, memoName: string | null) => {
-      if (tabId === treeState.activeTabId) {
-        if (memoName) treeState.focusOnMemo(memoName);
-        return;
-      }
-      tabsState.selectTab(tabId);
-      if (memoName) setPendingLinkFocus({ tabId, memoName });
+    (tabId: string, memoName: string | null, anchorSlug: string | null) => {
+      if (tabId !== treeState.activeTabId) tabsState.selectTab(tabId);
+      if (memoName) setPendingLinkFocus({ tabId, memoName, anchorSlug });
     },
     [tabsState, treeState],
   );
   useEffect(() => {
     if (!pendingLinkFocus || treeState.activeTabId !== pendingLinkFocus.tabId) return;
     if (!treeState.flatOrder.includes(pendingLinkFocus.memoName)) return;
+    pendingAnchorSlugRef.current = pendingLinkFocus.anchorSlug;
+    pendingAnchorTokenCounterRef.current += 1;
+    pendingAnchorTokenRef.current = pendingAnchorTokenCounterRef.current;
     treeState.focusOnMemo(pendingLinkFocus.memoName);
     setPendingLinkFocus(null);
   }, [pendingLinkFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
@@ -284,6 +300,8 @@ function App() {
               setEditorOverride={treeState.setEditorOverride}
               patchSettings={settingsState.patch}
               onOpenMemoLink={openLinkTarget}
+              pendingAnchorSlug={pendingAnchorSlugRef.current}
+              pendingAnchorToken={pendingAnchorTokenRef.current}
             />
             {treeSide === "right" && splitter}
             {treeSide === "right" && treePane}
