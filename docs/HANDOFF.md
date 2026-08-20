@@ -9,50 +9,71 @@
 >
 > **Before acting on anything below, verify it against actual current state** (`git status`, `git log`,
 > `git branch`, whether files described here still exist/match) — this file is a snapshot and can go
-> stale before it's even read. The prior version of this file described the v1.2.0 spec-drafting session
-> (branch `V1.2.0`, `spec.v1.2.0.md` fully decided but uncommitted) — that work is now committed and
-> pushed (see §2), and this file has been entirely rewritten for the `detailed-spec.v1.2.0.md` session
-> that followed it. Don't assume a fresh HANDOFF.md is safe to skim past its own verification instruction.
+> stale before it's even read. The prior version of this file described the initial
+> `detailed-spec.v1.2.0.md` creation session — that work has since been through two additional review
+> passes (see §2) and this file has been rewritten to reflect the current, fully-reviewed state. Don't
+> assume a fresh HANDOFF.md is safe to skim past its own verification instruction.
 
 ## Index
 
 1. Where the project stands
-2. `docs/detailed-spec.v1.2.0.md` — created, self-checked, committed and pushed
+2. `docs/detailed-spec.v1.2.0.md` — created, reviewed twice, committed and pushed
 3. Separate track: GitHub issue #190 (TOC/color-tag bug) — filed only, not started
 4. Uncommitted state
 5. Next step
-6. Branch policy for v1.2.0 (carried forward from the prior HANDOFF.md, unchanged)
+6. Branch policy for v1.2.0 (carried forward, unchanged)
 
 ## 1. Where the project stands
 
 - v1.1.0 is fully complete and merged into `V1.1.0` (unchanged since the prior HANDOFF.md).
-- Current branch: **`V1.2.0`**, up to date with `origin/V1.2.0`. This session's work: (a) created
-  `docs/detailed-spec.v1.2.0.md` via `designer-lite`, elaborating all nine items (§1–§9) of the
-  already-decided `docs/spec.v1.2.0.md`; (b) `designer-lite` ran an independent self-check pass on its
-  own output and fixed 4 real issues (1 factual error, 3 clarity/completeness gaps — see git log on
-  `detailed-spec.v1.2.0.md` for detail, not repeated here); (c) a second-opinion review (external, not an
-  in-repo agent) flagged one genuinely actionable point on §6.2 (preview zoom), which was folded in as a
-  note that the 180%-zoom table/image visual check is a **manual, user-performed check**, not something
-  `reviewer-lite` should adjudicate on its own (visual/subjective judgment call); (d) a stale line in
-  `spec.v1.2.0.md`'s own header (still describing `detailed-spec.v1.2.0.md` as "a future file, not
-  created by this pass") was corrected. **No `developer-lite` or `reviewer-lite` work has started** —
-  same as the prior session, this one was still entirely spec/design-layer work.
+- Current branch: **`V1.2.0`**, up to date with `origin/V1.2.0`. `docs/spec.v1.2.0.md` (9 items, §1–§9,
+  fully decided) and `docs/detailed-spec.v1.2.0.md` (full implementation-planning-level elaboration of
+  those 9 items) both exist, are committed, and have now been through **two separate review passes** on
+  top of the initial `designer-lite` draft (see §2 for what each pass covered and found). **No
+  `developer-lite` or `reviewer-lite` work has started** — this has all been spec/design-layer work.
 
-## 2. `docs/detailed-spec.v1.2.0.md` — created, self-checked, committed and pushed
+## 2. `docs/detailed-spec.v1.2.0.md` — created, reviewed twice, committed and pushed
 
-All of this session's doc changes are committed to `V1.2.0` and pushed to `origin/V1.2.0` (4 commits,
-one file each, per `CLAUDE.md`'s commit convention — nothing left uncommitted from this pass):
+All doc changes are committed to `V1.2.0` and pushed to `origin/V1.2.0` (one file per commit, per
+`CLAUDE.md`'s convention). Three passes so far, each with a different focus — read this section before
+assuming another blanket review pass is still needed; two of the three obvious angles are already covered:
 
-- `docs/DECISIONS.md` — new entry recording the `Q-v1.2.0-1` resolution (bundling the `memo:`-branch
-  link-encoding fix into §9's existing scope rather than deferring it).
-- `docs/spec.v1.2.0.md` — §9 extended to cover both the `#slug` and `memo:` branches; Status/Scope/Index/
-  §4.3 updated to match; stale header line fixed.
-- `docs/detailed-spec.v1.2.0.md` (new file) — the full nine-item elaboration, self-checked.
-- `docs/README.md` — added the missing File Structure entries for `spec.v1.2.0.md` and
-  `detailed-spec.v1.2.0.md` (both already existed but were undocumented there).
+1. **Initial draft** (`designer-lite`): elaborated `spec.v1.2.0.md`'s 9 items to implementation-planning
+   depth, grounded in direct `src/`/`src-tauri/` inspection. Also resolved `docs/QA.md`'s `Q-v1.2.0-1`
+   (a `memo:`-branch link-encoding bug found while elaborating §4/§9, bundled into §9's fix scope per
+   user decision — rationale in `DECISIONS.md`).
+2. **Accuracy/structure self-check** (same `designer-lite` instance, own output): re-verified file/
+   function/line citations against real source, Index-vs-heading consistency, citation-convention
+   compliance. Found and fixed 4 issues: 1 factual error (wrong prop name in a §7 code example), 1
+   garbled sentence (§1.2), 1 under-verified/hedged claim tightened with confirmed specifics (§2.1
+   KaTeX×DOMPurify), 1 completeness gap noted (§5.2's interaction with issue #28's cursor-position
+   persistence).
+3. **Unspecified-UI / spec-omission / contradiction check** (explicitly requested by the user as a
+   distinct pass, since pass 2 above didn't target these three dimensions): found **no** remaining
+   unspecified UI needing `QA.md` escalation, but found and fixed two real spec omissions and one real
+   internal contradiction:
+   - `[spec v1.2.0 §2.5]`'s wide-formula horizontal-scroll requirement was never elaborated (only asset
+     bundling was) — fixed.
+   - `[spec v1.2.0 §4.4]` (Tab Lock / unresolved-anchor cases) had **zero** elaboration anywhere — its
+     section number had been silently repurposed for the bundled `memo:`-branch bug fix during pass 1's
+     QA resolution, displacing the original topic entirely. Fixed by adding a new §4.5 (kept the §4.4
+     numbering as-is rather than renumbering, to avoid breaking existing cross-references from §9/§12/
+     `DECISIONS.md`/`spec.v1.2.0.md` itself) — confirmed via direct Rust (`link.rs`) and TS (`links.ts`)
+     inspection that all three of spec's requirements are satisfied automatically by already-existing,
+     unmodified code, with a test-coverage recommendation flagged for `developer-lite` since "no new code
+     needed" cases are easy to silently regress later.
+   - §4.3's explanation of why the anchor-jump doesn't need its own `decodeURIComponent` call was stale
+     (written before the §9.2 `memo:`-branch bundling, only accounted for one of the two entry paths) —
+     fixed to correctly trace both paths.
+   - **User verified this pass's two omission fixes directly** (read the actual spec/detailed-spec text
+     side by side, not just trusting the agent's self-report) and confirmed both are genuinely resolved,
+     not superficial patches.
 
-`docs/QA.md` is back to its pristine "no open questions" state — `Q-v1.2.0-1` was resolved and removed
-per the file's own convention (resolution lives in `DECISIONS.md`, not there).
+**Commits on `V1.2.0`, in order** (all pushed): `docs/DECISIONS.md` → `docs/spec.v1.2.0.md` →
+`docs/detailed-spec.v1.2.0.md` (new file, pass 1+2 combined) → `docs/README.md` → `docs/HANDOFF.md` (the
+prior version of this file) → `docs/detailed-spec.v1.2.0.md` (pass 3's fixes, latest commit `19fe524`).
+
+`docs/QA.md` is back to its pristine "no open questions" state.
 
 ## 3. Separate track: GitHub issue #190 (TOC/color-tag bug) — filed only, not started
 
@@ -67,9 +88,7 @@ part of `spec.v1.2.0.md`. **Not part of the v1.2.0 feature set**; do not fold it
   unprecedented decoration-overlap between the color-span loop and a `Link` node's label range in
   `src/editor/markdownDecorations.ts`.
 - **Filed**: https://github.com/hachi921082-source/TabTreeNoteMD/issues/190 — full root-cause writeup
-  (confirmed via a throwaway `tsx` script exercising the real `scanHeadings`/`generateTocList` against an
-  `EditorState`) and a suggested fix (reuse `decorationCommands.ts`'s existing `unwrapColorSpans()`-style
-  stripping in `scanHeadings()`'s text extraction) are in the issue body — not repeated here.
+  and a suggested fix are in the issue body — not repeated here.
 - **User's explicit instruction**: "issueに起票しておいて。後で進めます" (file the issue, will proceed
   later) — **do not start a `fix/` branch or any implementation for this on your own initiative.** Wait
   for the user to say to proceed.
@@ -82,19 +101,23 @@ part of `spec.v1.2.0.md`. **Not part of the v1.2.0 feature set**; do not fold it
 ```
 
 Both pre-existing and unrelated to this session — carried forward unverified from earlier sessions'
-notes (the prior HANDOFF.md said the same thing). Still nobody has had a reason to touch either; still
+notes (every prior HANDOFF.md said the same thing). Still nobody has had a reason to touch either; still
 worth a fresh check by whichever session first does.
 
 ## 5. Next step
 
 Per `.claude/agents/README.md`'s step 3, the next stage is `developer-lite` reading `spec.v1.2.0.md` +
 `detailed-spec.v1.2.0.md` and writing independent `docs/plans/<feature-name>/PLAN.md` files for each of
-the nine v1.2.0 items (or however `developer-lite`/the user chooses to group them — nothing in this
-session decided a specific feature-branch/PLAN-file grouping for v1.2.0 yet). **This has not been started
-at all.** Ask the user before starting it, same as every other stage transition this project's workflow
-uses.
+the nine v1.2.0 items (or however `developer-lite`/the user chooses to group them — nothing decided a
+specific feature-branch/PLAN-file grouping for v1.2.0 yet). **This has not been started at all.** Given
+this document now sits at three review passes deep with two of them finding real (if not huge) issues
+each time, a fourth blanket "review it again" pass has diminishing returns — if the user wants more
+scrutiny before `developer-lite` starts, a more targeted angle (not yet tried: an actual `tauri dev` +
+CDP live run of a representative subset, similar to how `table-of-contents/PLAN.md` and other past
+features were verified) would likely surface different issues than another desk-review pass. Ask the
+user before starting any of this, same as every other stage transition this project's workflow uses.
 
-## 6. Branch policy for v1.2.0 (carried forward from the prior HANDOFF.md, unchanged)
+## 6. Branch policy for v1.2.0 (carried forward, unchanged)
 
 **`V1.2.0` development does NOT merge back into `V1.1.0`.** Per the user (stated in an earlier session):
 "v1.1.0とは別にv1.2.0として開発を継続するのでv1.1.0へマージはしない". Whatever branch strategy v1.2.0
