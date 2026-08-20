@@ -49,7 +49,8 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   - §2.2 False-Positive Heuristic (Implementation-Discretion Call Made In This Pass)
   - §2.3 Live-View Marker (Implementation-Discretion Call Made In This Pass)
   - §2.4 Source-View Marker — Concrete Reuse of `SourceImageMarkerPlugin`
-  - §2.5 KaTeX Asset Bundling
+  - §2.5 Preview Rendering Pipeline Tie-In (Debounce/Scroll-Sync Reuse, Wide-Formula Wrapping, Asset
+    Bundling)
 - **§3 Pane-Mode / View-Mode Toolbar Button Semantics — Elaboration** (elaborates `[spec v1.2.0 §3]`)
 - **§4 Cross-Tab Heading Anchor Links, `memo:TabName/MemoName#slug` — Elaboration** (elaborates
   `[spec v1.2.0 §4]`)
@@ -57,6 +58,9 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   - §4.2 Cross-Tab Navigation State Machine — New `pendingLinkFocus.anchorSlug`
   - §4.3 Anchor-Jump Execution, Pane-Mode-Dependent
   - §4.4 Adjacent `memo:`-Branch Encoding Bug — Bundled Into §9's Fix (Resolved, Was `QA.md` `Q-v1.2.0-1`)
+  - §4.5 Tab Lock and Unresolved-Cases Behavior (Elaborates `[spec v1.2.0 §4.4]`; gap found and closed
+    during a later review pass — this document's own §4.4 above reused that section number for an
+    unrelated topic)
 - **§5 Double-Click Active Tab — Jump-to-Position — Elaboration** (elaborates `[spec v1.2.0 §5]`)
   - §5.1 Trigger Wiring (`TabBar.tsx` → `App.tsx` → `EditorPaneHandle`)
   - §5.2 Saved-Position Shape and Position-Mapping Mechanism
@@ -152,6 +156,12 @@ to this pass. Decisions made here, with reasoning:
   `[spec v1.2.0 §1.5]`'s own resolution rule) if a key is somehow missing from a language file (a
   translator-error safety net, not a spec-mandated behavior — `developer-lite`'s call whether to also
   `console.warn` in dev builds).
+- **Satisfies `[spec v1.2.0 §1.3]`'s "effective immediately, no restart required" requirement by
+  construction**: since `I18nProvider`'s context value is derived directly from `useSettings()`'s live
+  `AppSettings.language`, an ordinary React Context re-render already propagates to every mounted `useT()`
+  consumer the instant `patchSettings({ language: ... })` resolves and `useSettings()`'s own state updates
+  — no reload, no remount, no separate "apply" step. This is a direct, standard consequence of the Context
+  design chosen above, not additional code that needs to be written.
 - **`TranslationKey` as a union type derived from `ja.ts`'s own keys** (e.g. `type TranslationKey =
   keyof typeof ja`), so `en.ts` (and any future language file) is type-checked at compile time to have
   every key `ja.ts` has — catches a missing translation as a TypeScript error rather than a silent
@@ -378,16 +388,52 @@ inspection of `src/editor/markdownDecorations.ts` (lines ~527–605) and `src/ed
   §2.2, reused identically here for the source-view scan so both marker locations and the live-view
   widget locations agree exactly on what counts as "a math span").
 
-### 2.5 KaTeX Asset Bundling
+### 2.5 Preview Rendering Pipeline Tie-In (Debounce/Scroll-Sync Reuse, Wide-Formula Wrapping, Asset Bundling)
 
-Restates `[spec v1.2.0 §2.5]`'s "must-bundle, not CDN-loaded" note with the concrete mechanism: KaTeX
-ships its own CSS (`katex.min.css`) and font files (`woff2`/`woff`/`ttf` glyph sets) as static assets —
-these must be imported/copied into the Vite build output (e.g. a static `import "katex/dist/katex.min.
-css"` inside `src/editor/preview/markdownIt.ts` or `PreviewPane.tsx`, which Vite already bundles/inlines
-for any other CSS import in this codebase, no new build-config work implied) rather than referenced via
-a `<link href="https://cdn...">` tag anywhere — confirmed there is no existing CDN-link pattern anywhere
-in `index.html`/`src/main.tsx` to accidentally follow, so this is a "don't introduce one," not a "remove
-an existing one," instruction.
+Elaborates `[spec v1.2.0 §2.5]` in full — this section covers all three of that spec section's points, not
+asset bundling alone (retitled from this document's earlier draft, which covered only the third point and
+silently dropped the first two — a gap found and closed during a later review pass).
+
+- **No debounce/scroll-sync/image-pipeline change, restated concretely**: math rendering is registered as
+  an ordinary `markdown-it` rule/plugin inside the same `createPreviewMarkdownIt()` instance §2.1 already
+  targets (`src/editor/preview/markdownIt.ts`) and produces its HTML inline within the same single
+  `md.render()` call `previewRenderer.ts` already makes on every debounced re-render — there is no second
+  render pass, no second debounce timer, and no new image-loading path introduced anywhere by this
+  feature; §2.1's own `data-source-line` bullet already covers why scroll-sync in particular needs no new
+  code (math's `data-source-line` attribute falls out of the same `token.map[0]` convention every other
+  block already uses).
+- **Wide/overflowing formulas — horizontal-scroll wrapping, concrete reuse**: `[spec v1.2.0 §2.5]` calls
+  for reusing the existing wide-table horizontal-scroll-container treatment. Confirmed by direct
+  inspection, that treatment is `src/editor/preview/markdownIt.ts`'s `wrapTableOpen`/`wrapTableClose`
+  renderer-rule overrides (`md.renderer.rules.table_open = wrapTableOpen; md.renderer.rules.table_close =
+  wrapTableClose;`), which wrap the rendered `<table>` in `<div class="ttn-preview-table-wrap">...</div>`
+  — a plain CSS `overflow-x: auto` container, per `[MDEditor-spec §4]`'s "wrap in a horizontal-scroll
+  container... never auto-shrink font size to fit." For KaTeX block math (`$$...$$`, rendered as a
+  block-level `.katex-display` element), the identical technique applies: whichever plugin is chosen in
+  §2.1, its block-math renderer rule (or a post-processing wrap step, if the plugin doesn't expose a
+  rule-override point the way markdown-it's own `table_open`/`table_close` do) should wrap the rendered
+  output in an analogous container — e.g. `<div class="ttn-preview-math-wrap">...</div>` with the same
+  `overflow-x: auto` CSS rule `.ttn-preview-table-wrap` already declares (confirmed by inspection:
+  `src/components/Editor/Editor.css` line ~118, `.ttn-preview-table-wrap { overflow-x: auto; }` —
+  reusing that exact declaration (e.g. a shared `.ttn-preview-overflow-x-wrap`-style class both wrappers
+  apply, or simply adding `.ttn-preview-math-wrap` as a second selector on the same CSS rule) rather than
+  writing a second, duplicate horizontal-scroll CSS rule. `"class"` is already in `previewRenderer.ts`'s
+  DOMPurify `ALLOWED_ATTR` list (§2.1 above), so no sanitizer-allowlist change is needed for this new
+  wrapper class. **Inline math (`$...$`) is not wrapped this way** — only block math, mirroring how the
+  wide-table treatment itself only applies to block-level `<table>` elements, never inline content; an
+  overlong inline formula simply reflows/wraps or overflows its containing paragraph like any other long
+  inline content (no spec text calls for special handling of that narrower case, and none is invented
+  here).
+- **Asset bundling (must-bundle, not CDN-loaded)**: this is a Tauri desktop app, expected to work fully
+  offline. KaTeX ships its own CSS (`katex.min.css`) and font files (`woff2`/`woff`/`ttf` glyph sets) as
+  static assets — these must be imported/copied into the Vite build output (e.g. a static `import
+  "katex/dist/katex.min.css"` inside `src/editor/preview/markdownIt.ts` or `PreviewPane.tsx`, which Vite
+  already bundles/inlines for any other CSS import in this codebase — confirmed by inspection,
+  `EditorPane.tsx` already does exactly this for `import "./Editor.css";`, so no new build-config work is
+  implied) rather than referenced via a `<link href="https://cdn...">` tag anywhere — confirmed there is
+  no existing CDN-link pattern anywhere in `index.html`/`src/main.tsx` to accidentally follow, so this is a
+  "don't introduce one," not a "remove an existing one," instruction. Otherwise formula rendering silently
+  breaks (missing glyphs/unstyled output) whenever the app is used without an internet connection.
 
 ---
 
@@ -556,10 +602,19 @@ compared against actual scroll-sync wiring:
   now-fixed `handleAnchorClick` `#`-branch logic (`previewInteractions.ts`) verbatim — i.e. `container.
   querySelector('#' + CSS.escape(slug))?.scrollIntoView({block: "start"})` — but triggered programmatically
   from §4.2's ref-consumption point instead of from a real click event. **No `decodeURIComponent` needed
-  on this programmatic path** (unlike §9's click-handler fix): the slug here comes directly from
-  `resolveAndOpenMemoLink`'s own string-splitting (§4.1), never round-tripped through markdown-it's
-  `normalizeLink` HTML-rendering pipeline the way a real anchor `href` is — §9's decode step exists
-  specifically to reverse *that* pipeline's encoding, which this programmatic path never enters.
+  on this programmatic path** (unlike §9.1/§9.2's own click-handler fixes): the slug here comes from
+  `resolveAndOpenMemoLink`'s own string-splitting (§4.1), operating on a `rawTarget` that is *already*
+  clean of `normalizeLink` encoding by the time it reaches that function — regardless of which of the two
+  possible trigger paths produced it. If the original click was on a **preview-pane** `<a href="memo:...">`
+  (the click-handler entry point §9.2 fixes), that `href` genuinely did pass through markdown-it's
+  `normalizeLink` when rendered, but §9.2's own `decodeURIComponent(href)` call already reverses that
+  encoding *before* `resolveAndOpenMemoLink` is ever invoked (§9.2's own "decode point stays upstream"
+  reasoning). If the original click was on a **live-view** bare `memo:...` token or `[text](memo:...)`
+  link instead, `rawTarget` was read straight from the raw CodeMirror source buffer and was never encoded
+  in the first place (§9.1's "Live view is unaffected" finding, restated for the `memo:` case by §9.2).
+  Either way, `resolveAndOpenMemoLink`'s own splitting logic — and therefore this section's programmatic
+  anchor-jump slug — never needs its own decode step; §9.1/§9.2 together are what make that always true,
+  not merely one specific branch of them.
 - **Required wait condition (new finding, not stated in `spec.v1.2.0.md`)**: the preview-mode path above
   can only succeed once the preview container's rendered `<h1>`–`<h6>` `id` attributes actually belong to
   the just-opened memo — `PreviewPane.tsx`'s `html` state does **not** update synchronously on a memo
@@ -596,6 +651,59 @@ Name Encoding Bug: Bundled into v1.2.0's §9 Fix, Not Deferred," for the full ra
 follow-up. The concrete fix is elaborated in §9.2 below — it is the same shape as §9.1's `#slug`-branch
 fix, on the sibling branch of the identical function, so no new mechanism is introduced here beyond what
 §9.1 already establishes.
+
+### 4.5 Tab Lock and Unresolved-Cases Behavior (Elaborates `[spec v1.2.0 §4.4]`)
+
+**Gap found and closed during a later review pass**: `[spec v1.2.0 §4.4]`'s own heading is "Tab Lock and
+Unresolved Cases," but this document's own §4.4 above (added afterward, for the bundled `memo:`-branch
+encoding-bug fix) reused that section number for an unrelated topic, leaving `[spec v1.2.0 §4.4]`'s actual
+three requirements below without their own elaboration anywhere in this document. This subsection closes
+that gap; the §4.4 numbering above is left as-is (already cross-referenced from §9, §12, `DECISIONS.md`,
+and `spec.v1.2.0.md` itself — renumbering it now would create more cross-reference drift than it fixes).
+
+All three of `[spec v1.2.0 §4.4]`'s requirements turn out to be satisfied automatically by the exact
+mechanisms §4.1 and §4.3 already specify — confirmed by direct inspection, not merely asserted:
+
+- **Locked target tab (no active session) → entire link (memo **and** anchor) unresolved**: confirmed by
+  reading `src-tauri/src/commands/link.rs`'s `find_tab_id_by_display_name` — for a tab with
+  `entry.locked.unwrap_or(false) == true` and no active session (`sessions.with_session(&entry.id, ...)`
+  returns `None`), the function returns `None`, causing `link_resolve` to return `ResolvedLink::Unresolved`
+  before ever reaching the memo-tree/heading logic. Since §4.1's `resolveAndOpenMemoLink` (this document's
+  own code snippet) checks `if (!result.ok || result.value.kind !== "memo") return;` immediately after
+  calling `linkResolve`, a locked-no-session target already short-circuits to a full no-op **before**
+  `anchorSlug` is ever read or `onOpenMemo` is ever called — i.e. "the entire link, including any `#slug`
+  suffix, resolves as unresolved" is true by construction, with **zero new code required** for this case.
+  This was already true for the memo-only baseline case before this feature; the `#slug` extension changes
+  nothing about it, exactly as `[spec v1.2.0 §4.4]` requires.
+- **Target tab locked with an active unlock session → resolves normally, memo and anchor alike**: same
+  `find_tab_id_by_display_name` function, confirmed by inspection — for a locked tab **with** an active
+  session, it matches against `sessions.with_session(&entry.id, |s| s.real_tab_name.clone())` instead of
+  the placeholder `entry.name`, so `link_resolve` resolves normally (returns `ResolvedLink::Memo {...}`
+  exactly as for an unlocked tab). §4.1's `resolveAndOpenMemoLink` and §4.3's pane-mode-dependent
+  anchor-jump logic have no lock-awareness of their own at all — they operate purely on the `ResolvedLink`
+  result and the (now-open, real) memo's content, so an active-session target flows through both steps
+  identically to an unlocked tab. Again, **zero new code required** — this is a direct, unmodified
+  consequence of `link_resolve`'s existing session-aware matching, which this feature's frontend-only
+  changes (§4.1) never touch.
+- **Memo resolves but no heading matches `slug` → silent no-op for the anchor only, memo switch still
+  happens**: confirmed by inspection of both anchor-jump code paths §4.3 already specifies —
+  `edit`/`split` mode's `resolveAndScrollToHeadingAnchor(view, slug)` (`src/editor/links.ts` lines
+  ~104–112) does `const match = scanHeadings(view.state).find((h) => h.slug === slug); if (!match) return;`
+  — a plain no-op on no match, never touching the already-completed memo switch from step 1. `preview`
+  mode's direct `container.querySelector('#' + CSS.escape(slug))?.scrollIntoView(...)` (§4.3's own code)
+  uses optional chaining specifically so a `null` query result (no matching heading `id`) is *also* already
+  a silent no-op with no further code needed. Both paths independently already satisfy this requirement by
+  construction — the memo the target tab/memo just switched to stays open and visible either way, only the
+  scroll/cursor jump is skipped.
+
+**Net conclusion for `developer-lite`**: no additional tab-lock-checking or no-match-guarding code needs to
+be written anywhere in this feature specifically for `[spec v1.2.0 §4.4]`'s three requirements — all three
+already fall out of code this document's §4.1/§4.3 already call for reusing unmodified. The only
+actionable item here is **test coverage**: `developer-lite` should include these three cases explicitly in
+this feature's test plan (locked-no-session `memo:...#slug` link; locked-with-session `memo:...#slug`
+link; a `memo:...#slug` link whose memo resolves but whose slug matches no heading) precisely because they
+are easy to silently break with an unrelated future change to `link_resolve` or the anchor-jump functions,
+even though no new code is needed to make them pass today.
 
 ---
 
@@ -980,6 +1088,17 @@ Elaborates `[spec v1.2.0 §8]` in full.
   v1.2.0 §8]`'s "edit/split mode unaffected" requirement is satisfied by construction, since the new logic
   is purely an added `if (paneMode === "preview") { ... } else { /* existing code, unchanged */ }` branch
   at each of the two touch points, not a rewrite of the existing path.
+- **"Not in scope" boundary confirmed honored, not just asserted**: `[spec v1.2.0 §8]` explicitly excludes
+  "live bidirectional syncing... at the moment the user switches pane modes mid-session" from this fix's
+  scope. The two touch points above (§8.2's save/restore paths) are gated on `ed.loadGeneration` (a fresh
+  memo load/switch) and on unmount/outgoing-memo flush — **not** on `paneMode` itself changing while the
+  same memo stays open. Confirmed by inspection: `EditorPane.tsx`'s existing debounced-scroll `scrollHandler`
+  is bound to the **editor's own** `scrollDOM`, which the user never touches directly while `paneMode ===
+  "preview"` (the edit sub-pane is `display:none`), so no live sync/flush fires purely from toggling
+  `paneMode` back and forth on an already-open memo — only this fix's save-path branch, itself only invoked
+  at the pre-existing scroll-debounce/switch-away/unmount trigger points `[spec v1.1.0 §2]` already
+  established, ever runs. This fix therefore does not, even inadvertently, introduce the excluded
+  live-bidirectional-sync behavior.
 
 ### 8.3 Shared Timing Concern With §4 — See §10.1
 
@@ -1182,6 +1301,13 @@ CSS/Rust plumbing shape" choice with no observable behavioral consequence either
   other already-established "reasonable timeout" constants (e.g. `[MDEditor-spec §6]`'s ~3-second
   per-image PDF-export wait).
 - The concrete new integer value `AppSettings.schemaVersion` bumps to (§10.2).
+- Exact CSS class name for block-math's wide-formula horizontal-scroll wrapper (§2.5 — `.ttn-preview-
+  math-wrap` is this document's own suggested spelling, not binding, mirroring `.ttn-preview-table-wrap`'s
+  own naming, same discretion class as `detailed-spec.v1.1.0.md` §5's "exact action-ID string spellings").
+- Whether KaTeX is configured with `output: "html"` (skipping the parallel MathML tree) or its default
+  `output: "htmlAndMathml"`/`"mathml"` (§2.1) — a genuine, if minor, accessibility/copy-paste-fidelity
+  vs. sanitizer-surface-area tradeoff, left to `developer-lite`'s ordinary engineering judgment since
+  `spec.v1.2.0.md` does not distinguish between the two output modes anywhere.
 
 ---
 
