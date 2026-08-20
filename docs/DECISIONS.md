@@ -569,3 +569,47 @@ feature's scope small, treating the backgrounded-session gap as a pre-existing c
 multi-session model that is unrelated to and not newly introduced by Auto-Relock, not something this
 feature is obligated to fix as a side effect. Closing that gap, if ever pursued, remains available as its
 own separate future feature.
+
+## Preview-Pane `memo:` Link Non-ASCII Name Encoding Bug: Bundled into v1.2.0's §9 Fix, Not Deferred (2026-08-20)
+
+**Background**: `spec.v1.2.0.md` §9 (elaborating `[spec §4.2]`/`[spec §2.8]`) fixes a bug where
+markdown-it's `normalizeLink` rule percent-encodes a rendered `<a href>` in the preview pane, while the
+corresponding lookup target (a heading's `id`, set directly from `scanHeadings()`'s raw slug) is never
+encoded — breaking resolution for any non-ASCII (in practice, almost any Japanese) `#slug` anchor. The
+originally-decided fix (`decodeURIComponent` in `previewInteractions.ts`'s `handleAnchorClick`) was
+scoped only to that function's `#`-prefixed branch. While elaborating §4 (`memo:TabName/MemoName#slug`
+cross-tab anchor links) and §9 into `detailed-spec.v1.2.0.md`, `designer-lite` re-ran §9's own root-cause
+investigation (the same `mdurl`/`markdown-it` package inspection technique) against a `memo:` target
+instead of a bare `#slug` target, and confirmed the **identical** encoding defect also corrupts
+`memo:TabName/MemoName` hrefs whenever the tab name or memo name — not just an anchor slug — contains a
+non-ASCII character (empirically: `mdurl.encode(mdurl.format(mdurl.parse('memo:Work/日記#見出し')))` →
+`memo:Work/%E6%97%A5%E8%A8%98#%E8%A6%8B%E5%87%BA%E3%81%97`). This is a **pre-existing bug in today's
+baseline `memo:` cross-tab links** (`[spec §2.8]`), not introduced by v1.2.0's §4 — but it silently breaks
+§4's new feature for any Japanese-named tab/memo when clicked from the preview or split pane, since the
+memo-target half of a `memo:TabName/MemoName#slug` link would fail to resolve regardless of whether the
+anchor half is even present. Live view is unaffected in both the original `#slug` case and this adjacent
+`memo:` case, for the same reason: live view's link/anchor detection reads raw CodeMirror source text
+directly and never passes through markdown-it's HTML-rendering pipeline, so no encoding is ever
+introduced there. Since this was a genuinely new finding not decided or delegated anywhere in
+`spec.v1.2.0.md`, it was escalated to `QA.md` as `Q-v1.2.0-1` rather than silently patched in during the
+detailed-spec pass, per this project's process.
+
+**Decision**: fix the `memo:`-prefixed branch of `handleAnchorClick` (`src/editor/preview/
+previewInteractions.ts`) with the identical `decodeURIComponent` treatment already decided for the
+`#`-prefixed branch, **in the same v1.2.0 implementation pass** — not deferred to a later issue. Reasons
+for bundling now rather than later: (1) it is the same fix, on the same file, following the same
+already-decided pattern — no new design work, just applying an already-approved technique to a second,
+adjacent branch of the same function; (2) it is a **correctness prerequisite** for §4 (the new
+`memo:TabName/MemoName#slug` cross-tab anchor feature) actually working on Japanese-named tabs/memos in
+`preview`/`split` mode — shipping §4 without this fix would mean the feature silently fails for the
+majority of this app's own real-world tab/memo names (a Japanese-first personal note app), which would be
+a poor first impression of a brand-new feature; (3) the fix is small and low-risk (one additional
+`decodeURIComponent` call site, isolated to preview-pane click handling, no schema/data-model change).
+Reflected in `spec.v1.2.0.md` §9 (bundled-follow-up paragraph) and `detailed-spec.v1.2.0.md` §4.4/§9/§12.
+
+**Rejected alternative**: track the `memo:`-branch fix as a separate, later issue/patch (`developer-lite`'s
+original framing when escalating `Q-v1.2.0-1`, presented as one of two options) — rejected specifically
+because of point (2) above: unlike most "adjacent gap, could be deferred" findings, this one is not
+merely adjacent to §4, it is load-bearing for §4's own stated purpose in the common case for this app's
+actual users, so deferring it would ship a headline v1.2.0 feature in a state that looks broken for most
+realistic inputs rather than genuinely deferring an unrelated concern.
