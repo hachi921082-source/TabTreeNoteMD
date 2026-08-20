@@ -60,8 +60,9 @@ export interface MarkdownDecorationConfig {
   confirmBeforeOpen: boolean;
   /** Reuses the shared "open memo" path (`docs/plans/memo-tree/PLAN.md`, the same one tree click
    * and search-result click use) — `memoName: null` for the `memo:TabName/` (tab-only) resolved
-   * form. */
-  onOpenMemo: (tabId: string, memoName: string | null) => void;
+   * form. `anchorSlug` is the parsed `#slug` half of a `memo:...#slug` link (`docs/plans/v1.2.0/
+   * cross-tab-anchor-links/PLAN.md` §2), `null` when the link carried no anchor. */
+  onOpenMemo: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
   /** Shows the shared non-blocking confirm dialog and resolves to whether the user confirmed;
    * only awaited when `confirmBeforeOpen` is true (`docs/plans/link/PLAN.md` §4). */
   requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
