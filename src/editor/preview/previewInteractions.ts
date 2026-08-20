@@ -91,11 +91,27 @@ function handleAnchorClick(e: MouseEvent, anchor: HTMLAnchorElement, container: 
   e.preventDefault();
   const href = anchor.getAttribute("href") ?? "";
   if (href.startsWith("memo:")) {
-    void resolveAndOpenMemoLink(config.tabId, href, config.onOpenMemoLink);
+    // markdown-it's `normalizeLink` percent-encodes non-ASCII hrefs (mdurl); decode before resolving
+    // so the memo-name portion matches the raw (unencoded) tab/memo names. A malformed percent-sequence
+    // degrades to a silent no-op, matching this app's "unresolved link = do nothing" convention.
+    let decodedHref: string;
+    try {
+      decodedHref = decodeURIComponent(href);
+    } catch {
+      return;
+    }
+    void resolveAndOpenMemoLink(config.tabId, decodedHref, config.onOpenMemoLink);
     return;
   }
   if (href.startsWith("#")) {
-    const slug = href.slice(1);
+    // Same encoding mismatch as the `memo:` branch above: the heading `id` attribute is set from
+    // the raw (unencoded) slug, but this href was percent-encoded by markdown-it's `normalizeLink`.
+    let slug: string;
+    try {
+      slug = decodeURIComponent(href.slice(1));
+    } catch {
+      return;
+    }
     // Scoped to the preview's own container (not `document.getElementById`), matching
     // RENDERING.md §7's "within the preview pane's own internal scroll container" — avoids
     // colliding with an unrelated same-id element elsewhere in the app.
