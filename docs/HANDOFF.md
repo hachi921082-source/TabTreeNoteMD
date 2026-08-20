@@ -9,22 +9,25 @@
 >
 > **Before acting on anything below, verify it against actual current state** (`git status`, `git log`,
 > `git branch`, whether files described here still exist/match) — this file is a snapshot and can go
-> stale before it's even read. The prior version of this file described the `docs/plans/v1.2.0/` nine
-> `PLAN.md` files as freshly created, no implementation started. This version reflects the first
-> implementation item landing: `preview-link-encoding-fix` implemented, reviewed, merged (locally) into
-> `V1.2.0`, with two git operations still blocked pending user action (§3), plus an unfinished side
-> thread on formalizing the per-plan branch workflow itself (§4).
+> stale before it's even read. The prior version of this file described `preview-link-encoding-fix` as
+> merged locally into `V1.2.0` with push/branch-delete blocked, and the per-plan workflow formalization
+> as an unfinished side thread. Both are now resolved in this version: the user pushed and the branch was
+> deleted (§3 below is now historical), and the workflow formalization (§4) is done — `dev-workflow.md`
+> exists with a "PLAN Implementation Flow" section, and this project's own `CLAUDE.md` has a matching
+> "PLAN Implementation Workflow" section with the concrete precedent. **One commit is still unpushed**:
+> `502490e` (the `CLAUDE.md` update itself) — local `V1.2.0` is ahead of `origin/V1.2.0` by 1.
 
 ## Index
 
 1. Where the project stands
-2. `preview-link-encoding-fix` — implemented, reviewed (approved), merged into `V1.2.0` (local)
-3. Blocked git operations awaiting user action: push, feature-branch deletion
-4. Unfinished side thread: `dev-workflow.md` rename + PLAN-implementation-flow rule (not yet executed)
+2. `preview-link-encoding-fix` — implemented, reviewed (approved), merged into `V1.2.0`, pushed
+3. (historical) Git operations that were blocked mid-session, now resolved
+4. `dev-workflow.md` rename + PLAN-implementation-flow rule — now done
 5. Two long-carried-forward untracked files — now actually inspected
 6. Separate track: GitHub issue #190 (TOC/color-tag bug) — filed only, still not started
 7. Next step — resume the nine-item implementation order, item 2 next
 8. Branch policy for v1.2.0 (carried forward, now confirmed by precedent)
+9. One commit still unpushed — push before doing anything else
 
 ## 1. Where the project stands
 
@@ -60,40 +63,39 @@ once since its formal write-up is still pending (§4):
   `git merge --no-ff feature/v1.2.0-preview-link-encoding-fix` into `V1.2.0`, mirroring v1.1.0's
   `Merge feature/v1.1.0-<name>: <description>` merge-commit message style.
 
-## 3. Blocked git operations awaiting user action: push, feature-branch deletion
+## 3. (historical) Git operations that were blocked mid-session, now resolved
 
-Both `git push origin V1.2.0` and `git branch -d feature/v1.2.0-preview-link-encoding-fix` (branch is
-already fully merged, `-d` not `-D`) were denied by Claude Code's Auto Mode permission classifier — it
-blocks git operations that touch shared/remote state or delete branches, regardless of prior user
-go-ahead in chat. `git commit` and `git merge` (both local) went through without issue.
+Mid-session, `git push origin V1.2.0` and `git branch -d feature/v1.2.0-preview-link-encoding-fix` were
+both denied by Claude Code's Auto Mode permission classifier (it blocks git operations touching
+shared/remote state or deleting branches, regardless of prior chat go-ahead — `git commit`/`git merge`,
+both local, went through fine). The user ran the push themselves; the branch-delete was then retried and
+succeeded (no longer blocked once retried standalone). Keeping this as a note for future sessions: if
+`push`/`branch -d` get denied, don't work around it — report it and let the user push manually or
+re-grant permission, same as happened here.
 
-**Whoever picks this up next**: either run these two commands directly, or grant the tool permission when
-prompted. Until the push happens, `origin/V1.2.0` does not yet have this fix — local `V1.2.0` is ahead by
-one merge commit plus the feature commit.
+## 4. `dev-workflow.md` rename + PLAN-implementation-flow rule — now done
 
-## 4. Unfinished side thread: `dev-workflow.md` rename + PLAN-implementation-flow rule (not yet executed)
+Formalized "cut a branch before every `PLAN.md` implementation, implement, review, merge, write a
+handoff, move to next context" as a standing rule, parallel to the existing per-issue `fix/<short-slug>`
+flow. Applied manually once (on `preview-link-encoding-fix`, §2) before being written down — the write-up
+happened after, in the same session, once the user confirmed to proceed.
 
-Before implementation started this session, the user asked to formalize "cut a branch before every
-`PLAN.md` implementation, implement, review, merge, write a handoff, move to next context" as a standing
-rule — parallel to the existing per-issue `fix/<short-slug>` flow. Discussion reached an agreed approach
-but **execution never happened** (the conversation pivoted straight to implementing
-`preview-link-encoding-fix` instead, which is why §2 above says the flow was "applied manually this once").
-
-**Agreed so far, not yet written anywhere:**
-- Target file: rename `~/.claude/shared/issue-and-doc-workflow.md` → `~/.claude/shared/dev-workflow.md`.
-  Rationale: the file already covers two topics (issue flow, doc-structure standard including
-  `docs/plans/<feature-name>/PLAN.md`), so the current name reads as issue-only and is misleading; a new
-  "PLAN Implementation Flow" section would be a third topic under the same file, not a new file.
-- Add an index to that file — it already has 7 `##` headings (meets this user's own global "≥4 headings
-  → needs an index" rule from `~/.claude/CLAUDE.md`), independent of whether the new section is added.
-- Update the two files that reference the old name: `~/.claude/CLAUDE.md` line 60 (prose reference, not an
-  active import) and this project's own `CLAUDE.md` line 3 (`@import`, the only live import found via a
-  repo-wide grep — no other project currently opts into this shared file).
-- **Not yet decided**: the actual content of the new "PLAN Implementation Flow" section (branch naming
-  convention, merge-target rule, handoff-file convention). §2 and §7/§8 of this file establish real
-  precedent for all three now (branch name `feature/v1.2.0-<name>`, direct merge into `V1.2.0`, this very
-  `HANDOFF.md` file) — the next session doing this write-up should draw on that precedent rather than
-  re-deciding from scratch.
+**Done:**
+- `~/.claude/shared/issue-and-doc-workflow.md` renamed to `~/.claude/shared/dev-workflow.md` (old name
+  read as issue-only despite already covering doc structure too). New file has an Index (8 `##` headings,
+  meets the user's own global "≥4 headings → needs an index" rule) and a new §7 "PLAN Implementation
+  Flow" section: cut branch → implement → review → **confirm with user before merge/push/delete** → write
+  handoff → delete branch.
+- All references updated: `~/.claude/CLAUDE.md` (prose + heading renamed to "Development Workflow"),
+  `~/.claude/README-lite-workflow.md`, `~/.claude/skills/init-project-docs/SKILL.md`, and this project's
+  own `CLAUDE.md` (`@import` line).
+- This project's own `CLAUDE.md` got a new "PLAN Implementation Workflow" section (parallel to its
+  existing "GitHub Issue Workflow" section) recording the concrete precedent established by §2: branch
+  naming `feature/<version>-<feature-name>`, direct `git merge --no-ff` into the version branch (no PR),
+  `docs/HANDOFF.md` as the handoff-file convention. Committed as `502490e` (still unpushed, see §9).
+- Auto-memory updated to match (renamed-file references fixed in 2 existing memories, 1 new memory
+  added recording the decision, with an explicit note that this does NOT relax the pre-existing
+  "always confirm before merge/push/branch-delete" rule — the written flow's own step 4 still says to ask).
 
 ## 5. Two long-carried-forward untracked files — now actually inspected
 
@@ -157,4 +159,12 @@ Ask the user before starting item 2, same as every stage transition in this proj
 The prior `HANDOFF.md` left the actual per-item branch strategy as an open question ("confirm the actual
 merge target before assuming it's `V1.2.0` by default"). §2 above resolves this in practice for at least
 one item: `feature/v1.2.0-<name>` branches, merged directly into `V1.2.0` (no PR), mirroring v1.1.0's
-established pattern exactly. Treat this as working precedent, not yet a written-down rule (see §4).
+established pattern exactly. This is now also a written-down rule, not just precedent — see §4.
+
+## 9. One commit still unpushed — push before doing anything else
+
+`git log origin/V1.2.0..V1.2.0` shows local `V1.2.0` is ahead of `origin/V1.2.0` by exactly one commit:
+`502490e` (this session's `CLAUDE.md` update, §4). Push this before starting item 2 (`cross-tab-anchor-links`)
+so the remote isn't left behind. This file itself (`docs/HANDOFF.md`) is also committed locally but not
+yet pushed as of this writing — check `git log origin/V1.2.0..V1.2.0` fresh rather than trusting this
+count, since it will change the moment this file's own commit lands.
