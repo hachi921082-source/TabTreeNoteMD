@@ -33,7 +33,9 @@ export interface PreviewInteractionsConfig {
   openTrigger: AppSettings["links"]["openTrigger"];
   confirmBeforeOpen: boolean;
   requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
-  onOpenMemoLink: (tabId: string, memoName: string | null) => void;
+  /** `anchorSlug` is the parsed `#slug` half of a `memo:...#slug` link (`docs/plans/v1.2.0/
+   * cross-tab-anchor-links/PLAN.md` §2), `null` when the link carried no anchor. */
+  onOpenMemoLink: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
   /** Click-to-enlarge lightbox (issue #83, preview pane only — live-view's own image click
    * behavior, #80, is untouched by this). Called with the clicked `<img>`'s current `src`, which by
    * click time is already the resolved `blob:` URL from `getOrLoadImage`'s cache (`PreviewPane.tsx`'s
