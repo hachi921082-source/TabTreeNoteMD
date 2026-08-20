@@ -3,16 +3,17 @@
 > Version-suffixed spec file for v1.2.0, following the convention started by `spec.v1.1.0.md`
 > (see `docs/README.md`'s File Structure section). `spec.md` and `spec.v1.1.0.md` stay frozen and are
 > never edited for post-v1.1.0 feature work. This file is the authoritative "what is decided" record for
-> v1.2.0-only additions/changes, consumed the same way by `designer-lite` (when writing
-> `docs/detailed-spec.v1.2.0.md`, a future file, not created by this pass) and downstream by
+> v1.2.0-only additions/changes, consumed the same way by `designer-lite` (in `docs/detailed-spec.v1.2.0.md`,
+> which elaborates this file to implementation-planning detail) and downstream by
 > `developer-lite` (`docs/plans/<feature-name>/PLAN.md`). Every item below that builds on or modifies
 > existing baseline/prior-version behavior is cited as `[spec §x]` / `[spec v1.1.0 §x]` /
 > `[MDEditor-spec §x]`. Decision rationale, comparative analysis, and rejected alternatives belong in
 > `DECISIONS.md`, not here. As of 2026-08-20.
 >
 > **Status**: all six requested features (§1–§6), plus a discoverability follow-up (§7) and two bug
-> fixes surfaced during review (§8 preview-only-mode scroll tracking, §9 preview-pane `#slug` anchor
-> navigation), are fully decided; no open points remain.
+> fixes surfaced during review (§8 preview-only-mode scroll tracking, §9 preview-pane link-encoding —
+> `#slug` anchor navigation **and**, per a decision made after implementation planning began, the
+> adjacent `memo:` link navigation branch too), are fully decided; no open points remain.
 
 ---
 
@@ -60,11 +61,16 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   never reaches the editor's own scroll state that `scrollPosition` reads from). Fixed by reading/
   restoring preview-mode scroll directly against the preview pane's own `[data-source-line]` markers.
   Decided.
-- **§9 Preview-Pane Same-Document `#slug` Anchor Navigation Fix (Bug Fix)** — elaborates `[spec §4.2]`.
-  Heading-anchor links with non-ASCII slugs (i.e. almost all Japanese headings) silently fail to jump in
-  the preview pane, because markdown-it's `normalizeLink` percent-encodes the `href` while the heading's
-  `id` stays raw. Fixed with a `decodeURIComponent` on the click-handler side. Also a prerequisite for
-  §4's cross-tab anchor feature working correctly in `preview`/`split` mode. Decided.
+- **§9 Preview-Pane Link-Encoding Fix — `#slug` Anchor Navigation and `memo:` Link Navigation (Bug Fix)**
+  — elaborates `[spec §4.2]` / `[spec §2.8]`. Heading-anchor links (`#slug`) and `memo:`/`memo:TabName/
+  MemoName` links alike silently fail to resolve in the preview pane whenever the slug or the tab/memo
+  name contains a non-ASCII character (i.e. almost any Japanese heading, tab, or memo name), because
+  markdown-it's `normalizeLink` percent-encodes the `href` while the corresponding lookup target (a
+  heading's `id`, or the real tab/memo name) stays raw. Both branches of the preview pane's click handler
+  get the identical `decodeURIComponent` fix. Also a prerequisite for §4's cross-tab anchor feature
+  working correctly in `preview`/`split` mode — for both halves of a `memo:TabName/MemoName#slug` link,
+  not just the anchor half. Decided (the `memo:`-branch half was added to this fix's scope after
+  implementation planning began, resolving `QA.md`'s `Q-v1.2.0-1`; see `DECISIONS.md`).
 - **Open Questions for User**
 
 ---
@@ -81,8 +87,11 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   feature, prompted by the same discoverability concern raised for §5's double-click gesture; §8 and §9
   are genuine bug fixes surfaced while investigating a question about Edit Lock, though neither turned
   out to be related to Edit Lock itself — §8 fixes `[spec v1.1.0 §2]`'s scroll-position restore for
-  preview-only mode, §9 fixes preview-pane `#slug` anchor navigation for non-ASCII heading slugs (and is
-  a prerequisite for §4 working correctly in preview/split mode).
+  preview-only mode, §9 fixes preview-pane link-encoding for non-ASCII names, covering both the `#slug`
+  anchor-navigation branch and (per a decision made after implementation planning began, once
+  `developer-lite`/`designer-lite` found the identical bug on the adjacent branch while elaborating §4)
+  the `memo:` link-navigation branch — making §9 a full prerequisite for §4 working correctly in
+  `preview`/`split` mode, not just for its anchor half.
 - None of the six modify data already persisted by `spec.md`/`spec.v1.1.0.md`. §3 is a pure UI-behavior
   change to an existing toolbar affordance (no schema change). §5's toggle-back state is transient,
   in-memory-only (no schema change, no persistence).
@@ -351,12 +360,16 @@ currently-open memo.
 ### 4.3 Resolution Behavior
 
 - **See §9 of this file**: preview-pane `#slug` navigation currently fails for non-ASCII heading slugs
-  regardless of how the anchor was reached (same-memo or, once this feature ships, cross-memo). §9's fix
-  is a prerequisite for this section's anchor-jump step to work correctly whenever the target memo is
-  viewed in `preview`/`split` mode — not a separate issue to solve here.
+  regardless of how the anchor was reached (same-memo or, once this feature ships, cross-memo); the
+  preview pane's `memo:TabName/MemoName` resolution independently fails the same way whenever the tab or
+  memo name is non-ASCII. §9's fix now covers both — it is a prerequisite for **both** steps below to
+  work correctly whenever the target memo is viewed in `preview`/`split` mode, not just the anchor-jump
+  step — not a separate issue to solve here.
 - **Step 1 — resolve the memo target**, exactly as today: `memo:MemoName` / `memo:TabName/MemoName`
   resolution against `AppSettings.tabs` and the target tab's tree, unchanged
-  (`[detailed-spec §5.8]`, "`memo:` link resolution").
+  (`[detailed-spec §5.8]`, "`memo:` link resolution"). Read literally, "unchanged" describes the
+  resolution *logic*; §9's fix corrects a preview-pane-only encoding defect in reaching that logic with
+  the right, undamaged target string in the first place — it does not alter step 1's own matching rules.
 - **Step 2 — if a `#slug` suffix is present, resolve the anchor within the now-identified target memo.**
   Since the target memo is not necessarily the currently-open memo (unlike today's same-memo-only
   `#slug` case), this requires the target memo's content to be available to scan for headings: after
@@ -570,7 +583,7 @@ pre-preview-mode position instead of where the user actually left off reading.
 
 ---
 
-## 9. Preview-Pane Same-Document `#slug` Anchor Navigation Fix (Bug Fix — `[spec §4.2]` TOC / Heading-Anchor Links)
+## 9. Preview-Pane Link-Encoding Fix — `#slug` Anchor Navigation and `memo:` Link Navigation (Bug Fix — `[spec §4.2]` TOC / Heading-Anchor Links, `[spec §2.8]` `memo:` Links)
 
 **Not an Edit Lock issue** — the original question that surfaced this ("do memo-internal links still work
 under Edit Lock?") turned out to have an unrelated real cause: same-document heading-anchor navigation
@@ -611,6 +624,26 @@ so this fix is a **prerequisite** for §4 behaving correctly whenever the destin
 `preview`/`split` mode with a non-ASCII heading slug (i.e. almost always, for Japanese content). No
 change to §4's own spec text is needed — it already specified reuse of the existing mechanism; this fix
 is what makes that existing mechanism correct in every pane mode, not just live view.
+
+**Bundled follow-up, decided after `Q-v1.2.0-1` (`docs/QA.md`) — the `memo:` link branch gets the
+identical fix, same implementation pass**: while elaborating §4/§9 into `detailed-spec.v1.2.0.md`,
+`designer-lite` re-ran this section's own root-cause investigation against a `memo:` target instead of a
+bare `#slug` target and confirmed the identical `normalizeLink` percent-encoding defect also corrupts
+`memo:TabName/MemoName` hrefs whenever the tab name or memo name (not just the anchor slug) contains a
+non-ASCII character — e.g. `mdurl.encode(mdurl.format(mdurl.parse('memo:Work/日記#見出し')))` returns
+`memo:Work/%E6%97%A5%E8%A8%98#%E8%A6%8B%E5%87%BA%E3%81%97`, corrupting the memo-name portion of the href
+just as thoroughly as the anchor portion. This is a **pre-existing bug in today's baseline `memo:`
+cross-tab links** (`[spec §2.8]`), not something introduced by §4 — but it directly undermines §4 for any
+Japanese-named tab/memo when clicked from the preview or split pane, since the memo-target half of a
+`memo:TabName/MemoName#slug` link would fail to resolve at all in that case, independent of whether the
+anchor half is even present. The user decided to fix this in the same v1.2.0 implementation pass rather
+than deferring it (see `DECISIONS.md` for the rationale and the rejected "track separately" alternative):
+`handleAnchorClick`'s `memo:`-prefixed branch (`src/editor/preview/previewInteractions.ts`, the sibling
+branch to the `#slug` branch fixed above) gets the identical `decodeURIComponent` treatment — decoding
+the `href` (or its `memo:`-stripped remainder) before it is passed on to `memo:` link resolution, so a
+non-ASCII tab/memo name round-trips correctly through the preview pane's rendering pipeline exactly as it
+already does in live view. Same fix shape, same root cause, same file, applied to the one remaining
+branch this section's original fix did not touch.
 
 ---
 
