@@ -5,6 +5,14 @@
 // The backend's `path_safety::validate_name` call is authoritative; this
 // module only avoids an obviously-doomed round-trip. Keep in sync with the
 // Rust rules if either changes.
+//
+// `validateNameStrict`'s `reason` strings are inline UI-chrome text (shown under a name-input
+// field, `dialogs/PromptDialog.tsx`'s `ttn-dialog-error`) — translated via `useT()`, same as every
+// other user-facing string in this app (`docs/plans/v1.2.0/i18n/PLAN.md` §6/§7 follow-up; folded in
+// after the initial extraction pass since this module's location under `src/shared/` wasn't in
+// `PLAN.md` §6's enumerated file list). `validateNameStrict` takes `t` as a parameter (this module
+// has no React context of its own) — every call site already has `t` in scope via its own `useT()`.
+import type { TranslationKey } from "../i18n";
 
 const FORBIDDEN_CHARS = ["\\", "/", ":", "*", "?", '"', "<", ">", "|"];
 
@@ -52,21 +60,21 @@ export type NameValidationResult = { valid: true } | { valid: false; reason: str
 /** Mirrors `ValidationMode::Strict` (new-name entry: tab create/rename, memo
  * create/rename) — rejects forbidden characters, control characters,
  * reserved device names, leading/trailing spaces, and a trailing period. */
-export function validateNameStrict(name: string): NameValidationResult {
+export function validateNameStrict(name: string, t: (key: TranslationKey) => string): NameValidationResult {
   if (name.length === 0) {
-    return { valid: false, reason: "名前を入力してください" };
+    return { valid: false, reason: t("validation.nameRequired") };
   }
   if (hasForbiddenChar(name)) {
-    return { valid: false, reason: '使用できない文字が含まれています ( \\ / : * ? " < > | )' };
+    return { valid: false, reason: t("validation.forbiddenChars") };
   }
   if (isReservedName(name)) {
-    return { valid: false, reason: "この名前は予約されているため使用できません" };
+    return { valid: false, reason: t("validation.reservedName") };
   }
   if (name.startsWith(" ") || name.endsWith(" ")) {
-    return { valid: false, reason: "先頭または末尾に空白は使用できません" };
+    return { valid: false, reason: t("validation.leadingTrailingSpace") };
   }
   if (name.endsWith(".")) {
-    return { valid: false, reason: "末尾にピリオドは使用できません" };
+    return { valid: false, reason: t("validation.trailingPeriod") };
   }
   return { valid: true };
 }
