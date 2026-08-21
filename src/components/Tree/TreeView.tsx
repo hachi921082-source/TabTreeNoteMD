@@ -29,6 +29,7 @@ import { useImport } from "../../state/useImport";
 import type { UseToastResult } from "../../state/useToast";
 import type { AppSettings, LabelColor, MemoProperties, RecoveryStatus } from "../../shared/models";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
+import { useT } from "../../i18n";
 import "./Tree.css";
 
 export interface TreeViewProps {
@@ -77,14 +78,16 @@ interface DragState {
 
 type DropTarget = { kind: "row"; path: string; position: DropPosition } | { kind: "tab"; tabId: string } | null;
 
-const LABEL_CHOICES: { label: string; color: LabelColor }[] = [
-  { label: "🔴 赤", color: "red" },
-  { label: "🔵 青", color: "blue" },
-  { label: "🟢 緑", color: "green" },
-  { label: "🟡 黄", color: "yellow" },
-];
-
 export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
+  const t = useT();
+  // Moved inside the component (not a module-level constant) so the label text can go through
+  // `useT()` — `docs/plans/v1.2.0/i18n/PLAN.md` §6.
+  const LABEL_CHOICES: { label: string; color: LabelColor }[] = [
+    { label: `🔴 ${t("tree.labelRed")}`, color: "red" },
+    { label: `🔵 ${t("tree.labelBlue")}`, color: "blue" },
+    { label: `🟢 ${t("tree.labelGreen")}`, color: "green" },
+    { label: `🟡 ${t("tree.labelYellow")}`, color: "yellow" },
+  ];
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const hoveredTabElRef = useRef<HTMLElement | null>(null);
@@ -448,36 +451,36 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
       // GitHub issue #156: an edit-locked memo must not be renamed or deleted either, not just
       // have its body protected from edits. "削除" additionally checks every selected node's
       // whole subtree, since deleting a node deletes its entire subtree (`[spec §2.2]`).
-      { label: "名前を変更", disabled: !singleSelection || isLocked, onSelect: () => setRenamingPath(path) },
-      { label: "削除", danger: true, disabled: selectionHasLocked(selectedPaths), onSelect: () => setPendingDialog({ kind: "deleteConfirm", paths: selectedPaths }) },
-      { label: "メモを作成", onSelect: () => setPendingDialog({ kind: "createRoot" }) },
-      { label: "子として作成", disabled: !singleSelection, onSelect: () => setPendingDialog({ kind: "createChild", parent: path }) },
+      { label: t("common.rename"), disabled: !singleSelection || isLocked, onSelect: () => setRenamingPath(path) },
+      { label: t("common.delete"), danger: true, disabled: selectionHasLocked(selectedPaths), onSelect: () => setPendingDialog({ kind: "deleteConfirm", paths: selectedPaths }) },
+      { label: t("tree.createMemo"), onSelect: () => setPendingDialog({ kind: "createRoot" }) },
+      { label: t("tree.createChild"), disabled: !singleSelection, onSelect: () => setPendingDialog({ kind: "createChild", parent: path }) },
       {
-        label: "アイコン",
+        label: t("tree.icon"),
         submenu: [
-          { label: "なし", onSelect: () => void tree.setLabel(path, null) },
+          { label: t("tree.labelNone"), onSelect: () => void tree.setLabel(path, null) },
           ...LABEL_CHOICES.map((c) => ({ label: c.label, onSelect: () => void tree.setLabel(path, c.color) })),
         ],
       },
       {
-        label: "プロパティ",
+        label: t("common.properties"),
         disabled: !singleSelection,
         onSelect: () => {
           setPendingDialog({ kind: "properties", path });
           void tree.getProperties(path).then((props) => setProperties(props));
         },
       },
-      { label: "ファイルの場所を開く", disabled: !singleSelection, onSelect: () => void tree.openLocation(path) },
+      { label: t("tree.openLocation"), disabled: !singleSelection, onSelect: () => void tree.openLocation(path) },
       isLocked
-        ? { label: "編集ロック解除", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, false) }
-        : { label: "編集ロック", disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, true) },
+        ? { label: t("tree.editLockOff"), disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, false) }
+        : { label: t("tree.editLockOn"), disabled: !singleSelection, onSelect: () => void tree.setEditLock(path, true) },
       isFavorite
-        ? { label: "お気に入りから削除", disabled: !singleSelection, onSelect: () => void tree.setFavorite(path, false) }
-        : { label: "お気に入りに追加", disabled: !singleSelection, onSelect: () => void tree.setFavorite(path, true) },
+        ? { label: t("tree.favoriteRemove"), disabled: !singleSelection, onSelect: () => void tree.setFavorite(path, false) }
+        : { label: t("tree.favoriteAdd"), disabled: !singleSelection, onSelect: () => void tree.setFavorite(path, true) },
     ];
   };
 
-  const emptyAreaMenuItems: ContextMenuItem[] = [{ label: "メモを作成", onSelect: () => setPendingDialog({ kind: "createRoot" }) }];
+  const emptyAreaMenuItems: ContextMenuItem[] = [{ label: t("tree.createMemo"), onSelect: () => setPendingDialog({ kind: "createRoot" }) }];
 
   if (loading) {
     return <div className="ttn-tree ttn-tree-loading" ref={containerRef} />;
@@ -486,7 +489,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
   if (recoveryPending && recoveryKind === "permanentUnlock") {
     return (
       <div className="ttn-tree ttn-tree-message" ref={containerRef}>
-        <p>前回の完全ロック解除処理が完了しませんでした。復旧処理が必要です。</p>
+        <p>{t("tree.recoveryPermanentUnlockMessage")}</p>
         {activeTabId && <PermanentUnlockRecoveryDialog tabId={activeTabId} tabLock={tabLock} />}
       </div>
     );
@@ -495,7 +498,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
   if (recoveryPending) {
     return (
       <div className="ttn-tree ttn-tree-message" ref={containerRef}>
-        <p>前回のロック操作が完了しませんでした。復旧処理が必要です。</p>
+        <p>{t("tree.recoveryLockMessage")}</p>
         {recoveryStatus && (
           <RecoveryDialog
             variant="lock"
@@ -505,7 +508,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
             anomalousCount={recoveryStatus.anomalousCount}
             defaultAction={recoveryStatus.defaultAction}
             busy={tabLock.busy}
-            errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null}
+            errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode, t) : null}
             onCancel={() => tabLock.clearLastError()}
             onFinish={(password) => {
               if (activeTabId) void tabLock.finishRecovery(activeTabId, password);
@@ -529,17 +532,17 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
   if (locked && !hasActiveSession) {
     return (
       <div className="ttn-tree ttn-tree-message" ref={containerRef}>
-        <p>🔒 このタブはロックされています</p>
+        <p>{t("tree.lockedMessage")}</p>
         <button type="button" onClick={() => setPendingDialog({ kind: "unlock" })}>
-          🔓 ロック解除
+          {t("tree.unlockButton")}
         </button>
         {pendingDialog?.kind === "unlock" && (
           <PasswordDialog
-            title="ロック解除"
+            title={t("tabLock.unlock")}
             mode="unlock"
             busy={tabLock.busy}
-            errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null}
-            submitLabel="ロック解除"
+            errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode, t) : null}
+            submitLabel={t("tabLock.unlock")}
             onCancel={() => {
               setPendingDialog(null);
               tabLock.clearLastError();
@@ -573,22 +576,22 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
           session lets the user permanently unlock this tab without re-entering its password. */}
       {locked && hasActiveSession && (
         <div className="ttn-tree-session-banner">
-          <span>🔓 このタブは一時的にロック解除されています</span>
+          <span>{t("tree.sessionBanner")}</span>
           <button type="button" onClick={() => setPendingDialog({ kind: "permanentUnlockConfirm" })}>
-            完全にロック解除
+            {t("tabLock.permanentUnlock")}
           </button>
         </div>
       )}
       {pendingDialog?.kind === "permanentUnlockConfirm" && (
         <ConfirmDialog
-          title="完全にロック解除"
+          title={t("tabLock.permanentUnlock")}
           message={
             <>
-              <p>このタブを完全にロック解除すると、暗号化前の通常のタブに戻ります。この操作は取り消せません。</p>
-              <p>念のため、事前にフォルダ全体のバックアップを取っておくことをおすすめします。</p>
+              <p>{t("tabLock.permanentUnlockWarning1Unnamed")}</p>
+              <p>{t("tabLock.permanentUnlockWarning2")}</p>
             </>
           }
-          confirmLabel="完全にロック解除"
+          confirmLabel={t("tabLock.permanentUnlock")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             if (!activeTabId) return;
@@ -600,7 +603,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
       {nodes.length === 0 ? (
         <div className="ttn-tree-empty">
           <button type="button" onClick={() => setPendingDialog({ kind: "createRoot" })}>
-            ＋ メモを作成
+            {t("tree.createMemoButton")}
           </button>
         </div>
       ) : (
@@ -634,7 +637,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
 
       {lastErrorCode && (
         <div className="ttn-tree-error" role="alert">
-          <span>{errorMessageFor(lastErrorCode)}</span>
+          <span>{errorMessageFor(lastErrorCode, t)}</span>
           <button type="button" onClick={clearLastError}>
             ×
           </button>
@@ -652,9 +655,9 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
 
       {pendingDialog?.kind === "createRoot" && (
         <PromptDialog
-          title="メモを作成"
-          label="メモ名"
-          validate={validateNameStrict}
+          title={t("tree.createMemo")}
+          label={t("tree.memoNameLabel")}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             setPendingDialog(null);
@@ -665,9 +668,9 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
 
       {pendingDialog?.kind === "createChild" && (
         <PromptDialog
-          title="子メモを作成"
-          label="メモ名"
-          validate={validateNameStrict}
+          title={t("tree.createChildTitle")}
+          label={t("tree.memoNameLabel")}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const parent = pendingDialog.parent;
@@ -679,9 +682,9 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
 
       {pendingDialog?.kind === "deleteConfirm" && (
         <ConfirmDialog
-          title="メモを削除"
-          message={`選択した ${pendingDialog.paths.length} 件のメモ（子メモを含む）をごみ箱に移動します。`}
-          confirmLabel="削除"
+          title={t("tree.deleteMemoTitle")}
+          message={t("tree.deleteMemoMessageTemplate").replace("{count}", String(pendingDialog.paths.length))}
+          confirmLabel={t("common.delete")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             const paths = pendingDialog.paths;
@@ -693,9 +696,9 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
 
       {pendingDialog?.kind === "trashFailedConfirm" && (
         <ConfirmDialog
-          title="ごみ箱への移動に失敗しました"
-          message="ごみ箱に移動できませんでした。このまま完全に削除しますか？この操作は取り消せません。"
-          confirmLabel="完全に削除"
+          title={t("tree.trashFailedTitle")}
+          message={t("tree.trashFailedMessage")}
+          confirmLabel={t("tree.permanentDelete")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             const paths = pendingDialog.paths;
@@ -707,7 +710,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
 
       {pendingDialog?.kind === "properties" && (
         <Dialog
-          title="プロパティ"
+          title={t("common.properties")}
           onClose={() => {
             setPendingDialog(null);
             setProperties(null);
@@ -715,7 +718,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
           footer={
             <>
               <button type="button" onClick={() => void tree.openLocation(pendingDialog.path)}>
-                ファイルの場所を開く(O)
+                {t("properties.openLocationMnemonic")}
               </button>
               <button
                 type="button"
@@ -724,7 +727,7 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
                   setProperties(null);
                 }}
               >
-                閉じる
+                {t("common.close")}
               </button>
             </>
           }
@@ -732,45 +735,45 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
           {properties ? (
             <>
               <section>
-                <h3 className="ttn-properties-section-title">ファイル情報</h3>
+                <h3 className="ttn-properties-section-title">{t("properties.fileInfoSection")}</h3>
                 <dl className="ttn-properties-list">
-                  <dt>ファイル名</dt>
+                  <dt>{t("properties.fileName")}</dt>
                   <dd>{properties.fileName}</dd>
-                  <dt>ファイルパス</dt>
+                  <dt>{t("properties.filePath")}</dt>
                   <dd className="ttn-properties-file-path">{properties.filePath}</dd>
-                  <dt>作成日時</dt>
-                  <dd>{formatDateTime(properties.createdMs)}</dd>
-                  <dt>更新日時</dt>
-                  <dd>{formatDateTime(properties.modifiedMs)}</dd>
-                  <dt>ファイルサイズ</dt>
-                  <dd>{properties.fileSizeBytes.toLocaleString()} バイト</dd>
+                  <dt>{t("properties.createdAt")}</dt>
+                  <dd>{formatDateTime(properties.createdMs, t)}</dd>
+                  <dt>{t("properties.modifiedAt")}</dt>
+                  <dd>{formatDateTime(properties.modifiedMs, t)}</dd>
+                  <dt>{t("properties.fileSize")}</dt>
+                  <dd>{properties.fileSizeBytes.toLocaleString()} {t("properties.bytesSuffix")}</dd>
                 </dl>
               </section>
               <section className="ttn-properties-section">
-                <h3 className="ttn-properties-section-title">文字数カウント</h3>
+                <h3 className="ttn-properties-section-title">{t("properties.charCountSection")}</h3>
                 <dl className="ttn-properties-list">
-                  <dt>総字数</dt>
+                  <dt>{t("properties.totalCharCount")}</dt>
                   <dd>{properties.charCount.toLocaleString()}</dd>
-                  <dt>字数</dt>
-                  <dd>{properties.charCountExcludingWhitespace.toLocaleString()}（改行・空白を除く）</dd>
-                  <dt>行数</dt>
+                  <dt>{t("properties.charCount")}</dt>
+                  <dd>{properties.charCountExcludingWhitespace.toLocaleString()}{t("properties.excludingWhitespace")}</dd>
+                  <dt>{t("properties.lineCount")}</dt>
                   <dd>{properties.lineCount.toLocaleString()}</dd>
                 </dl>
               </section>
             </>
           ) : (
-            <p>読み込み中...</p>
+            <p>{t("common.loading")}</p>
           )}
         </Dialog>
       )}
 
       {pendingDialog?.kind === "unlockForDrop" && (
         <PasswordDialog
-          title="ロックされたタブにドロップ"
+          title={t("tree.unlockForDropTitle")}
           mode="unlock"
           busy={tabLock.busy}
-          errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null}
-          submitLabel="ロック解除して移動"
+          errorMessage={tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode, t) : null}
+          submitLabel={t("tree.unlockAndMove")}
           onCancel={() => {
             // `docs/plans/tab-lock/PLAN.md` §5: "the drop is aborted — the source memo is
             // untouched, no partial state" — closing this dialog without submitting leaves
