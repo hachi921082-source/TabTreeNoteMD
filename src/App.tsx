@@ -280,6 +280,7 @@ function App() {
         applyFetched={settingsState.applyFetched}
         onOpenSearchHit={openSearchHit}
         onOpenQuickOpenHit={openQuickOpenHit}
+        onActiveTabDoubleClick={() => editorRef.current?.toggleJumpToStart()}
       />
       <Toast toasts={toastState.toasts} onDismiss={toastState.dismissToast} />
       <div className="app-content">

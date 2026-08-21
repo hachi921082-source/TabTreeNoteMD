@@ -79,6 +79,12 @@ export interface TabBarProps {
    * jump-to-tab-and-open behavior as Quick Open's Selecting a result") — favorites-mode's own
    * `QuickOpenDialog` instance below is wired to this same callback, no separate prop needed. */
   onOpenQuickOpenHit: (tabId: string, memoName: string) => void;
+  /** Double-click-active-tab jump-to-start (`docs/plans/v1.2.0/tab-double-click-jump/PLAN.md` §2)
+   * -- called only when the double-clicked tab is already the active tab (see the `<div>`'s own
+   * `onDoubleClick` guard below); a double-click on an inactive tab is unaffected, resolving as two
+   * ordinary single-click selections. Wired from `App.tsx`, which owns `EditorPane`'s imperative
+   * `toggleJumpToStart` handle. */
+  onActiveTabDoubleClick?: () => void;
 }
 
 type PendingDialog =
@@ -106,7 +112,17 @@ function baseNameOf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched, onOpenSearchHit, onOpenQuickOpenHit }: TabBarProps) {
+export function TabBar({
+  tabsState,
+  tabLockState,
+  beforeLockTab,
+  settings,
+  patchSettings,
+  applyFetched,
+  onOpenSearchHit,
+  onOpenQuickOpenHit,
+  onActiveTabDoubleClick,
+}: TabBarProps) {
   const {
     tabs,
     activeTabId,
@@ -346,12 +362,21 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
               onMouseDown={handleMouseDownOnTab(tab.id)}
               onMouseEnter={handleMouseEnterTab(tab.id)}
               onClick={() => selectTab(tab.id)}
+              // Double-click-active-tab jump-to-start (`docs/plans/v1.2.0/tab-double-click-jump/
+              // PLAN.md` §2) -- the `tab.id === activeTabId` guard IS the entire implementation of
+              // "inactive tab unaffected": a native `dblclick` fires IN ADDITION TO, not instead
+              // of, the two `click` events a double-click sequence already produces, so an
+              // inactive tab's double-click still just resolves as two ordinary single-click
+              // selections with no extra code needed here.
+              onDoubleClick={() => {
+                if (tab.id === activeTabId) onActiveTabDoubleClick?.();
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
               }}
-              title={displayName}
+              title={tab.id === activeTabId ? `${displayName} (ダブルクリックで先頭へ)` : displayName}
             >
               <span className="ttn-tab-name">{displayName}</span>
             </div>
