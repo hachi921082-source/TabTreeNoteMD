@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 // `memoName`, `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1) and
 // `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md`'s `tabLockAutoRelockMinutes` addition — a
 // single bump for both, not two separate increments (`[detailed-spec v1.1.0 §5.4]`).
-pub const APP_SETTINGS_SCHEMA_VERSION: u32 = 2;
+// v1.2.0: bumped 2 -> 3, covering this file's `language` addition alone (`docs/plans/v1.2.0/i18n/
+// PLAN.md` §2) — the only new persisted field across all nine v1.2.0 items.
+pub const APP_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +57,13 @@ pub struct AppSettings {
     /// `null` value already present in the JSON.
     #[serde(default = "default_auto_relock_minutes")]
     pub tab_lock_auto_relock_minutes: Option<u32>,
+    /// Additive field, `docs/plans/v1.2.0/i18n/PLAN.md` §2 — `None` = "not yet chosen, auto-detect
+    /// default" (resolved on the frontend, `PLAN.md` §5); `Some("ja" | "en")` once the user has
+    /// explicitly picked a language from Settings. `#[serde(default)]` so a pre-upgrade
+    /// `settings.json` (key entirely absent) parses cleanly to `None`, same treatment as
+    /// `appearance`/`preview` above — no destructive migration needed.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +341,7 @@ impl Default for AppSettings {
             shortcuts: HashMap::new(),
             autostart: AutostartSettings { enabled: false },
             tab_lock_auto_relock_minutes: default_auto_relock_minutes(),
+            language: None,
         }
     }
 }
