@@ -28,6 +28,7 @@ import { scrollPreviewToLine } from "../../editor/preview/scrollSync";
 import { getOrLoadImage } from "../../editor/imageLoader";
 import { computeTopVisibleLine } from "../../editor/textCommands";
 import type { AppSettings, ExternalLinkKind, PaneMode } from "../../shared/models";
+import { useT } from "../../i18n";
 import { Dialog } from "../dialogs/Dialog";
 import "./Editor.css";
 
@@ -108,6 +109,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
   },
   ref,
 ) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   // Outer scrollable div (`overflow-y: auto` — see `Editor.css`'s `.ttn-editor-preview-pane`), kept
   // as a SEPARATE ref from `containerRef` (the inner content div) specifically so `getContainer()`
@@ -303,7 +305,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
         />
       </div>
       {lightboxSrc && (
-        <Dialog title="画像" className="ttn-lightbox-dialog" onClose={() => setLightboxSrc(null)}>
+        <Dialog title={t("previewPane.imageDialogTitle")} className="ttn-lightbox-dialog" onClose={() => setLightboxSrc(null)}>
           <img className="ttn-lightbox-image" src={lightboxSrc} alt="" />
         </Dialog>
       )}
