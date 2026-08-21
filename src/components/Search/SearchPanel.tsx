@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import type { EditorView } from "@codemirror/view";
 import type { UseSearchResult } from "../../state/useSearch";
+import { useT } from "../../i18n";
 import "./Search.css";
 
 export interface SearchPanelProps {
@@ -13,6 +14,7 @@ export interface SearchPanelProps {
 }
 
 export function SearchPanel({ search, getView }: SearchPanelProps) {
+  const t = useT();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -36,12 +38,12 @@ export function SearchPanel({ search, getView }: SearchPanelProps) {
   };
 
   return (
-    <div className="ttn-search-panel" role="dialog" aria-label="検索と置換">
+    <div className="ttn-search-panel" role="dialog" aria-label={t("searchPanel.ariaLabel")}>
       <div className="ttn-search-row">
         <input
           ref={searchInputRef}
           type="text"
-          placeholder="検索"
+          placeholder={t("common.search")}
           list="ttn-search-history"
           value={search.searchText}
           onChange={(e) => search.setSearchText(e.target.value)}
@@ -57,16 +59,16 @@ export function SearchPanel({ search, getView }: SearchPanelProps) {
             <option key={h} value={h} />
           ))}
         </datalist>
-        <button type="button" onClick={() => withView(search.findPreviousInView)} title="前へ">
+        <button type="button" onClick={() => withView(search.findPreviousInView)} title={t("searchPanel.prev")}>
           ▲
         </button>
-        <button type="button" onClick={() => withView(search.findNextInView)} title="次へ">
+        <button type="button" onClick={() => withView(search.findNextInView)} title={t("searchPanel.next")}>
           ▼
         </button>
-        <button type="button" onClick={() => withView(search.selectAllMatchesInView)} title="すべて選択">
-          全選択
+        <button type="button" onClick={() => withView(search.selectAllMatchesInView)} title={t("common.selectAll")}>
+          {t("common.selectAll")}
         </button>
-        <button type="button" className="ttn-search-close" onClick={search.close} title="閉じる (Esc)">
+        <button type="button" className="ttn-search-close" onClick={search.close} title={t("searchPanel.closeTitle")}>
           ×
         </button>
       </div>
@@ -74,7 +76,7 @@ export function SearchPanel({ search, getView }: SearchPanelProps) {
       <div className="ttn-search-row">
         <input
           type="text"
-          placeholder="置換後の文字列"
+          placeholder={t("searchPanel.replacePlaceholder")}
           value={search.replaceText}
           onChange={(e) => search.setReplaceText(e.target.value)}
           onKeyDown={(e) => {
@@ -85,25 +87,25 @@ export function SearchPanel({ search, getView }: SearchPanelProps) {
           }}
         />
         <button type="button" onClick={() => withView(search.replaceOneInView)}>
-          置換
+          {t("searchPanel.replaceOne")}
         </button>
         <button type="button" onClick={() => withView(search.replaceAllInView)}>
-          すべて置換
+          {t("searchPanel.replaceAll")}
         </button>
       </div>
 
       <div className="ttn-search-options">
         <label>
           <input type="checkbox" checked={search.options.caseSensitive} onChange={() => search.toggleOption("caseSensitive")} />
-          大文字/小文字を区別
+          {t("searchPanel.caseSensitive")}
         </label>
         <label>
           <input type="checkbox" checked={search.options.wholeWord} onChange={() => search.toggleOption("wholeWord")} />
-          単語単位
+          {t("searchPanel.wholeWord")}
         </label>
         <label>
           <input type="checkbox" checked={search.options.regexp} onChange={() => search.toggleOption("regexp")} />
-          正規表現
+          {t("search.regexp")}
         </label>
       </div>
     </div>
