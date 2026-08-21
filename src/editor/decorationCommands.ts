@@ -161,9 +161,14 @@ export function tableCommand(view: EditorView): boolean {
 // selection), leaving `url` selected so the user can immediately type/paste over it.
 // ---------------------------------------------------------------------------
 
-export function linkCommand(view: EditorView): boolean {
+/** `defaultLabel` is the placeholder inserted when there's no selection — the caller (`Markdown
+ * Toolbar.tsx`'s "link" toolbar action, a React component with `useT()` access) supplies the
+ * translated `t("editor.defaultLinkLabel")` value rather than this function owning a hardcoded
+ * Japanese default (`docs/plans/v1.2.0/i18n/PLAN.md` §6/§7 follow-up) — this module itself has no
+ * React context of its own. */
+export function linkCommand(view: EditorView, defaultLabel: string): boolean {
   const { from, to, text } = currentSelectionText(view);
-  const label = text === "" ? "リンク" : text;
+  const label = text === "" ? defaultLabel : text;
   const insert = `[${label}](url)`;
   const urlStart = from + label.length + 3; // "[" + label + "]("
   view.dispatch({ changes: { from, to, insert }, selection: { anchor: urlStart, head: urlStart + 3 } });
