@@ -64,6 +64,14 @@ const PANE_MODE_LABEL: Record<PaneMode, string> = {
   preview: "プレビューのみ",
 };
 
+/** Same fixed cycling order as `EditorPane.tsx`'s own `PANE_MODE_CYCLE` (`docs/plans/markdown/
+ * markdown-preview/PLAN.md` §4.1, `edit -> split -> preview -> edit -> ...`) — duplicated locally
+ * (not imported) to avoid a circular import between this file and `EditorPane.tsx`, mirroring how
+ * `PANE_MODE_LABEL` above is already a local copy rather than an import. Used to show the toolbar
+ * button's *next*-state label instead of its current state (`docs/plans/v1.2.0/
+ * pane-mode-toolbar-semantics/PLAN.md` §3). */
+const PANE_MODE_CYCLE: Record<PaneMode, PaneMode> = { edit: "split", split: "preview", preview: "edit" };
+
 const DEFAULT_POSITION = { x: 24, y: 24 };
 
 /** Debounce for persisting the toolbar's clamped position specifically during window *resize*
@@ -597,16 +605,16 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           ⋮⋮
         </span>
         <button type="button" className="ttn-md-toolbar-view-toggle" onClick={onToggleLiveView}>
-          {liveViewEnabled ? "ライブ表示" : "ソース表示"}
+          {liveViewEnabled ? "ソース表示" : "ライブ表示"}
         </button>
         <button
           type="button"
           className="ttn-md-toolbar-pane-mode"
           onClick={onCyclePaneMode}
           disabled={previewLocked}
-          aria-label={`ペイン表示モードを切り替え (現在: ${PANE_MODE_LABEL[paneMode]})`}
+          aria-label={`${PANE_MODE_LABEL[PANE_MODE_CYCLE[paneMode]]}に切替`}
         >
-          {PANE_MODE_LABEL[paneMode]}
+          {PANE_MODE_LABEL[PANE_MODE_CYCLE[paneMode]]}
         </button>
         {/* Preview-lock (GitHub issue #149) — pins the memo at effectively `"preview"`, disabling
             the pane-mode button above and every auto-reveal trigger elsewhere until unlocked again
