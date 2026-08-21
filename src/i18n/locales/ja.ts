@@ -271,6 +271,9 @@ export const ja = {
   "settings.shortcutLabel.markdown.rearrangeToggle": "ツールバー並べ替え",
   "settings.shortcutLabel.markdown.toggleLiveView": "ライブ/ソース表示切替",
   "settings.shortcutLabel.markdown.paneModeCycle": "ペイン表示モードを切り替え",
+  "settings.shortcutLabel.markdown.pdfExport": "PDF出力",
+  "settings.shortcutLabel.preview.zoomIn": "プレビューをズームイン",
+  "settings.shortcutLabel.preview.zoomOut": "プレビューをズームアウト",
 
   // ---- SearchPanel.tsx (in-memo find/replace) --------------------------------
   "searchPanel.ariaLabel": "検索と置換",
