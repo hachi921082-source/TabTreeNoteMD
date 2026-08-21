@@ -15,13 +15,13 @@ import type { AppSettings } from "../shared/models";
 import type { UseTabLockResult } from "./useTabLock";
 import type { UseToastResult } from "./useToast";
 import { isModalActive } from "../shared/modalActivityGate";
+import { useT } from "../i18n";
 
 /** `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §3 (`[detailed-spec v1.1.0 §1.4]`) — fixed,
  * not configurable, not proportional to the configured timeout. Always shorter than the smallest
  * preset (5 min = 300s), so the warning window never needs clamping. */
 const WARNING_LEAD_MS = 30_000;
 const TICK_MS = 1_000;
-const AUTO_RELOCK_TOAST_MESSAGE = "非アクティブのため自動的にロックされました";
 
 export interface UseTabLockAutoRelockParams {
   activeTabId: string | null;
@@ -38,15 +38,20 @@ export interface UseTabLockAutoRelockParams {
  * `useAppearance`'s "wire up and return nothing" shape in `App.tsx`. */
 export function useTabLockAutoRelock({ activeTabId, tabLockState, settings, toast, flushAndCloseActiveMemo }: UseTabLockAutoRelockParams): void {
   const hasSession = activeTabId !== null && tabLockState.activeSessionRealNames.has(activeTabId);
+  const t = useT();
 
   // Read live on every tick/activity event rather than being effect dependencies — lets a
   // mid-session Settings change (or a toast/flush function identity change) take effect on the very
   // next tick without tearing down and restarting the timer (which would also wrongly reset
-  // `elapsedRef` to 0, see the effect below).
+  // `elapsedRef` to 0, see the effect below). `tRef` follows the same pattern for the current-
+  // language `t` (`docs/plans/v1.2.0/i18n/PLAN.md` §6) — a mid-session language change should not
+  // tear down/restart the timer either.
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const toastRef = useRef(toast);
   toastRef.current = toast;
+  const tRef = useRef(t);
+  tRef.current = t;
   const flushAndCloseActiveMemoRef = useRef(flushAndCloseActiveMemo);
   flushAndCloseActiveMemoRef.current = flushAndCloseActiveMemo;
   const tabLockStateRef = useRef(tabLockState);
@@ -77,7 +82,7 @@ export function useTabLockAutoRelock({ activeTabId, tabLockState, settings, toas
       await flushAndCloseActiveMemoRef.current(tabId);
       tabLockStateRef.current.endSession(tabId);
       dismissWarningToast();
-      if (showToast) toastRef.current.pushToast(AUTO_RELOCK_TOAST_MESSAGE);
+      if (showToast) toastRef.current.pushToast(tRef.current("toast.autoRelocked"));
     },
     [dismissWarningToast],
   );
@@ -117,7 +122,7 @@ export function useTabLockAutoRelock({ activeTabId, tabLockState, settings, toas
         // Sticky (`autoDismissMs: null`) — must stay visible for up to the full 30s lead time (or
         // longer while paused), not the shared `Toast` primitive's default 5s. Dismissed explicitly
         // by `dismissWarningToast` (activity-reset) or `teardown` (timeout fires).
-        warningToastIdRef.current = toastRef.current.pushToast("まもなく非アクティブのためロックされます", "warning", null);
+        warningToastIdRef.current = toastRef.current.pushToast(tRef.current("toast.autoRelockWarning"), "warning", null);
       }
     };
 

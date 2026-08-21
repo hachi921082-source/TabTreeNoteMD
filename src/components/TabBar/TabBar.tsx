@@ -47,6 +47,7 @@ import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize"
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { windowSetAlwaysOnTop } from "../../ipc/window";
+import { useT } from "../../i18n";
 import { TitleBarControls } from "./TitleBarControls";
 import { SettingsDialog } from "../Settings/SettingsDialog";
 import { CrossTabSearchDialog } from "../Search/CrossTabSearchDialog";
@@ -123,6 +124,7 @@ export function TabBar({
   onOpenQuickOpenHit,
   onActiveTabDoubleClick,
 }: TabBarProps) {
+  const t = useT();
   const {
     tabs,
     activeTabId,
@@ -376,16 +378,16 @@ export function TabBar({
                 e.stopPropagation();
                 setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
               }}
-              title={tab.id === activeTabId ? `${displayName} (ダブルクリックで先頭へ)` : displayName}
+              title={tab.id === activeTabId ? `${displayName} ${t("tabBar.jumpToStartSuffix")}` : displayName}
             >
               <span className="ttn-tab-name">{displayName}</span>
             </div>
           );
         })}
-        <button type="button" className="ttn-tab-create" title="既存フォルダを登録" onClick={() => void handleCreateTab()}>
+        <button type="button" className="ttn-tab-create" title={t("tabBar.registerExisting")} onClick={() => void handleCreateTab()}>
           📂
         </button>
-        <button type="button" className="ttn-tab-create" title="新しいタブを作成" onClick={handleOpenCreateNew}>
+        <button type="button" className="ttn-tab-create" title={t("tab.createNewTitle")} onClick={handleOpenCreateNew}>
           ＋
         </button>
 
@@ -397,13 +399,13 @@ export function TabBar({
               left of the pin button, mirroring how the pin button itself sits immediately to the
               left of the search button (`[spec §2.1]`). Always visible, single click target, no
               default keyboard shortcut (bindable via Settings → Shortcuts). */}
-          <button type="button" className="ttn-toolbar-btn" title="お気に入り" aria-label="お気に入り" onClick={favorites.open}>
+          <button type="button" className="ttn-toolbar-btn" title={t("tabBar.favorites")} aria-label={t("tabBar.favorites")} onClick={favorites.open}>
             ★
           </button>
           <button
             type="button"
             className={`ttn-toolbar-btn${alwaysOnTop ? " ttn-toolbar-btn-active" : ""}`}
-            title={alwaysOnTop ? "最前面固定を解除" : "最前面に固定"}
+            title={alwaysOnTop ? t("tabBar.pinOff") : t("tabBar.pinOn")}
             aria-pressed={alwaysOnTop}
             onClick={() => void handleToggleAlwaysOnTop()}
           >
@@ -414,8 +416,8 @@ export function TabBar({
           <button
             type="button"
             className="ttn-toolbar-btn"
-            title={`検索 ／ クイックオープン (${resolveShortcuts(settings?.shortcuts)["search.quickOpen"]}) でメモ名検索`}
-            aria-label="検索"
+            title={t("tabBar.searchTooltipTemplate").replace("{combo}", resolveShortcuts(settings?.shortcuts)["search.quickOpen"])}
+            aria-label={t("common.search")}
             onClick={crossTabSearch.open}
           >
             🔍
@@ -425,8 +427,8 @@ export function TabBar({
           <button
             type="button"
             className="ttn-toolbar-btn"
-            title="ツリーの位置を切り替え"
-            aria-label="ツリーの位置を切り替え"
+            title={t("tabBar.toggleTreeSide")}
+            aria-label={t("tabBar.toggleTreeSide")}
             onClick={() => {
               const next = (settings?.window.treeSide ?? "left") === "left" ? "right" : "left";
               void patchSettings({ window: { treeSide: next } });
@@ -437,7 +439,7 @@ export function TabBar({
             ⇄︎
           </button>
           {/* Settings screen shell (`docs/plans/window-operation/PLAN.md` §7). */}
-          <button type="button" className="ttn-toolbar-btn" title="設定" aria-label="設定" onClick={() => setSettingsOpen(true)}>
+          <button type="button" className="ttn-toolbar-btn" title={t("tabBar.settings")} aria-label={t("tabBar.settings")} onClick={() => setSettingsOpen(true)}>
             ⚙︎
           </button>
         </div>
@@ -450,7 +452,7 @@ export function TabBar({
 
       {lastErrorCode && (
         <div className="ttn-tab-bar-error" role="alert">
-          <span>{errorMessageFor(lastErrorCode)}</span>
+          <span>{errorMessageFor(lastErrorCode, t)}</span>
           <button type="button" onClick={clearLastError}>
             ×
           </button>
@@ -463,25 +465,25 @@ export function TabBar({
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           items={[
-            { label: "名前を変更", disabled: contextTab.locked, onSelect: () => setPendingDialog({ kind: "rename", tab: contextTab }) },
-            { label: "タブの場所を開く", onSelect: () => void openTabLocation(contextTab.id) },
+            { label: t("common.rename"), disabled: contextTab.locked, onSelect: () => setPendingDialog({ kind: "rename", tab: contextTab }) },
+            { label: t("tabBar.openLocation"), onSelect: () => void openTabLocation(contextTab.id) },
             contextTab.locked
               ? {
-                  label: "ロック解除",
+                  label: t("tabLock.unlock"),
                   disabled: tabLockState.activeSessionRealNames.has(contextTab.id),
                   onSelect: () => setPendingDialog({ kind: "unlock", tab: contextTab }),
                 }
-              : { label: "タブをロック", onSelect: () => setPendingDialog({ kind: "lockSetup", tab: contextTab }) },
+              : { label: t("tabBar.lockTab"), onSelect: () => setPendingDialog({ kind: "lockSetup", tab: contextTab }) },
             ...(contextTab.locked
               ? [
                   {
-                    label: "完全にロック解除",
+                    label: t("tabLock.permanentUnlock"),
                     onSelect: () => setPendingDialog({ kind: "permanentUnlockConfirm", tab: contextTab }),
                   },
                 ]
               : []),
             {
-              label: "タブを削除",
+              label: t("tabBar.deleteTab"),
               // `docs/plans/tab-lock/PLAN.md` §4: locked-with-no-session rejects; an active
               // session lifts the restriction (the backend re-checks this regardless; disabling
               // it here is just the matching UI affordance).
@@ -495,10 +497,10 @@ export function TabBar({
 
       {pendingDialog?.kind === "rename" && (
         <PromptDialog
-          title="タブの名前を変更"
-          label="新しい名前"
+          title={t("tabBar.renameTitle")}
+          label={t("tabBar.renameLabel")}
           initialValue={pendingDialog.tab.name}
-          validate={validateNameStrict}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await renameTab(pendingDialog.tab.id, value);
@@ -509,9 +511,9 @@ export function TabBar({
 
       {pendingDialog?.kind === "remove" && (
         <ConfirmDialog
-          title="タブを削除"
-          message={`「${pendingDialog.tab.name}」をタブ一覧から削除します。フォルダやファイルは削除されません。`}
-          confirmLabel="削除"
+          title={t("tabBar.deleteTab")}
+          message={t("tabBar.removeMessageTemplate").replace("{name}", pendingDialog.tab.name)}
+          confirmLabel={t("common.delete")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             await removeTab(pendingDialog.tab.id);
@@ -522,10 +524,10 @@ export function TabBar({
 
       {pendingDialog?.kind === "duplicateName" && (
         <PromptDialog
-          title="タブ名の重複"
-          label="別の名前を入力してください"
+          title={t("tab.duplicateNameTitle")}
+          label={t("tab.duplicateNameLabel")}
           initialValue={pendingDialog.suggestedName}
-          validate={validateNameStrict}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await retryCreateWithName(pendingDialog.path, value);
@@ -539,11 +541,11 @@ export function TabBar({
 
       {pendingDialog?.kind === "createNew" && (
         <PromptDialog
-          title="新しいタブを作成"
-          label="タブ（フォルダ）名"
+          title={t("tab.createNewTitle")}
+          label={t("tab.createNewLabel")}
           initialValue={pendingDialog.suggestedName}
-          submitLabel="作成"
-          validate={validateNameStrict}
+          submitLabel={t("common.create")}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await createNewTab(value);
@@ -557,11 +559,11 @@ export function TabBar({
 
       {pendingDialog?.kind === "lockSetup" && (
         <PasswordDialog
-          title={`「${pendingDialog.tab.name}」をロック`}
+          title={t("tabLock.lockTitleTemplate").replace("{name}", pendingDialog.tab.name)}
           mode="setup"
           busy={tabLockState.busy}
-          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
-          submitLabel="ロック"
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode, t) : null}
+          submitLabel={t("tabLock.lockSubmit")}
           onCancel={() => {
             setPendingDialog(null);
             tabLockState.clearLastError();
@@ -580,11 +582,11 @@ export function TabBar({
 
       {pendingDialog?.kind === "unlock" && (
         <PasswordDialog
-          title={`「${pendingDialog.tab.name}」のロック解除`}
+          title={t("tabLock.unlockTitleTemplate").replace("{name}", pendingDialog.tab.name)}
           mode="unlock"
           busy={tabLockState.busy}
-          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
-          submitLabel="ロック解除"
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode, t) : null}
+          submitLabel={t("tabLock.unlock")}
           onCancel={() => {
             setPendingDialog(null);
             tabLockState.clearLastError();
@@ -599,14 +601,14 @@ export function TabBar({
 
       {pendingDialog?.kind === "permanentUnlockConfirm" && (
         <ConfirmDialog
-          title="完全にロック解除"
+          title={t("tabLock.permanentUnlock")}
           message={
             <>
-              <p>「{pendingDialog.tab.name}」を完全にロック解除すると、暗号化前の通常のタブに戻ります。この操作は取り消せません。</p>
-              <p>念のため、事前にフォルダ全体のバックアップを取っておくことをおすすめします。</p>
+              <p>{t("tabLock.permanentUnlockWarning1NamedTemplate").replace("{name}", pendingDialog.tab.name)}</p>
+              <p>{t("tabLock.permanentUnlockWarning2")}</p>
             </>
           }
-          confirmLabel="完全にロック解除"
+          confirmLabel={t("tabLock.permanentUnlock")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             const tab = pendingDialog.tab;
@@ -622,11 +624,11 @@ export function TabBar({
 
       {pendingDialog?.kind === "permanentUnlockPassword" && (
         <PasswordDialog
-          title={`「${pendingDialog.tab.name}」の完全ロック解除`}
+          title={t("tabLock.permanentUnlockPasswordTitleTemplate").replace("{name}", pendingDialog.tab.name)}
           mode="unlock"
           busy={tabLockState.busy}
-          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
-          submitLabel="完全にロック解除"
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode, t) : null}
+          submitLabel={t("tabLock.permanentUnlock")}
           onCancel={() => {
             setPendingDialog(null);
             tabLockState.clearLastError();

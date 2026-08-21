@@ -70,6 +70,13 @@ export interface MarkdownDecorationConfig {
    * `docs/plans/markdown/image-handling/PLAN.md`). `null` only when no memo is open at all, in
    * which case no `Image`/`<img>` node can be reached anyway (there is no document to decorate). */
   memoKey: string | null;
+  /** Already-translated checkbox-widget tooltip strings (`checkboxClick.ts`'s `CheckboxWidget`) —
+   * resolved via `useT()` by the React layer (this module/`checkboxClick.ts` has no React context
+   * of its own) and reconfigured on `liveViewCompartment` whenever `markdownConfig` changes,
+   * including a language change (`docs/plans/v1.2.0/i18n/PLAN.md` §6/§7 follow-up). Shown while the
+   * box IS checked ("click to uncheck") / is NOT checked ("click to check") respectively. */
+  checkboxUncheckTooltip: string;
+  checkboxCheckTooltip: string;
 }
 
 const DEFAULT_CONFIG: MarkdownDecorationConfig = {
@@ -80,6 +87,8 @@ const DEFAULT_CONFIG: MarkdownDecorationConfig = {
   onOpenMemo: () => {},
   requestExternalConfirm: async () => true,
   memoKey: null,
+  checkboxUncheckTooltip: "",
+  checkboxCheckTooltip: "",
 };
 
 export const markdownConfigFacet = Facet.define<MarkdownDecorationConfig, MarkdownDecorationConfig>({
@@ -407,7 +416,11 @@ class MarkdownDecorationsPlugin implements PluginValue {
           case "TaskMarker": {
             const text = state.sliceDoc(node.from, node.to);
             const checked = /\[[xX]\]/.test(text);
-            addReplace(node.from, node.to, checkboxDecoration(checked, node.from, node.to, config.readOnly));
+            addReplace(
+              node.from,
+              node.to,
+              checkboxDecoration(checked, node.from, node.to, config.readOnly, config.checkboxUncheckTooltip, config.checkboxCheckTooltip),
+            );
             break;
           }
           case "Link":

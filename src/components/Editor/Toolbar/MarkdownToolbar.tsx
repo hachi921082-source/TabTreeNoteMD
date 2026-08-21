@@ -38,31 +38,35 @@ import { tocUpdateCommand } from "../../../editor/tocGenerator";
 import type { AppSettings, AppSettingsPatch, PaneMode } from "../../../shared/models";
 import type { ErrorCode } from "../../../shared/result";
 import { resolveShortcuts } from "../../../shared/shortcuts";
+import { useT } from "../../../i18n";
+import type { TranslationKey } from "../../../i18n";
 import "./MarkdownToolbar.css";
 
 /** Toolbar's Color button — closed 5-choice enum, adopted verbatim from the legacy toolbar
- * (`docs/plans/markdown-editing/PLAN.md` §4). */
-const COLOR_SWATCHES: { label: string; hex: string }[] = [
-  { label: "赤", hex: "#e53935" },
-  { label: "青", hex: "#1e88e5" },
-  { label: "緑", hex: "#43a047" },
-  { label: "橙", hex: "#fb8c00" },
-  { label: "紫", hex: "#8e24aa" },
+ * (`docs/plans/markdown-editing/PLAN.md` §4). `labelKey` (not a literal label) so this
+ * module-level constant stays translatable via `useT()` at render time
+ * (`docs/plans/v1.2.0/i18n/PLAN.md` §6). */
+const COLOR_SWATCHES: { labelKey: TranslationKey; hex: string }[] = [
+  { labelKey: "markdownToolbar.colorRed", hex: "#e53935" },
+  { labelKey: "markdownToolbar.colorBlue", hex: "#1e88e5" },
+  { labelKey: "markdownToolbar.colorGreen", hex: "#43a047" },
+  { labelKey: "markdownToolbar.colorOrange", hex: "#fb8c00" },
+  { labelKey: "markdownToolbar.colorPurple", hex: "#8e24aa" },
 ];
 
 /** Toolbar's Font-size button — closed 3-choice enum, same treatment as `COLOR_SWATCHES`. */
-const FONT_SIZE_CHOICES: { label: string; px: string }[] = [
-  { label: "小", px: "12px" },
-  { label: "大", px: "20px" },
-  { label: "特大", px: "28px" },
+const FONT_SIZE_CHOICES: { labelKey: TranslationKey; px: string }[] = [
+  { labelKey: "markdownToolbar.fontSizeSmall", px: "12px" },
+  { labelKey: "markdownToolbar.fontSizeLarge", px: "20px" },
+  { labelKey: "markdownToolbar.fontSizeExtraLarge", px: "28px" },
 ];
 
 /** Pane-mode header button's current-state label (`docs/plans/markdown/markdown-preview/PLAN.md`
  * §6.3) — a single button showing the *current* state and cycling to the next one on click. */
-const PANE_MODE_LABEL: Record<PaneMode, string> = {
-  edit: "編集のみ",
-  split: "分割表示",
-  preview: "プレビューのみ",
+const PANE_MODE_LABEL_KEY: Record<PaneMode, TranslationKey> = {
+  edit: "paneMode.edit",
+  split: "paneMode.split",
+  preview: "paneMode.preview",
 };
 
 /** Same fixed cycling order as `EditorPane.tsx`'s own `PANE_MODE_CYCLE` (`docs/plans/markdown/
@@ -220,6 +224,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
   },
   ref,
 ) {
+  const t = useT();
   const persistedOrderKey = JSON.stringify(appSettings?.window.toolbarOrder ?? null);
   const [order, setOrder] = useState<ToolbarActionId[]>(() => normalizeToolbarOrder(appSettings?.window.toolbarOrder));
   useEffect(() => {
@@ -597,7 +602,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         runOnView(quoteCommand);
         break;
       case "link":
-        runOnView(linkCommand);
+        runOnView((v) => linkCommand(v, t("editor.defaultLinkLabel")));
         break;
       case "codeBlock":
         runOnView(codeBlockCommand);
@@ -638,16 +643,16 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           ⋮⋮
         </span>
         <button type="button" className="ttn-md-toolbar-view-toggle" onClick={onToggleLiveView}>
-          {liveViewEnabled ? "ソース表示" : "ライブ表示"}
+          {liveViewEnabled ? t("markdownToolbar.viewToSource") : t("markdownToolbar.viewToLive")}
         </button>
         <button
           type="button"
           className="ttn-md-toolbar-pane-mode"
           onClick={onCyclePaneMode}
           disabled={previewLocked}
-          aria-label={`${PANE_MODE_LABEL[PANE_MODE_CYCLE[paneMode]]}に切替`}
+          aria-label={t("markdownToolbar.switchToPaneModeTemplate").replace("{mode}", t(PANE_MODE_LABEL_KEY[PANE_MODE_CYCLE[paneMode]]))}
         >
-          {PANE_MODE_LABEL[PANE_MODE_CYCLE[paneMode]]}
+          {t(PANE_MODE_LABEL_KEY[PANE_MODE_CYCLE[paneMode]])}
         </button>
         {/* Preview-lock (GitHub issue #149) — pins the memo at effectively `"preview"`, disabling
             the pane-mode button above and every auto-reveal trigger elsewhere until unlocked again
@@ -658,8 +663,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           className="ttn-md-toolbar-preview-lock"
           onClick={onTogglePreviewLock}
           aria-pressed={previewLocked}
-          title={previewLocked ? "プレビュー固定を解除" : "プレビューに固定"}
-          aria-label={previewLocked ? "プレビュー固定を解除" : "プレビューに固定"}
+          title={previewLocked ? t("markdownToolbar.previewLockOff") : t("markdownToolbar.previewLockOn")}
+          aria-label={previewLocked ? t("markdownToolbar.previewLockOff") : t("markdownToolbar.previewLockOn")}
         >
           {previewLocked ? <Lock size={14} /> : <Unlock size={14} />}
         </button>
@@ -667,7 +672,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
             (§3's "printing never mutates the document" availability rule); only disabled when no
             memo is open at all. */}
         <button type="button" className="ttn-md-toolbar-pdf-export" onClick={onPdfExport} disabled={!memoName}>
-          PDF出力
+          {t("markdownToolbar.pdfExport")}
         </button>
         {/* Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §4) — ± / percentage-readout
             group, conditionally rendered only while `paneMode === "preview"` (not
@@ -680,8 +685,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               className="ttn-md-toolbar-zoom-btn"
               disabled={previewZoomPercent <= PREVIEW_ZOOM_MIN}
               onClick={onZoomOut}
-              title={`ズームアウト (${zoomOutCombo})`}
-              aria-label="プレビューをズームアウト"
+              title={t("markdownToolbar.zoomOutTemplate").replace("{combo}", zoomOutCombo)}
+              aria-label={t("markdownToolbar.zoomOutAria")}
             >
               －
             </button>
@@ -689,8 +694,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               type="button"
               className="ttn-md-toolbar-zoom-reset"
               onClick={onZoomReset}
-              title="100%にリセット"
-              aria-label="ズームを100%にリセット"
+              title={t("markdownToolbar.zoomResetTitle")}
+              aria-label={t("markdownToolbar.zoomResetAria")}
             >
               {previewZoomPercent}%
             </button>
@@ -699,8 +704,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               className="ttn-md-toolbar-zoom-btn"
               disabled={previewZoomPercent >= PREVIEW_ZOOM_MAX}
               onClick={onZoomIn}
-              title={`ズームイン (${zoomInCombo})`}
-              aria-label="プレビューをズームイン"
+              title={t("markdownToolbar.zoomInTemplate").replace("{combo}", zoomInCombo)}
+              aria-label={t("markdownToolbar.zoomInAria")}
             >
               ＋
             </button>
@@ -709,8 +714,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         <button
           type="button"
           className="ttn-md-toolbar-minimize-btn"
-          title={minimized ? "ツールバーを元に戻す" : "ツールバーを最小化"}
-          aria-label={minimized ? "ツールバーを元に戻す" : "ツールバーを最小化"}
+          title={minimized ? t("markdownToolbar.restore") : t("markdownToolbar.minimize")}
+          aria-label={minimized ? t("markdownToolbar.restore") : t("markdownToolbar.minimize")}
           disabled={rearranging}
           onClick={toggleMinimized}
         >
@@ -729,8 +734,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               key={id}
               type="button"
               className="ttn-md-toolbar-btn"
-              title={action.label}
-              aria-label={action.label}
+              title={t(action.labelKey)}
+              aria-label={t(action.labelKey)}
               disabled={disabled}
               onMouseDown={(e: ReactMouseEvent) => {
                 if (!rearranging || e.button !== 0) return;
@@ -767,8 +772,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               type="button"
               className="ttn-md-toolbar-swatch"
               style={{ background: c.hex }}
-              title={c.label}
-              aria-label={c.label}
+              title={t(c.labelKey)}
+              aria-label={t(c.labelKey)}
               onClick={() => {
                 runOnView((v) => applyColorSpan(v, c.hex));
                 setOpenPopover(null);
@@ -783,7 +788,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               setOpenPopover(null);
             }}
           >
-            解除
+            {t("markdownToolbar.clear")}
           </button>
         </div>
       )}
@@ -800,7 +805,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
                 setOpenPopover(null);
               }}
             >
-              {f.label}
+              {t(f.labelKey)}
             </button>
           ))}
           <button
@@ -811,7 +816,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               setOpenPopover(null);
             }}
           >
-            解除
+            {t("markdownToolbar.clear")}
           </button>
         </div>
       )}

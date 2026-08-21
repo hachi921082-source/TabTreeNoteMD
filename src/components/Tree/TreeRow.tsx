@@ -15,6 +15,7 @@ import { useRef } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { TreeNode } from "../../shared/models";
 import type { ClickModifiers } from "../../shared/treeSelection";
+import { useT } from "../../i18n";
 import { FileIcon } from "./FileIcon";
 
 export type DropPosition = "before" | "after" | "into";
@@ -53,6 +54,7 @@ export function TreeRow(props: TreeRowProps) {
     onRenameSubmit,
     onRenameCancel,
   } = props;
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const isRenaming = renamingPath === node.memoName;
   const isSelected = selectedNames.has(node.memoName);
@@ -125,7 +127,7 @@ export function TreeRow(props: TreeRowProps) {
               onBlur={(e) => onRenameSubmit(node.memoName, e.target.value)}
             />
           ) : (
-            <span className={`ttn-tree-row-name${node.locked ? " ttn-tree-row-name-locked" : ""}`} title={node.locked ? "編集ロック中" : undefined}>
+            <span className={`ttn-tree-row-name${node.locked ? " ttn-tree-row-name-locked" : ""}`} title={node.locked ? t("treeRow.editLocked") : undefined}>
               {node.memoName}
             </span>
           )}

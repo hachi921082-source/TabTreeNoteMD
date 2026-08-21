@@ -5,6 +5,7 @@
 // whole batch" (`onCancel`), not merely "skip this one item".
 import { useState } from "react";
 import { Dialog } from "./Dialog";
+import { useT } from "../../i18n";
 
 export type ImportCollisionChoice = "rename" | "overwrite" | "skip";
 
@@ -22,32 +23,33 @@ export interface ImportCollisionDialogProps {
 }
 
 export function ImportCollisionDialog({ sourceName, renamePreview, overwriteDisabled, onChoose, onCancel }: ImportCollisionDialogProps) {
+  const t = useT();
   const [applyToAll, setApplyToAll] = useState(false);
 
   return (
     <Dialog
-      title="インポート時の名前の重複"
+      title={t("importCollision.title")}
       onClose={onCancel}
       footer={
         <>
           <button type="button" onClick={() => onChoose("skip", applyToAll)}>
-            スキップ
+            {t("importCollision.skip")}
           </button>
           <button type="button" disabled={overwriteDisabled} onClick={() => onChoose("overwrite", applyToAll)}>
-            上書き
+            {t("importCollision.overwrite")}
           </button>
           <button type="button" onClick={() => onChoose("rename", applyToAll)}>
-            名前を変更してインポート
+            {t("importCollision.renameImport")}
           </button>
         </>
       }
     >
-      <p>「{sourceName}」という名前のメモは既にこのタブに存在します。</p>
-      <p>名前を変更する場合、「{renamePreview}」としてインポートします。</p>
-      {overwriteDisabled && <p className="ttn-dialog-error">このメモは編集ロック中のため上書きできません。</p>}
+      <p>{t("importCollision.existsMessageTemplate").replace("{name}", sourceName)}</p>
+      <p>{t("importCollision.renamePreviewMessageTemplate").replace("{name}", renamePreview)}</p>
+      {overwriteDisabled && <p className="ttn-dialog-error">{t("importCollision.overwriteDisabledMessage")}</p>}
       <label className="ttn-dialog-field">
         <span>
-          <input type="checkbox" checked={applyToAll} onChange={(e) => setApplyToAll(e.target.checked)} /> 残りの重複項目すべてにこの選択を適用する
+          <input type="checkbox" checked={applyToAll} onChange={(e) => setApplyToAll(e.target.checked)} /> {t("importCollision.applyToAll")}
         </span>
       </label>
     </Dialog>

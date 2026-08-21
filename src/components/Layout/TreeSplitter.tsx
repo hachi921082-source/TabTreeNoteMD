@@ -5,6 +5,7 @@
 // `components/Editor/Toolbar/MarkdownToolbar.tsx`'s toolbar-position drag.
 import { useCallback, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { useT } from "../../i18n";
 import "./TreeSplitter.css";
 
 const MIN_TREE_WIDTH = 120;
@@ -23,6 +24,7 @@ export interface TreeSplitterProps {
 }
 
 export function TreeSplitter({ treeWidth, collapsed, side, onPreview, onCommit, onToggleCollapse }: TreeSplitterProps) {
+  const t = useT();
   const [dragging, setDragging] = useState(false);
   const dragOriginRef = useRef<{ startX: number; originWidth: number; lastWidth: number } | null>(null);
 
@@ -67,8 +69,8 @@ export function TreeSplitter({ treeWidth, collapsed, side, onPreview, onCommit, 
       <button
         type="button"
         className="ttn-tree-splitter ttn-tree-splitter-collapsed"
-        title="ツリーを表示"
-        aria-label="ツリーを表示"
+        title={t("treeSplitter.show")}
+        aria-label={t("treeSplitter.show")}
         onClick={onToggleCollapse}
       >
         {side === "left" ? "›" : "‹"}
@@ -83,7 +85,7 @@ export function TreeSplitter({ treeWidth, collapsed, side, onPreview, onCommit, 
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onDoubleClick={onToggleCollapse}
-      title="ドラッグでツリー幅を変更、ダブルクリックで非表示"
+      title={t("treeSplitter.dragHint")}
     />
   );
 }

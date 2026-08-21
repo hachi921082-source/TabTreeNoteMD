@@ -11,6 +11,7 @@ import { suggestSanitized } from "../shared/nameSanitize";
 import type { TreeNode } from "../shared/models";
 import type { ImportCollisionChoice } from "../components/dialogs/ImportCollisionDialog";
 import type { UseToastResult } from "./useToast";
+import { useT } from "../i18n";
 
 export interface PendingImportCollision {
   sourceName: string;
@@ -73,6 +74,7 @@ function findNodeCI(nodes: readonly TreeNode[], lowerName: string): TreeNode | n
 }
 
 export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: () => Promise<void>, toast: UseToastResult): UseImportResult {
+  const t = useT();
   const [pendingCollision, setPendingCollision] = useState<PendingImportCollision | null>(null);
   const [importing, setImporting] = useState(false);
   const resolverRef = useRef<((r: CollisionResolution) => void) | null>(null);
@@ -103,7 +105,7 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
         // Every path in the payload was non-`.md`: still shows the summary toast (not the fully-
         // silent zero-`.md`-items path, `PLAN.md` §6) — but only if there was anything to skip at
         // all (an empty payload, e.g. a stray drag-over with no drop, reports nothing).
-        if (nonMdSkipped > 0) toast.pushToast(`0件をインポートしました（${nonMdSkipped}件をスキップ、.md以外）`);
+        if (nonMdSkipped > 0) toast.pushToast(t("toast.importZeroSkippedTemplate").replace("{count}", String(nonMdSkipped)));
         return;
       }
 
@@ -186,11 +188,11 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
 
         setImporting(false);
         if (skipped > 0) {
-          toast.pushToast(`${imported}件をインポートしました（${skipped}件をスキップ）`);
+          toast.pushToast(t("toast.importSummaryTemplate").replace("{imported}", String(imported)).replace("{skipped}", String(skipped)));
         }
       })();
     },
-    [tabId, nodes, toast, refreshTree, askUser],
+    [tabId, nodes, toast, refreshTree, askUser, t],
   );
 
   return { pendingCollision, resolveCollision, cancelImport, importing, startImportBatch };

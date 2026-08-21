@@ -5,6 +5,7 @@
 // (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.5, §7.8).
 import type { ReactNode } from "react";
 import { Dialog } from "./Dialog";
+import { useT } from "../../i18n";
 
 export interface ConfirmDialogProps {
   title: string;
@@ -19,6 +20,7 @@ export interface ConfirmDialogProps {
 }
 
 export function ConfirmDialog({ title, message, confirmLabel, cancelLabel, onConfirm, onCancel }: ConfirmDialogProps) {
+  const t = useT();
   return (
     <Dialog
       title={title}
@@ -26,10 +28,10 @@ export function ConfirmDialog({ title, message, confirmLabel, cancelLabel, onCon
       footer={
         <>
           <button type="button" onClick={onCancel}>
-            {cancelLabel ?? "キャンセル"}
+            {cancelLabel ?? t("common.cancel")}
           </button>
           <button type="button" onClick={onConfirm}>
-            {confirmLabel ?? "OK"}
+            {confirmLabel ?? t("common.ok")}
           </button>
         </>
       }

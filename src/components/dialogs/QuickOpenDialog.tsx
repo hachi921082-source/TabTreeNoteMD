@@ -12,6 +12,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { UseQuickOpenResult } from "../../state/useQuickOpen";
 import type { QuickOpenHit } from "../../shared/models";
 import { Dialog } from "./Dialog";
+import { useT } from "../../i18n";
 import "./QuickOpenDialog.css";
 
 export interface QuickOpenDialogProps {
@@ -37,6 +38,7 @@ interface KeyDownLike {
 }
 
 export function QuickOpenDialog({ quickOpen, onClose, onOpenHit }: QuickOpenDialogProps) {
+  const t = useT();
   const isFavorites = quickOpen.mode === "favorites";
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -87,13 +89,13 @@ export function QuickOpenDialog({ quickOpen, onClose, onOpenHit }: QuickOpenDial
   };
 
   return (
-    <Dialog title={isFavorites ? "お気に入り" : "クイックオープン"} onClose={onClose} className="ttn-quick-open-dialog">
+    <Dialog title={isFavorites ? t("quickOpen.favoritesTitle") : t("quickOpen.title")} onClose={onClose} className="ttn-quick-open-dialog">
       {!isFavorites && (
         <input
           ref={inputRef}
           type="text"
           className="ttn-quick-open-input"
-          placeholder="メモ名で検索..."
+          placeholder={t("quickOpen.searchPlaceholder")}
           value={quickOpen.query}
           onChange={(e) => quickOpen.setQuery(e.target.value)}
           onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => handleKeyDown(e)}
@@ -102,7 +104,7 @@ export function QuickOpenDialog({ quickOpen, onClose, onOpenHit }: QuickOpenDial
 
       <div className="ttn-quick-open-results">
         {!quickOpen.loading && quickOpen.hits.length === 0 && (
-          <p className="ttn-quick-open-status">{isFavorites ? "お気に入りはありません" : "一致する結果はありません"}</p>
+          <p className="ttn-quick-open-status">{isFavorites ? t("quickOpen.noFavorites") : t("search.noResults")}</p>
         )}
         {quickOpen.hits.map((hit, index) => (
           // A `<div>` row (not `<button>`) since it hosts the star as its own nested `<button>` in
@@ -124,8 +126,8 @@ export function QuickOpenDialog({ quickOpen, onClose, onOpenHit }: QuickOpenDial
               <button
                 type="button"
                 className={`ttn-quick-open-star${hit.isFavorite ? " ttn-quick-open-star-active" : ""}`}
-                title={hit.isFavorite ? "お気に入りから外す" : "お気に入りに追加"}
-                aria-label={hit.isFavorite ? "お気に入りから外す" : "お気に入りに追加"}
+                title={hit.isFavorite ? t("quickOpen.removeFavorite") : t("tree.favoriteAdd")}
+                aria-label={hit.isFavorite ? t("quickOpen.removeFavorite") : t("tree.favoriteAdd")}
                 onClick={(e) => {
                   e.stopPropagation();
                   handleStarClick(hit);
