@@ -82,17 +82,32 @@ export function isHeadingAnchor(url: string): boolean {
   return url.startsWith("#");
 }
 
-/** `memo:` link click resolution (`docs/plans/link/PLAN.md` §2, §5): strips the leading `memo:`
- * scheme, calls `link_resolve`, and on a `"memo"` result opens it via `onOpenMemo` — the caller's
- * hook into the shared "open memo" path (`docs/plans/memo-tree/PLAN.md`, the same one tree click
- * and search-result click use). `"unresolved"` (or a failed IPC call) is a silent no-op, matching
- * `[spec §2.8]`'s "unresolved links do nothing" — no toast, no error surfaced. */
-export async function resolveAndOpenMemoLink(currentTabId: string | null, rawTarget: string, onOpenMemo: (tabId: string, memoName: string | null) => void): Promise<void> {
+/** `memo:` link click resolution (`docs/plans/link/PLAN.md` §2, §5; `#slug` anchor suffix added by
+ * `docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §2): strips the leading `memo:` scheme, splits
+ * off an optional trailing `#slug` anchor BEFORE calling `link_resolve` (so the backend only ever
+ * sees the memo-name portion, unaware `#slug` ever existed), and on a `"memo"` result opens it via
+ * `onOpenMemo` — the caller's hook into the shared "open memo" path (`docs/plans/memo-tree/
+ * PLAN.md`, the same one tree click and search-result click use), now also passed the parsed
+ * `anchorSlug` (`null` when the target had no `#`). `"unresolved"` (or a failed IPC call) is a
+ * silent no-op, matching `[spec §2.8]`'s "unresolved links do nothing" — no toast, no error
+ * surfaced; the anchor is never read/passed in that case either, since there is no memo to scroll
+ * within. No `decodeURIComponent` step here — `rawTarget` reaching this function is already clean
+ * of `normalizeLink` encoding by the time it arrives (`preview-link-encoding-fix/PLAN.md` §3
+ * decodes the preview pane's own `href` upstream; a live-view-sourced `rawTarget` was never encoded
+ * to begin with), so this function stays agnostic to which pane called it. */
+export async function resolveAndOpenMemoLink(
+  currentTabId: string | null,
+  rawTarget: string,
+  onOpenMemo: (tabId: string, memoName: string | null, anchorSlug: string | null) => void,
+): Promise<void> {
   if (!currentTabId) return;
-  const target = rawTarget.startsWith("memo:") ? rawTarget.slice("memo:".length) : rawTarget;
+  const stripped = rawTarget.startsWith("memo:") ? rawTarget.slice("memo:".length) : rawTarget;
+  const hashIndex = stripped.indexOf("#");
+  const target = hashIndex === -1 ? stripped : stripped.slice(0, hashIndex);
+  const anchorSlug = hashIndex === -1 ? null : stripped.slice(hashIndex + 1);
   const result = await linkResolve(currentTabId, target);
   if (!result.ok || result.value.kind !== "memo") return;
-  onOpenMemo(result.value.tabId, result.value.memoName);
+  onOpenMemo(result.value.tabId, result.value.memoName, anchorSlug);
 }
 
 /** `#slug` heading-anchor click resolution (`docs/plans/table-of-contents/PLAN.md` §4,
