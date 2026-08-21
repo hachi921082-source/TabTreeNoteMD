@@ -9,20 +9,22 @@
 >
 > **Before acting on anything below, verify it against actual current state** (`git status`, `git log`,
 > `git branch`, whether files described here still exist/match) — this file is a snapshot and can go
-> stale before it's even read. This session's merge and push both completed cleanly; **branch deletion
-> (local + remote) was blocked by the Auto Mode permission classifier and is still pending** (see §3) —
-> unlike the prior `cross-tab-anchor-links` session, where all three steps went through without a block.
+> stale before it's even read. This session's merge, push, and local branch deletion all completed
+> cleanly (the remote branch deletion step was skipped as a no-op — the feature branch was never itself
+> pushed to `origin` this cycle, only `V1.2.0` was, so no remote ref existed to delete). The very first
+> `git branch -d`/`git push --delete` attempt in this session WAS blocked by the Auto Mode permission
+> classifier; the user then explicitly asked for the deletion in a later message, and it went through
+> cleanly on retry.
 
 ## Index
 
 1. Where the project stands
-2. `preview-scroll-fix` — implemented, one blocking bug found and fixed, re-reviewed (approved), merged into `V1.2.0`, pushed
-3. **Pending**: local + remote feature branch deletion (blocked by permission classifier)
-4. Separate track: GitHub issues #190 and #191 — both filed only, neither started
-5. Two long-carried-forward untracked files — still unaddressed
-6. Next step — resume the nine-item implementation order, item 4 next
-7. Branch policy for v1.2.0 (unchanged)
-8. Process lesson reinforced this session — scoping re-review after a fix
+2. `preview-scroll-fix` — implemented, one blocking bug found and fixed, re-reviewed (approved), merged into `V1.2.0`, pushed, branch deleted
+3. Separate track: GitHub issues #190 and #191 — both filed only, neither started
+4. Two long-carried-forward untracked files — still unaddressed
+5. Next step — resume the nine-item implementation order, item 4 next
+6. Branch policy for v1.2.0 (unchanged)
+7. Process lesson reinforced this session — scoping re-review after a fix
 
 ## 1. Where the project stands
 
@@ -35,8 +37,8 @@
 ## 2. `preview-scroll-fix` — implemented, one blocking bug found and fixed, re-reviewed (approved), merged into `V1.2.0`, pushed
 
 Followed the standard per-plan flow (branch → implement → review → fix → re-review → confirm with user →
-merge → push → [branch delete pending, see §3] → write handoff), per `dev-workflow.md` §7 and this
-project's "PLAN Implementation Workflow" section in `CLAUDE.md`:
+merge → push → delete branch → write handoff), per `dev-workflow.md` §7 and this project's "PLAN
+Implementation Workflow" section in `CLAUDE.md`:
 
 - Branch `feature/v1.2.0-preview-scroll-fix` cut from `V1.2.0`.
 - `developer-lite` implemented `docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` (§2–§4) across 2 commits:
@@ -56,25 +58,19 @@ project's "PLAN Implementation Workflow" section in `CLAUDE.md`:
   div, switched `getContainer()` to return it, left the pre-existing `containerRef` (inner div) untouched
   for its other uses (`dangerouslySetInnerHTML`, click delegation, image resolution). Self-verified live
   (scroll-position round-trip + cross-memo anchor-jump regression check) before handing back.
-- `reviewer-lite`'s **re-review was deliberately scoped down** (see §8 below — this session's own
+- `reviewer-lite`'s **re-review was deliberately scoped down** (see §7 below — this session's own
   live-testing-scope-discipline lesson, reinforced after the user flagged token-usage worry) to: code
   review of the fix diff + exactly 2 live checks (scroll-position round-trip via on-disk value, one
   cross-memo anchor-jump sanity click) — NOT a full re-run of the whole §6 checklist. **Approved.**
 - Commits: `eb86d8b`, `cc486ad`, `4577979` on the feature branch, then merge commit `d3edadd`
   (`git merge --no-ff`, message `Merge feature/v1.2.0-preview-scroll-fix: ...`) into `V1.2.0`. User
-  confirmed merge; push succeeded (`origin/V1.2.0` now at `d3edadd`).
+  confirmed merge; push succeeded (`origin/V1.2.0` now at `d3edadd`). Local branch
+  `feature/v1.2.0-preview-scroll-fix` deleted after the user's explicit follow-up request (the first
+  deletion attempt, made before that explicit request, was blocked by the Auto Mode permission
+  classifier — retried successfully once the user asked directly). No remote branch existed to delete
+  (this cycle only ever pushed `V1.2.0` directly, never the feature branch itself).
 
-## 3. Pending: local + remote feature branch deletion (blocked by permission classifier)
-
-Unlike the prior `cross-tab-anchor-links` session (where merge/push/branch-delete all went through with no
-block), this session's `git branch -d feature/v1.2.0-preview-scroll-fix` +
-`git push origin --delete feature/v1.2.0-preview-scroll-fix` was **blocked by the Auto Mode permission
-classifier**. The branch (local and remote) is still present as of this writing — already fully merged
-into `V1.2.0` (`d3edadd`), so deleting it is safe/inert whenever the user runs it themselves or grants the
-permission. Not yet done — check `git branch` / `git branch -r` to confirm current state before assuming
-either way.
-
-## 4. Separate track: GitHub issues #190 and #191 — both filed only, neither started
+## 3. Separate track: GitHub issues #190 and #191 — both filed only, neither started
 
 Not part of the v1.2.0 feature set — do not fold either into any v1.2.0 `PLAN.md`.
 
@@ -91,7 +87,7 @@ Not part of the v1.2.0 feature set — do not fold either into any v1.2.0 `PLAN.
 - **User's explicit instruction for both**: file the issue, proceed later. Do not start a `fix/` branch
   on your own initiative — wait for the user to say to proceed.
 
-## 5. Two long-carried-forward untracked files — still unaddressed
+## 4. Two long-carried-forward untracked files — still unaddressed
 
 Unchanged from prior `HANDOFF.md` versions — still present, still not touched this session:
 
@@ -104,7 +100,7 @@ Unchanged from prior `HANDOFF.md` versions — still present, still not touched 
 live `.claude/agents/*.md`); `"CLAUDE - コピー.md"` is a confirmed-stale backup, not a duplicate. Neither
 deleted — ask the user first if cleanup is ever wanted.
 
-## 6. Next step — resume the nine-item implementation order, item 4 next
+## 5. Next step — resume the nine-item implementation order, item 4 next
 
 Recommended order (unchanged from prior `HANDOFF.md`, item 3 now done):
 
@@ -125,7 +121,7 @@ integration pass after all nine land.
 
 Ask the user before starting item 4, same as every stage transition in this project's workflow.
 
-## 7. Branch policy for v1.2.0 (unchanged)
+## 6. Branch policy for v1.2.0 (unchanged)
 
 **`V1.2.0` does NOT merge back into `V1.1.0`.** Per the user: "v1.1.0とは別にv1.2.0として開発を継続するの
 でv1.1.0へマージはしない".
@@ -133,7 +129,7 @@ Ask the user before starting item 4, same as every stage transition in this proj
 `feature/v1.2.0-<name>` branches, merged directly into `V1.2.0` (no PR) — this session's
 `preview-scroll-fix` merge (§2) is the third confirmed instance of this pattern.
 
-## 8. Process lesson reinforced this session — scoping re-review after a fix
+## 7. Process lesson reinforced this session — scoping re-review after a fix
 
 The user flagged (mid-session) a worry about live-testing token burn recurring "like before." This led to
 two concrete scope-narrowing decisions, both worth repeating in future fix/re-review cycles:
