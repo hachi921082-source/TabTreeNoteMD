@@ -386,7 +386,13 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           </button>
           {/* Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §5) — immediately to
               the right of the pin button per `[spec §2.1]`'s layout note. */}
-          <button type="button" className="ttn-toolbar-btn" title="検索" aria-label="検索" onClick={crossTabSearch.open}>
+          <button
+            type="button"
+            className="ttn-toolbar-btn"
+            title={`検索 ／ クイックオープン (${resolveShortcuts(settings?.shortcuts)["search.quickOpen"]}) でメモ名検索`}
+            aria-label="検索"
+            onClick={crossTabSearch.open}
+          >
             🔍
           </button>
           {/* Flips which side the tree pane renders on (`docs/plans/window-operation/PLAN.md` §2).
