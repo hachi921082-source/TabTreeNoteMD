@@ -138,6 +138,10 @@ export interface EditorPaneProps {
  * from `useEditor`'s own switch-away flush (fire-and-forget, not awaitable from outside). */
 export interface EditorPaneHandle {
   flushSaveNow: () => Promise<void>;
+  /** Double-click-active-tab jump-to-start toggle (`docs/plans/v1.2.0/tab-double-click-jump/
+   * PLAN.md` §2) — invoked from `App.tsx` when `TabBar.tsx` reports a double-click on the
+   * already-active tab. No-op if no memo is currently open. */
+  toggleJumpToStart: () => void;
 }
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
@@ -157,7 +161,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   ref,
 ) {
   const ed = useEditor(tabId, memoName, appSettings, isMemoEditLocked);
-  useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow }));
+  useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow, toggleJumpToStart }));
   const search = useSearch();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -423,6 +427,37 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const setEditorOverrideRef = useRef(setEditorOverride);
   setEditorOverrideRef.current = setEditorOverride;
   const scrollDebounceRef = useRef<number | null>(null);
+  // Toggle-back position for double-click-active-tab jump-to-start (`docs/plans/v1.2.0/
+  // tab-double-click-jump/PLAN.md` §3) -- `null` when no jump is currently "pending toggle-back"
+  // (either never jumped for this memo, or already toggled back). Character-offset pair shape
+  // mirrors `EditorSelection.main.{anchor,head}`, but is a SEPARATE, transient, in-memory-only
+  // value -- never reused by or shared with the persisted `MemoEditorSettings.cursorAnchor`/
+  // `cursorHead`/`scrollPosition` fields (GitHub issue #28). Continuously remapped through
+  // `ChangeDesc.mapPos()` on every doc change in the `updateListener` below, so an edit between
+  // jump and toggle-back doesn't leave a stale raw offset; reset to `null` on every memo switch
+  // (view-(re)creation effect below, PLAN.md §4).
+  const jumpToggleRef = useRef<{ anchor: number; head: number; topLinePos: number } | null>(null);
+  // Imperative counterpart to `jumpToggleRef` above -- exposed via `useImperativeHandle` at the
+  // top of this component. First call (no saved position) captures the current cursor/scroll
+  // position then jumps to document start; a second call restores the saved position and clears
+  // the ref, so a third call starts fresh (`PLAN.md` §3.2).
+  const toggleJumpToStart = useCallback(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const saved = jumpToggleRef.current;
+    if (saved === null) {
+      const { anchor, head } = view.state.selection.main;
+      const topLinePos = view.state.doc.line(computeTopVisibleLine(view)).from;
+      jumpToggleRef.current = { anchor, head, topLinePos };
+      view.dispatch({ selection: { anchor: 0, head: 0 }, effects: EditorView.scrollIntoView(0, { y: "start" }) });
+    } else {
+      view.dispatch({
+        selection: { anchor: saved.anchor, head: saved.head },
+        effects: EditorView.scrollIntoView(saved.topLinePos, { y: "start" }),
+      });
+      jumpToggleRef.current = null;
+    }
+  }, []);
   // Which memo (and which TAB) `viewRef.current` actually belongs to (and that memo's override
   // snapshot at the time its view was created) — set ONLY inside the view-(re)creation effect
   // below, once a view has actually been (re)created for a given `ed.loadGeneration`. Unlike
@@ -532,6 +567,14 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       viewRef.current = null;
     }
 
+    // Session-only jump-to-start toggle state must not leak into a newly-opened memo
+    // (`docs/plans/v1.2.0/tab-double-click-jump/PLAN.md` §4) — same "any `loadGeneration` bump
+    // clears it" trigger as `liveViewOverride`/`paneModeOverride`/`previewLockOverride` below, but
+    // placed BEFORE the `!ed.content` early return so a switch to a tab with no open memo also
+    // clears it, per PLAN.md §4's explicit "including a tab switch to a tab with no open memo"
+    // requirement.
+    jumpToggleRef.current = null;
+
     if (!ed.content) {
       loadedTabIdRef.current = null;
       loadedMemoNameRef.current = null;
@@ -582,6 +625,20 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         // change or cursor/selection move, not just after (re)creating the view.
         EditorView.updateListener.of((update) => {
           if (update.docChanged || update.selectionSet) setRenderTick((n) => n + 1);
+          // Continuous remapping of a pending jump-to-start toggle-back position across edits
+          // (`docs/plans/v1.2.0/tab-double-click-jump/PLAN.md` §3.3) -- `ChangeDesc.mapPos()`'s
+          // own built-in behavior (shift forward past an insertion, collapse to a deletion's edge)
+          // is the "adjusted for lines/characters inserted or removed before it" guarantee the
+          // spec describes; `update.changes` already represents the combined `ChangeDesc` for the
+          // whole update even if it composed multiple sub-changes, so a single `mapPos()` call per
+          // saved value handles that case too.
+          if (update.docChanged && jumpToggleRef.current) {
+            jumpToggleRef.current = {
+              anchor: update.changes.mapPos(jumpToggleRef.current.anchor),
+              head: update.changes.mapPos(jumpToggleRef.current.head),
+              topLinePos: update.changes.mapPos(jumpToggleRef.current.topLinePos),
+            };
+          }
         }),
       ],
     });
