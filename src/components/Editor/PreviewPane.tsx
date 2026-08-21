@@ -69,9 +69,15 @@ export interface PreviewPaneHandle {
    * memo was switched away again before its preview ever rendered) — callers treat `false` as this
    * app's standard "silently skip the jump/restore" edge-case fallback. Never rejects. */
   waitForRender: (targetMemoKey: string, timeoutMs?: number) => Promise<boolean>;
-  /** The preview's own rendered-HTML container, for callers (post-`waitForRender`) needing direct
-   * DOM access — e.g. this feature's own `#slug` `querySelector`. `null` before first mount / after
-   * unmount. */
+  /** The preview's own SCROLLABLE container (the outer `.ttn-editor-preview-pane` div — the one
+   * with `overflow-y: auto`, not the inner `.ttn-editor-preview-pane-content` div that merely holds
+   * the rendered HTML), for callers (post-`waitForRender`) needing direct DOM access — e.g. this
+   * feature's own `#slug` `querySelector`/`scrollIntoView` (subtree search/scroll both work
+   * identically starting from either div), and `docs/plans/v1.2.0/preview-scroll-fix/PLAN.md`'s
+   * `computeTopVisiblePreviewLine`, which specifically needs the element whose `scrollTop` actually
+   * changes when the user scrolls (fix for a bug caught by reviewer-lite: this used to return the
+   * inner content div, whose `scrollTop` never moves, so the save-path's read was always `null`).
+   * `null` before first mount / after unmount. */
   getContainer: () => HTMLElement | null;
 }
 
@@ -85,6 +91,11 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Outer scrollable div (`overflow-y: auto` — see `Editor.css`'s `.ttn-editor-preview-pane`), kept
+  // as a SEPARATE ref from `containerRef` (the inner content div) specifically so `getContainer()`
+  // below can expose the element whose `scrollTop` actually reflects user scrolling — see this
+  // ref's own `PreviewPaneHandle.getContainer` doc comment for why that distinction matters.
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState("");
   // Which `memoKey` the CURRENT `html` was actually rendered for — set only inside the debounced
   // re-render effect's timeout callback below, alongside `setHtml` itself (`PLAN.md` §4.3).
@@ -132,7 +143,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
     });
   }, []);
 
-  useImperativeHandle(ref, () => ({ waitForRender, getContainer: () => containerRef.current }), [waitForRender]);
+  useImperativeHandle(ref, () => ({ waitForRender, getContainer: () => scrollContainerRef.current }), [waitForRender]);
 
   // Click-delegation config, read live via a ref so `attachPreviewInteractions` (below) can be
   // mounted exactly once (RENDERING.md §4's "attached once via useEffect, not re-bound every
@@ -239,6 +250,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
     <>
       <div
         className="ttn-editor-preview-pane"
+        ref={scrollContainerRef}
         // Fully suppressed (`docs/MDEditor-spec.md` §2: "right-click shows no context menu at all...
         // fully suppressed, not auto-reveal-then-show"). `stopPropagation` is required in addition to
         // `preventDefault` — without it, the click would still bubble to `EditorPane.tsx`'s own
