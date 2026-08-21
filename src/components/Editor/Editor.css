@@ -115,7 +115,11 @@
   object-fit: contain;
 }
 
-.ttn-preview-table-wrap {
+/* `.ttn-preview-math-wrap` (`docs/plans/v1.2.0/math-rendering/PLAN.md` §2.3, `markdownIt.ts`'s
+   block-math renderer rule) shares this exact same horizontal-scroll treatment as wide tables —
+   a wide `$$...$$` formula scrolls instead of shrinking its font size or overflowing the pane. */
+.ttn-preview-table-wrap,
+.ttn-preview-math-wrap {
   overflow-x: auto;
 }
 
@@ -291,6 +295,26 @@
   font-size: 0.9em;
 }
 
+/* Live-view "this is a math formula" badge (`docs/plans/v1.2.0/math-rendering/PLAN.md` §3,
+   `editor/markdownDecorations.ts`'s `MathPlaceholderWidget`) — same non-interactive badge treatment
+   as `.cm-md-image-placeholder` above, distinguished by its own border/background color so it isn't
+   confused with the image placeholder at a glance. */
+.cm-md-math-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px dashed var(--ttn-border-strong);
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(--ttn-bg-math-marker);
+  color: var(--ttn-fg-muted);
+  font-size: 0.9em;
+}
+
+.cm-md-math-placeholder-icon {
+  flex: none;
+}
+
 /* Real `<img>` rendering in the live view (`docs/plans/markdown/image-handling/PLAN.md` §6.3). A
    purely cosmetic display cap for the editing view — `width:auto`/`height:auto` preserve aspect
    ratio and never touch the image's stored `width`/`height` attribute values in the source. */
@@ -319,4 +343,24 @@
 .cm-md-source-image-marker::before {
   content: "🖼";
   margin-right: 2px;
+}
+
+/* Source-view-only "this is a math formula" marker (`docs/plans/v1.2.0/math-rendering/PLAN.md` §4,
+   `editor/markdownDecorations.ts`'s `SourceMathMarkerPlugin`) — same `Decoration.mark`-only,
+   underlying-text-stays-editable treatment as `.cm-md-source-image-marker` above. Uses its own
+   `--ttn-bg-math-marker` custom property (`theme.css`), a distinct color from the image marker's
+   `--ttn-bg-image-marker` per the direct user request for visual distinguishability when both
+   marker kinds appear in the same memo. `::before`'s "Σ" is a plain Unicode glyph rather than the
+   live-view badge's inline SVG (`MathPlaceholderWidget`'s `createSigmaIconSvg`) since CSS generated
+   content can't embed that SVG markup directly — a small, self-contained glyph choice consistent
+   with this mark-decoration's own CSS-only nature. */
+.cm-md-source-math-marker {
+  background: var(--ttn-bg-math-marker);
+  border-radius: 3px;
+}
+
+.cm-md-source-math-marker::before {
+  content: "Σ";
+  margin-right: 2px;
+  font-weight: 600;
 }

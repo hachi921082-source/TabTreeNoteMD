@@ -26,7 +26,7 @@ import type { DecorationSet, PluginValue, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNodeRef } from "@lezer/common";
 import { checkboxDecoration } from "./checkboxClick";
-import { findColorSpans, findImageTags, findMarkSpans } from "./markdownSpanParser";
+import { findColorSpans, findImageTags, findMarkSpans, findMathSpans } from "./markdownSpanParser";
 import type { DetectedLink, LinkKind } from "./links";
 import { linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens } from "./links";
 import { getOrLoadImage, hasImageLoadFailed } from "./imageLoader";
@@ -194,6 +194,76 @@ class ImageWidget extends WidgetType {
 
   ignoreEvent(): boolean {
     return false;
+  }
+}
+
+/** Path data copied from `lucide-react`'s own `Sigma` icon (`node_modules/lucide-react/dist/esm/
+ * icons/sigma.mjs`, `lucide-react@1.28.0` as pinned in `package.json` at implementation time) — not
+ * imported directly, since that per-icon module is an untyped internal build-output path (no sibling
+ * `.d.ts`, unlike the package's public `import { Sigma } from "lucide-react"` React-component
+ * surface `toolbarSlots.ts`/`MarkdownToolbar.tsx` already use elsewhere). `WidgetType.toDOM()`
+ * builds a raw CodeMirror-owned DOM node that React cannot render into (`docs/plans/v1.2.0/
+ * math-rendering/PLAN.md` §3's own constraint), so `createSigmaIconSvg` below hand-assembles the
+ * identical `<svg>` markup the `<Sigma />` component would produce via plain DOM APIs instead —
+ * same icon, same already-bundled dependency's own path data, zero new dependency. Re-copy this
+ * path data (and `SIGMA_ICON_VIEWBOX_ATTRS` below) if `lucide-react` is ever upgraded and the icon's
+ * shape changes upstream. */
+const SIGMA_ICON_PATH_D =
+  "M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2";
+
+/** `lucide-react`'s own `defaultAttributes` (`node_modules/lucide-react/dist/esm/
+ * defaultAttributes.mjs`) that every icon's `<svg>` root carries, reproduced here verbatim (minus
+ * `width`/`height`, sized down separately below for this badge's own small inline footprint). */
+const SIGMA_ICON_VIEWBOX_ATTRS: Record<string, string> = {
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  "stroke-width": "2",
+  "stroke-linecap": "round",
+  "stroke-linejoin": "round",
+};
+
+function createSigmaIconSvg(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "12");
+  svg.setAttribute("height", "12");
+  for (const [key, value] of Object.entries(SIGMA_ICON_VIEWBOX_ATTRS)) svg.setAttribute(key, value);
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("cm-md-math-placeholder-icon");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", SIGMA_ICON_PATH_D);
+  svg.appendChild(path);
+  return svg;
+}
+
+/** Live-view "this is a math formula" badge (`docs/plans/v1.2.0/math-rendering/PLAN.md` §3) —
+ * follows `ImagePlaceholderWidget`'s own precedent one-for-one: a short, non-interactive
+ * `Decoration.replace` widget standing in for the raw `$...$`/`$$...$$` source text while the
+ * current selection doesn't touch it (see `buildMathWidgetRanges`'s call site in `build()` below,
+ * same `touchesSelection`-gated reveal-on-cursor-touch pattern every other `Decoration.replace`
+ * widget in this file already follows — this file's own header comment explains why: hidden text
+ * must always be revealed the moment the selection touches it, so there is never a hidden-vs-visible
+ * character-count mismatch to reason about). Unlike `ImageWidget`, genuinely non-interactive: no
+ * `ignoreEvent()` override (the `WidgetType` base class default, `return true`, means CodeMirror
+ * treats clicks on this widget as ordinary cursor placement — no special click handling registered
+ * anywhere for it, matching `PLAN.md` §3's explicit "clicking the math badge does nothing special"
+ * requirement). */
+class MathPlaceholderWidget extends WidgetType {
+  constructor(readonly raw: string) {
+    super();
+  }
+
+  eq(other: MathPlaceholderWidget): boolean {
+    return other.raw === this.raw;
+  }
+
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = "cm-md-math-placeholder";
+    el.appendChild(createSigmaIconSvg());
+    el.appendChild(document.createTextNode(" formula"));
+    el.title = this.raw;
+    return el;
   }
 }
 
@@ -429,6 +499,14 @@ class MarkdownDecorationsPlugin implements PluginValue {
         imageRanges.push({ from: img.from, to: img.to });
       }
     }
+    // Live-view math badge (`PLAN.md` §3) — same code-fence exclusion and touch-to-reveal gating as
+    // every other `Decoration.replace` scan above.
+    for (const math of findMathSpans(docText)) {
+      if (overlapsAny(codeSkipRanges, math.from, math.to)) continue;
+      if (!touchesSelection(state, math.from, math.to)) {
+        addReplace(math.from, math.to, Decoration.replace({ widget: new MathPlaceholderWidget(docText.slice(math.from, math.to)) }));
+      }
+    }
 
     links.sort((a, b) => a.from - b.from);
     this.links = links;
@@ -600,6 +678,69 @@ class SourceImageMarkerPlugin implements PluginValue {
  * dependency; it only needs the document's syntax tree and raw text. */
 export function sourceImageMarkerExtension(): Extension {
   return ViewPlugin.fromClass(SourceImageMarkerPlugin, {
+    decorations: (plugin) => plugin.decorations,
+  });
+}
+
+/** Source-view "this is a math formula" marker (`docs/plans/v1.2.0/math-rendering/PLAN.md` §4) —
+ * a sibling plugin rather than a case folded into `SourceImageMarkerPlugin` above (`PLAN.md` §4's
+ * own explicit "two implementation shapes, developer-lite discretion" delegation): math spans have
+ * no first-class lezer syntax-tree node at all (unlike `Image`), so this plugin's `build()` is a
+ * pure regex scan (`findMathSpans`) with no `syntaxTree(state).iterate` node-type case to add —
+ * keeping it separate avoids renaming/touching the already-shipped, already-tested image-marker
+ * plugin (GitHub issue #81) just to fold in an unrelated detection mechanism, at the modest,
+ * already-established cost (`MarkdownDecorationsPlugin.build()` above does the same) of one extra
+ * `syntaxTree(state).iterate` pass per rebuild to (re)compute `codeSkipRanges` independently. Wired
+ * through its own `sourceMathMarkerCompartment` (`codeMirrorSetup.ts`), active with the exact same
+ * polarity as `sourceImageMarkerCompartment` (on while live view is off) but otherwise fully
+ * independent of it — a memo can show both an image marker and a math marker at once, each with its
+ * own distinct color (`theme.css`'s `--ttn-bg-math-marker`, deliberately different from
+ * `--ttn-bg-image-marker`, per the direct user request for visual distinguishability). */
+const SOURCE_MATH_MARKER_MARK = Decoration.mark({ class: "cm-md-source-math-marker" });
+
+class SourceMathMarkerPlugin implements PluginValue {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = this.build(view.state);
+  }
+
+  update(update: ViewUpdate): void {
+    if (update.docChanged) this.decorations = this.build(update.state);
+  }
+
+  private build(state: EditorState): DecorationSet {
+    const ranges: Range<Decoration>[] = [];
+    // Same code-fence/inline-code exclusion `SourceImageMarkerPlugin.build()` computes for its own
+    // `findImageTags` scan, computed independently here for `findMathSpans` (see this plugin's own
+    // header comment on why it's a separate tree walk rather than a shared one).
+    const codeSkipRanges: Range2[] = [];
+
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        switch (node.name) {
+          case "InlineCode":
+          case "FencedCode":
+          case "CodeBlock":
+            codeSkipRanges.push({ from: node.from, to: node.to });
+            break;
+        }
+      },
+    });
+
+    for (const math of findMathSpans(state.doc.toString())) {
+      if (overlapsAny(codeSkipRanges, math.from, math.to)) continue;
+      ranges.push(SOURCE_MATH_MARKER_MARK.range(math.from, math.to));
+    }
+
+    return Decoration.set(ranges, true);
+  }
+}
+
+/** Source-view math-marker extension (see `SourceMathMarkerPlugin` above) — same no-config shape as
+ * `sourceImageMarkerExtension`. */
+export function sourceMathMarkerExtension(): Extension {
+  return ViewPlugin.fromClass(SourceMathMarkerPlugin, {
     decorations: (plugin) => plugin.decorations,
   });
 }

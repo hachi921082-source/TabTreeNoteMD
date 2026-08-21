@@ -9,7 +9,7 @@ import { Compartment } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { markdownDecorationExtension, sourceImageMarkerExtension } from "./markdownDecorations";
+import { markdownDecorationExtension, sourceImageMarkerExtension, sourceMathMarkerExtension } from "./markdownDecorations";
 import type { MarkdownDecorationConfig } from "./markdownDecorations";
 
 /** Always-on language support: CommonMark plus GitHub-Flavored-Markdown's table/task-list/
@@ -45,12 +45,25 @@ export function sourceImageMarkerViewExtension(sourceViewActive: boolean): Exten
   return sourceViewActive ? sourceImageMarkerExtension() : [];
 }
 
+/** Same opposite-polarity/no-config-dependency shape as `sourceImageMarkerCompartment` above, but a
+ * fully independent compartment (`docs/plans/v1.2.0/math-rendering/PLAN.md` §4's own "sibling
+ * plugin" choice, `markdownDecorations.ts`'s `SourceMathMarkerPlugin` header comment) — reconfigured
+ * on its own, never bundled into `sourceImageMarkerCompartment`'s reconfigure call, so the two
+ * marker kinds stay independently toggleable even though they currently share the same on/off
+ * condition (`!liveViewEnabled`). */
+export const sourceMathMarkerCompartment = new Compartment();
+
+export function sourceMathMarkerViewExtension(sourceViewActive: boolean): Extension {
+  return sourceViewActive ? sourceMathMarkerExtension() : [];
+}
+
 /** Convenience composer for `EditorPane.tsx`: the language support (always on) plus the initial
- * live-view and source-image-marker compartment contents. */
+ * live-view and source-image/math-marker compartment contents. */
 export function buildMarkdownExtensions(liveViewEnabled: boolean, config: MarkdownDecorationConfig): Extension[] {
   return [
     markdownLanguageExtension(),
     liveViewCompartment.of(liveViewExtension(liveViewEnabled, config)),
     sourceImageMarkerCompartment.of(sourceImageMarkerViewExtension(!liveViewEnabled)),
+    sourceMathMarkerCompartment.of(sourceMathMarkerViewExtension(!liveViewEnabled)),
   ];
 }
