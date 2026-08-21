@@ -381,8 +381,15 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       onOpenMemo: onOpenMemoLink,
       requestExternalConfirm,
       memoKey,
+      // Already-translated checkbox-widget tooltips (`checkboxClick.ts`'s `CheckboxWidget`) — `t`
+      // in the dep array below means a language change alone re-memoizes this config, which the
+      // existing `liveViewCompartment.reconfigure(liveViewExtension(liveViewEnabled,
+      // markdownConfig))` effect already picks up on any `markdownConfig` change, same
+      // "reconfigure on settings/config change" pattern the math/image marker compartments use.
+      checkboxUncheckTooltip: t("editor.checkboxUncheckTooltip"),
+      checkboxCheckTooltip: t("editor.checkboxCheckTooltip"),
     }),
-    [appSettings, readOnly, tabId, onOpenMemoLink, requestExternalConfirm, memoKey],
+    [appSettings, readOnly, tabId, onOpenMemoLink, requestExternalConfirm, memoKey, t],
   );
 
   // Evicts the previous memo's cached image Blob URLs on every memo switch and on unmount
