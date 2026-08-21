@@ -61,6 +61,9 @@ const SHORTCUT_LABEL_KEYS: Record<string, TranslationKey> = {
   "markdown.rearrangeToggle": "settings.shortcutLabel.markdown.rearrangeToggle",
   "markdown.toggleLiveView": "settings.shortcutLabel.markdown.toggleLiveView",
   "markdown.paneModeCycle": "settings.shortcutLabel.markdown.paneModeCycle",
+  "markdown.pdfExport": "settings.shortcutLabel.markdown.pdfExport",
+  "preview.zoomIn": "settings.shortcutLabel.preview.zoomIn",
+  "preview.zoomOut": "settings.shortcutLabel.preview.zoomOut",
 };
 
 export function SettingsDialog({ settings, patchSettings, applyFetched, onClose }: SettingsDialogProps) {
