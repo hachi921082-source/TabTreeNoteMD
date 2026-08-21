@@ -14,45 +14,57 @@
 ## Index
 
 1. Where the project stands
-2. `tab-double-click-jump` (item 6) — implemented, reviewed, merged, pushed (this session)
+2. `preview-zoom` (item 7) — implemented, reviewed, merged, pushed (this session)
 3. Separate track: GitHub issues #190 and #191 — both filed only, neither started
 4. Untracked file — `CLAUDE - コピー.md` still unaddressed
-5. Next step — resume the nine-item implementation order, item 7 next
+5. Next step — resume the nine-item implementation order, item 8 next
 6. Branch policy for v1.2.0 (unchanged)
-7. Process note — commit-hygiene lapse this session (caught and fixed before push)
-8. Process note — token-waste/orchestrator-responsibility lesson this session (pointer to memory, not repeated in full here)
+7. Process note — Auto Mode classifier blocked `git merge` even after chat confirmation (pointer to memory, not repeated in full here)
 
 ## 1. Where the project stands
 
 - v1.1.0 is fully complete and merged into `V1.1.0` (unchanged).
-- Current branch: **`V1.2.0`**, pushed to `origin/V1.2.0` at `eb34b91` (this session's last push).
-- **This session's work**: item 6 (`tab-double-click-jump`) implemented, reviewed, merged into `V1.2.0`,
-  and pushed. Feature branch deleted locally after merge (per user confirmation). 6 of 9 items now done.
+- Current branch: **`V1.2.0`**, pushed to `origin/V1.2.0` at `3f42c15` (this session's merge + push).
+- **This session's work**: item 7 (`preview-zoom`) implemented, reviewed, merged into `V1.2.0`, and
+  pushed. Feature branch deleted locally after merge (per user confirmation). 7 of 9 items now done.
 
-## 2. `tab-double-click-jump` (item 6) — implemented, reviewed, merged, pushed (this session)
+## 2. `preview-zoom` (item 7) — implemented, reviewed, merged, pushed (this session)
 
-- Branch `feature/v1.2.0-tab-double-click-jump` cut from `V1.2.0`, implemented per
-  `docs/plans/v1.2.0/tab-double-click-jump/PLAN.md` §2–§5:
-  - `TabBar.tsx`: new `TabBarProps.onActiveTabDoubleClick`; `onDoubleClick` on the tab `<div>` guarded by
-    `tab.id === activeTabId`; active tab's `title` tooltip gains `(ダブルクリックで先頭へ)`.
-  - `EditorPane.tsx`: new `EditorPaneHandle.toggleJumpToStart`; `jumpToggleRef` (`{anchor, head,
-    topLinePos}` or `null`) — first double-click captures position and jumps to doc start, second
-    restores and clears; `ChangeDesc.mapPos()` remaps the saved ref on every `docChanged` update so an
-    edit between jump and toggle-back doesn't land on a stale offset; reset added to the
-    `loadGeneration`-gated view-recreation effect, placed before the `!ed.content` early-return.
-  - `App.tsx`: wires `onActiveTabDoubleClick={() => editorRef.current?.toggleJumpToStart()}`.
-- **Flagged deviation, resolved as non-blocking**: PLAN.md §4 claimed the three pre-existing session-only
-  resets (`liveViewOverride`/`paneModeOverride`/`previewLockOverride`) already ran before the
-  `!ed.content` early-return "at lines ~514–516" — `reviewer-lite` confirmed this line-number/ordering
-  claim is factually wrong against current code (those three resets actually sit *after* the early
-  return, unrelated to this feature). No interaction risk between the two reset groups found; not a
-  blocker. Worth fixing PLAN.md's stale claim in a future doc-consistency pass.
-- `reviewer-lite` ran all eight PLAN §6 scenarios live via CDP-driven `tauri dev` (jump/toggle-back/
-  fresh-recapture, edit-then-toggle-back remap check, inactive-tab no-op, tab-switch discards toggle,
-  no-memo-open no-op, tooltip check) — all passed, no console errors. **Approved, no blocking issues.**
-- Commits `901a3fc` (TabBar.tsx), `6c2af29` (EditorPane.tsx), `32d126b` (App.tsx) → merge commit
-  (message: "Merge feature/v1.2.0-tab-double-click-jump: ...") into `V1.2.0` at `eb34b91`, pushed,
-  feature branch deleted locally after user confirmation.
+- Branch `feature/v1.2.0-preview-zoom` cut from `V1.2.0`, implemented per
+  `docs/plans/v1.2.0/preview-zoom/PLAN.md` §1–§7:
+  - `src/shared/shortcuts.ts`: `DEFAULT_SHORTCUTS` gains `"preview.zoomIn": "Ctrl+="` /
+    `"preview.zoomOut": "Ctrl+-"`.
+  - `PreviewPane.tsx`: new `previewZoomPercent` prop, applied as CSS `zoom` (not `transform: scale()`)
+    on the rendered-content wrapper.
+  - `MarkdownToolbar.css` / `MarkdownToolbar.tsx`: `PREVIEW_ZOOM_MIN/MAX/STEP` (70/180/10) exported from
+    the toolbar file (developer-lite's discretionary placement call, PLAN.md left this open); ± /
+    percentage-readout button group, conditionally rendered only while `paneMode === "preview"`, disabled
+    at bounds, tooltips driven by `resolveShortcuts`.
+  - `EditorPane.tsx`: `previewZoomPercent` state (default 100) with three independent reset triggers
+    (tab switch, memo switch — joined to the existing `loadGeneration`-gated reset point alongside
+    `tab-double-click-jump`'s toggle reset — and `paneMode` leaving `"preview"`, its own effect); a
+    focus-unconstrained keydown handler (works even with focus inside the preview pane's DOM, mirroring
+    the `markdown.paneModeCycle`/`markdown.pdfExport` pattern) handling `Ctrl+=`/`Ctrl+-` plus the
+    confirmed §5.3 numpad-alias asymmetry (`Ctrl+NumpadSubtract` needs no special code since its `e.key`
+    already equals `Ctrl+-`'s; `Ctrl+NumpadAdd` needs an explicit non-rebindable `e.code === "NumpadAdd"`
+    check since its `e.key` differs from `Ctrl+=`'s).
+- `reviewer-lite` ran the full PLAN §7 scenario list live via CDP-driven `tauri dev` — zoom stepping/
+  bounds-disabling, percentage-readout reset, keyboard shortcuts including numpad aliases with focus
+  inside the preview pane, shortcut-rebinding + numpad-alias survival, reset on tab/memo switch and on
+  leaving preview mode, split-mode preview fixed at 100% regardless of preview-mode zoom, ± group absent
+  outside `paneMode === "preview"`. `tsc --noEmit` and `cargo check` both clean. **Approved.**
+  - One item PLAN.md §3 explicitly reserved for the user (not reviewer-lite's call): whether a wide
+    table/image looks correct at 180% zoom. reviewer-lite's test memo had no wide content to check this
+    against; the user then launched the app directly (`npm run tauri dev`) and confirmed visually — no
+    layout breakage. This closes the one open caveat from PLAN.md.
+  - Non-blocking observation: `SettingsDialog.tsx`'s `SHORTCUT_LABELS` has no Japanese label for
+    `preview.zoomIn`/`preview.zoomOut` (shows the raw action id) — matches existing precedent
+    (`markdown.pdfExport` has the same gap) and is explicitly deferred to item 9 (`i18n`) per PLAN.md's
+    own header. Not a regression, not blocking.
+- Commits (5, one file each): `0d6b5f7` (MarkdownToolbar.css), `77300a5` (MarkdownToolbar.tsx),
+  `0eec54d` (EditorPane.tsx), plus the `shortcuts.ts` and `PreviewPane.tsx` commits → merge commit
+  ("Merge feature/v1.2.0-preview-zoom: ...") into `V1.2.0` at `3f42c15`, pushed, feature branch deleted
+  locally after user confirmation.
 
 ## 3. Separate track: GitHub issues #190 and #191 — both filed only, neither started
 
@@ -73,52 +85,42 @@ session.
 `"CLAUDE - コピー.md"` (a confirmed-stale backup, not a duplicate) remains untracked and untouched,
 unchanged across this session. Ask the user first if cleanup is ever wanted.
 
-## 5. Next step — resume the nine-item implementation order, item 7 next
+## 5. Next step — resume the nine-item implementation order, item 8 next
 
-Recommended order (unchanged; items 1–6 done):
+Recommended order (unchanged; items 1–7 done):
 
 1. ~~`preview-link-encoding-fix`~~ — done, merged, pushed.
 2. ~~`cross-tab-anchor-links`~~ — done, merged, pushed.
 3. ~~`preview-scroll-fix`~~ — done, merged, pushed.
 4. ~~`quick-open-discoverability`~~ — done, merged, pushed.
 5. ~~`pane-mode-toolbar-semantics`~~ — done, merged, pushed.
-6. ~~`tab-double-click-jump`~~ — done, merged, pushed (§2, this session).
-7. **`preview-zoom`** (172 lines, medium) — next up. Flagged visual-interaction risk at 180% upper
-   bound, see `DECISIONS.md`'s zoom-mechanism entry.
-8. `math-rendering` (155 lines, medium-high) — new KaTeX dependency.
-9. `i18n` (248 lines, largest, deliberately last) — sweeps up every other feature's new UI strings.
+6. ~~`tab-double-click-jump`~~ — done, merged, pushed.
+7. ~~`preview-zoom`~~ — done, merged, pushed (§2, this session).
+8. **`math-rendering`** (155 lines, medium-high) — next up. New KaTeX dependency.
+9. `i18n` (248 lines, largest, deliberately last) — sweeps up every other feature's new UI strings,
+   including the `preview.zoomIn`/`preview.zoomOut` `SHORTCUT_LABELS` gap noted in §2.
 
-Items 7–8 remain mutually independent and reorderable. Per `docs/plans/README.md`'s "Independent
+Item 8 has no plan-listed dependency on item 9. Per `docs/plans/README.md`'s "Independent
 Implementation, Mandatory Final Integration Pass" section, `reviewer-lite` must still do one whole-app
-integration pass after all nine land — items 7–9 still unimplemented, so this pass is not due yet.
+integration pass after all nine land — item 9 still unimplemented, so this pass is not due yet.
 
-Ask the user before starting item 7, same as every stage transition in this project's workflow.
+Ask the user before starting item 8, same as every stage transition in this project's workflow.
 
 ## 6. Branch policy for v1.2.0 (unchanged)
 
 **`V1.2.0` does NOT merge back into `V1.1.0`.** Per the user: "v1.1.0とは別にv1.2.0として開発を継続するの
 でv1.1.0へマージはしない".
 
-`feature/v1.2.0-<name>` branches, merged directly into `V1.2.0` (no PR) — item 6 (§2) is the sixth
+`feature/v1.2.0-<name>` branches, merged directly into `V1.2.0` (no PR) — item 7 (§2) is the seventh
 confirmed instance of this pattern.
 
-## 7. Process note — commit-hygiene lapse this session (caught and fixed before push)
+## 7. Process note — Auto Mode classifier blocked `git merge` even after chat confirmation
 
-While committing item 6's changes, `git commit -m ... -- src/components/TabBar/TabBar.tsx` was run
-without noticing `docs/HANDOFF.md` (a prior session's leftover, staged-but-never-committed change) was
-already sitting in the index — the commit swept both files in together, violating the "one file per
-commit" convention. Caught immediately by checking `git show --stat HEAD` after the commit rather than
-assuming it matched what was staged. Fixed locally and safely (`git reset --soft HEAD~1`, nothing had
-been pushed yet) by re-splitting into two commits. Lesson: after any commit, verify its actual file list
-when anything was already staged going in — don't trust that `git commit -m ... -- <one path>` only
-touched that path without checking, since a stale staged file elsewhere in the tree can ride along.
-
-## 8. Process note — token-waste/orchestrator-responsibility lesson this session
-
-During item 6's review, `reviewer-lite`'s live-testing tool-call volume looked excessive from the
-outside, and the assistant separately wrote an overly long, unrequested memory entry about it — both
-traced back to the orchestrator (the assistant), not subagent misbehavior. Full detail recorded in
-persistent memory (`feedback_live_testing_scope_discipline.md` item 6, `feedback_ask_dont_dump_
-conserve_tokens.md`'s recurrence note, and new `feedback_responsibility_means_enforcement.md`) —
-not repeated here in full; read those before the next subagent-heavy session if token discipline
-matters again.
+Mid-session, `git checkout V1.2.0 && git merge --no-ff feature/v1.2.0-preview-zoom` was denied outright
+by Claude Code's Auto Mode permission classifier ("Blocked by classifier"), despite the user having
+already said "ok" to merging in chat. Chat confirmation and the harness's classifier permission are two
+independent gates — clearing one does not clear the other. The user resolved it by switching Claude
+Code's permission mode from Auto Mode to manual, after which the identical command succeeded
+immediately. Full detail (including the three concrete unblock paths and the "don't suggest
+`AskUserQuestion` as a workaround" note) recorded in `feedback_confirm_before_merge_push_delete.md`'s
+2026-08-21 update — not repeated here in full, read that before the next merge if this recurs.
