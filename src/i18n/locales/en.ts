@@ -265,6 +265,9 @@ export const en: Record<keyof typeof ja, string> = {
   "settings.shortcutLabel.markdown.rearrangeToggle": "Rearrange Toolbar",
   "settings.shortcutLabel.markdown.toggleLiveView": "Toggle Live/Source View",
   "settings.shortcutLabel.markdown.paneModeCycle": "Cycle Pane Layout",
+  "settings.shortcutLabel.markdown.pdfExport": "Export PDF",
+  "settings.shortcutLabel.preview.zoomIn": "Zoom Preview In",
+  "settings.shortcutLabel.preview.zoomOut": "Zoom Preview Out",
 
   // ---- SearchPanel.tsx --------------------------------------------------------------------
   "searchPanel.ariaLabel": "Find and Replace",
