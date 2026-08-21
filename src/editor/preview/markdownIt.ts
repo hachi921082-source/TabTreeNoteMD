@@ -25,6 +25,18 @@
 import MarkdownIt from "markdown-it";
 import type { MarkdownIt as MarkdownItInstance, RendererRule, StateCore, Token } from "markdown-it";
 import taskLists from "markdown-it-task-lists";
+import texmath from "markdown-it-texmath";
+import katex from "katex";
+// Bundled by Vite exactly like every other CSS import in this codebase (`EditorPane.tsx`'s own
+// `import "./Editor.css";` precedent) — never CDN-loaded (`docs/plans/v1.2.0/math-rendering/
+// PLAN.md` §2.4's offline requirement). The stylesheet's own `url(fonts/KaTeX_*.woff2)` references
+// are relative to itself inside `node_modules/katex/dist/`, so Vite resolves and bundles the font
+// files as build assets automatically, the same mechanism it already uses for every other
+// CSS-referenced asset in this project — no extra Vite config needed (verified empirically at
+// implementation time by inspecting `katex.min.css`'s font URLs; PLAN.md's own flagged
+// verification step, "disable network access, confirm formulas still render with correct
+// glyphs/styling," is reviewer-lite's live-test pass, not repeated here).
+import "katex/dist/katex.min.css";
 import { BARE_MEMO_RE, FILE_PATH_RE } from "../links";
 
 /** `Token`'s own class is exported as a type-only named export by markdown-it's bundled `.d.mts`
@@ -43,6 +55,55 @@ const wrapTableOpen: RendererRule = (tokens, idx, options, _env, self) => {
 const wrapTableClose: RendererRule = (tokens, idx, options, _env, self) => {
   return `${self.renderToken(tokens, idx, options)}</div>`;
 };
+
+/** Minimal HTML escaping for the KaTeX-parse-error fallback text below — mirrors `markdown-it-
+ * texmath`'s own internal (unexported) `escapeHTML` helper rather than importing it, since this
+ * app's renderer-rule overrides bypass that package's own rendering path entirely (see
+ * `markdown-it-texmath.d.ts`'s header comment). */
+function escapeHtmlText(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Renders one `$...$`/`$$...$$` formula body to KaTeX HTML (`PLAN.md` §2.1/§2.2) — `output: "html"`
+ * only (no parallel MathML tree, keeping the DOMPurify allowlist surface area to exactly what
+ * `output: "html"` can produce, verified empirically against `previewRenderer.ts`'s allowlist at
+ * implementation time: only `<span>`/`<svg>`/`<path>`, no `<math>`/MathML tag names). `throwOnError:
+ * false` is KaTeX's own graceful-degradation setting — invalid LaTeX renders as inline error text
+ * (`.katex-error`) instead of throwing, so one malformed formula can't take down the whole
+ * `md.render()` call; the `try`/`catch` below is a second, defense-in-depth layer for a genuinely
+ * unexpected engine-level failure, mirroring `markdown-it-texmath`'s own `texmath.render` try/catch
+ * pattern (not reused directly — see `markdown-it-texmath.d.ts`'s header comment on why this app's
+ * renderer rules bypass that helper). */
+function renderMathToHtml(tex: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(tex, { output: "html", displayMode, throwOnError: false });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `<span class="katex-error" title="${escapeHtmlText(message)}">${escapeHtmlText(tex)}</span>`;
+  }
+}
+
+/** Wraps a rendered `$$...$$` block formula in the exact same horizontal-scroll container the wide-
+ * table rule above uses (`PLAN.md` §2.3) — `Editor.css` pairs `.ttn-preview-math-wrap` with
+ * `.ttn-preview-table-wrap` on one shared `overflow-x: auto` declaration rather than duplicating it.
+ * `data-source-line` is read back off the token rather than recomputed: `previewRenderer.ts`'s own
+ * pre-render pass already calls `token.attrSet("data-source-line", ...)` for every top-level token
+ * with a non-null `.map` (block-math tokens included — `markdown-it-texmath`'s block rule sets
+ * `token.map` the same way every other markdown-it block rule does, `PLAN.md` §2.1's own
+ * requirement), so this rule only needs to read it back, exactly like `wrapTableOpen`/`wrapTableClose`
+ * above implicitly inherit it via `self.renderToken`.
+ *
+ * Deliberately identical for both the plain `$$...$$` block form and the `dollars` preset's
+ * `math_block_eqno` variant (`$$...$$ (1)`-shaped trailing-equation-number annotation, an
+ * out-of-scope Pandoc-style shorthand `PLAN.md` never mentions) — the parenthesized annotation text
+ * is simply not echoed into the rendered formula in that edge case rather than adding a new
+ * "equation numbering" UI affordance not called for by the spec; the raw Markdown source itself is
+ * untouched either way. */
+function wrapBlockMath(token: Token): string {
+  const sourceLine = token.attrGet("data-source-line");
+  const lineAttr = sourceLine != null ? ` data-source-line="${sourceLine}"` : "";
+  return `<div class="ttn-preview-math-wrap"${lineAttr}>${renderMathToHtml(token.content, true)}</div>`;
+}
 
 /** Mirrors markdown-it's own built-in `image` render rule (which flattens `alt` to plain text per
  * CommonMark's special alt-text handling) but additionally renames `src` to `data-relative-src` —
@@ -183,5 +244,22 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
   md.renderer.rules.table_close = wrapTableClose;
   md.renderer.rules.image = renderImageWithDeferredSrc;
   md.core.ruler.push("ttn_bare_link_scan", bareLinkCoreRule);
+
+  // Math rendering (`PLAN.md` §2.1): `"dollars"` preset registers `$...$` (`math_inline`) and
+  // `$$...$$` (`math_block` when it starts its own line, `math_inline_double` — still KaTeX
+  // `displayMode: true` — when `$$...$$` appears mid-paragraph) plus the Pandoc-style "no whitespace
+  // immediately inside either delimiter" currency-false-positive heuristic built into its own
+  // `$_pre`/`$_post` guards (verified empirically at implementation time: `Price: $5, not $10 total`
+  // does not tokenize as math). `engine: katex` is required by the plugin's own setup path (see
+  // `markdown-it-texmath.d.ts`) even though every renderer rule it installs is immediately
+  // overridden below with `renderMathToHtml`'s own `katex.renderToString` call (no `katexOptions`
+  // passed here — it would never be read) — its own `<eq>`/`<section>` wrapper tags are not in
+  // `previewRenderer.ts`'s DOMPurify allowlist and are never meant to be.
+  md.use(texmath, { engine: katex, delimiters: "dollars" });
+  md.renderer.rules.math_inline = (tokens, idx) => renderMathToHtml(tokens[idx].content, false);
+  md.renderer.rules.math_inline_double = (tokens, idx) => renderMathToHtml(tokens[idx].content, true);
+  md.renderer.rules.math_block = (tokens, idx) => wrapBlockMath(tokens[idx]);
+  md.renderer.rules.math_block_eqno = (tokens, idx) => wrapBlockMath(tokens[idx]);
+
   return md;
 }
