@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { Dialog } from "./Dialog";
 import type { NameValidationResult } from "../../shared/nameSanitize";
+import { useT } from "../../i18n";
 
 export interface PromptDialogProps {
   title: string;
@@ -16,6 +17,7 @@ export interface PromptDialogProps {
 }
 
 export function PromptDialog({ title, label, initialValue, submitLabel, validate, onSubmit, onCancel }: PromptDialogProps) {
+  const t = useT();
   const [value, setValue] = useState(initialValue ?? "");
   const validation = validate?.(value);
   const canSubmit = !validation || validation.valid;
@@ -31,10 +33,10 @@ export function PromptDialog({ title, label, initialValue, submitLabel, validate
       footer={
         <>
           <button type="button" onClick={onCancel}>
-            キャンセル
+            {t("common.cancel")}
           </button>
           <button type="button" disabled={!canSubmit} onClick={submit}>
-            {submitLabel ?? "OK"}
+            {submitLabel ?? t("common.ok")}
           </button>
         </>
       }
