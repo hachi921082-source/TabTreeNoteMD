@@ -37,6 +37,7 @@ import { redoCommand, undoCommand } from "../../../editor/textCommands";
 import { tocUpdateCommand } from "../../../editor/tocGenerator";
 import type { AppSettings, AppSettingsPatch, PaneMode } from "../../../shared/models";
 import type { ErrorCode } from "../../../shared/result";
+import { resolveShortcuts } from "../../../shared/shortcuts";
 import "./MarkdownToolbar.css";
 
 /** Toolbar's Color button — closed 5-choice enum, adopted verbatim from the legacy toolbar
@@ -71,6 +72,15 @@ const PANE_MODE_LABEL: Record<PaneMode, string> = {
  * button's *next*-state label instead of its current state (`docs/plans/v1.2.0/
  * pane-mode-toolbar-semantics/PLAN.md` §3). */
 const PANE_MODE_CYCLE: Record<PaneMode, PaneMode> = { edit: "split", split: "preview", preview: "edit" };
+
+/** Preview-pane zoom bounds/step (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §4/§7) — range 70-180%,
+ * 10% steps, default 100% (`EditorPane.tsx`'s own `previewZoomPercent` initial state). Exported so
+ * `EditorPane.tsx`'s `onZoomIn`/`onZoomOut` callbacks clamp to the exact same bounds this
+ * component's ± buttons use for their own at-bounds `disabled` rendering, rather than duplicating
+ * the numbers in two places. */
+export const PREVIEW_ZOOM_MIN = 70;
+export const PREVIEW_ZOOM_MAX = 180;
+export const PREVIEW_ZOOM_STEP = 10;
 
 const DEFAULT_POSITION = { x: 24, y: 24 };
 
@@ -144,6 +154,16 @@ export interface MarkdownToolbarProps {
    * elsewhere becomes a no-op (`EditorPane.tsx`'s own guards). */
   previewLocked: boolean;
   onTogglePreviewLock: () => void;
+  /** Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §2/§4) — current percentage and the
+   * three actions driving it (± buttons, and the percentage readout button's reset-to-100). Owned by
+   * `EditorPane.tsx` (session-only, resets on tab/memo switch and on leaving `"preview"` mode); this
+   * component only renders the ± / readout group and never mutates the value itself. The group below
+   * is conditionally rendered only while `paneMode === "preview"` (not always-rendered-but-disabled),
+   * since the control has no meaningful value/effect in any other pane mode. */
+  previewZoomPercent: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
   /** `true` while the memo is read-only (edit-locked, or a conflict dialog is open) — disables
    * every content-mutating slot except the rearrange toggle itself (`[spec §2.2]`). */
   readOnly: boolean;
@@ -188,6 +208,10 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     revealSplitIfPreviewOnly,
     previewLocked,
     onTogglePreviewLock,
+    previewZoomPercent,
+    onZoomIn,
+    onZoomOut,
+    onZoomReset,
     readOnly,
     tabId,
     onImageError,
@@ -501,6 +525,15 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
 
   const effectivePosition = dragPosition ?? basePosition;
 
+  // Live-bound shortcut combos for the zoom buttons' tooltips (`docs/plans/v1.2.0/preview-zoom/
+  // PLAN.md` §4) — same `resolveShortcuts` call already used elsewhere in this app (e.g.
+  // `EditorPane.tsx`'s 18-toolbar-action keydown handler, `TabBar.tsx`) — so the tooltip stays
+  // correct if the user rebinds `preview.zoomIn`/`preview.zoomOut` in Settings. The fixed
+  // `Ctrl+NumpadAdd` alias (`EditorPane.tsx` §5.3) is not separately named here — it has no Settings
+  // entry of its own to go stale against.
+  const zoomInCombo = resolveShortcuts(appSettings?.shortcuts)["preview.zoomIn"];
+  const zoomOutCombo = resolveShortcuts(appSettings?.shortcuts)["preview.zoomOut"];
+
   const invokeAction = (id: ToolbarActionId) => {
     if (id === "rearrangeToggle") {
       // Rearrange mode reorders the grid's own slots by drag, so it can't be *entered* while the
@@ -636,6 +669,43 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         <button type="button" className="ttn-md-toolbar-pdf-export" onClick={onPdfExport} disabled={!memoName}>
           PDF出力
         </button>
+        {/* Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §4) — ± / percentage-readout
+            group, conditionally rendered only while `paneMode === "preview"` (not
+            always-rendered-but-disabled — the control has no meaningful value/effect in any other
+            pane mode, mirroring `split` mode's own sub-preview always rendering at a fixed 100%). */}
+        {paneMode === "preview" && (
+          <div className="ttn-md-toolbar-zoom">
+            <button
+              type="button"
+              className="ttn-md-toolbar-zoom-btn"
+              disabled={previewZoomPercent <= PREVIEW_ZOOM_MIN}
+              onClick={onZoomOut}
+              title={`ズームアウト (${zoomOutCombo})`}
+              aria-label="プレビューをズームアウト"
+            >
+              －
+            </button>
+            <button
+              type="button"
+              className="ttn-md-toolbar-zoom-reset"
+              onClick={onZoomReset}
+              title="100%にリセット"
+              aria-label="ズームを100%にリセット"
+            >
+              {previewZoomPercent}%
+            </button>
+            <button
+              type="button"
+              className="ttn-md-toolbar-zoom-btn"
+              disabled={previewZoomPercent >= PREVIEW_ZOOM_MAX}
+              onClick={onZoomIn}
+              title={`ズームイン (${zoomInCombo})`}
+              aria-label="プレビューをズームイン"
+            >
+              ＋
+            </button>
+          </div>
+        )}
         <button
           type="button"
           className="ttn-md-toolbar-minimize-btn"

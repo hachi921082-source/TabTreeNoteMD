@@ -42,6 +42,11 @@ export interface PreviewPaneProps {
    * this component is ever mounted for) keeps stretching to the full available pane width,
    * unchanged. */
   paneMode: PaneMode;
+  /** Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §2/§3) — 70-180%, applied via CSS
+   * `zoom` below. Owned by `EditorPane.tsx`; that owner is also responsible for resetting it to 100
+   * whenever `paneMode` leaves `"preview"`, so this component never needs to itself gate applying it
+   * on `paneMode === "preview"` — it's always already 100 while `paneMode === "split"`. */
+  previewZoomPercent: number;
   tabId: string | null;
   /** Image-cache scoping key (`docs/plans/markdown/image-handling/PLAN.md` §5.4) — `""` in the
    * (defensive-only; a memo is always open by the time this component mounts) case where no tab is
@@ -87,7 +92,20 @@ const DEFAULT_RENDER_WAIT_TIMEOUT_MS = 3000;
 const RENDER_WAIT_POLL_INTERVAL_MS = 50;
 
 export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(function PreviewPane(
-  { getView, renderTick, debounceMs, paneMode, tabId, memoKey, readOnly, openTrigger, confirmBeforeOpen, requestExternalConfirm, onOpenMemoLink },
+  {
+    getView,
+    renderTick,
+    debounceMs,
+    paneMode,
+    previewZoomPercent,
+    tabId,
+    memoKey,
+    readOnly,
+    openTrigger,
+    confirmBeforeOpen,
+    requestExternalConfirm,
+    onOpenMemoLink,
+  },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -272,6 +290,14 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
         <div
           className={`ttn-editor-preview-pane-content${paneMode === "preview" ? " ttn-editor-preview-pane-content-page" : ""}`}
           ref={containerRef}
+          // CSS `zoom` (not `transform: scale()` — `DECISIONS.md` "Preview-Pane Zoom CSS Mechanism")
+          // triggers a real layout reflow at the new size (text rewraps, images/tables resize within
+          // their own containers), matching the spec's "affects... text size, images, tables"
+          // description of a genuine content-size change; `transform: scale()` doesn't reflow and
+          // would need extra width/height compensation math. Universally supported across every
+          // Chromium-based engine — this app's one and only rendering target (Tauri+WebView2) — so no
+          // cross-browser concern applies.
+          style={{ zoom: `${previewZoomPercent}%` }}
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: html }}
         />

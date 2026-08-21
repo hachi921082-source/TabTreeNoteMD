@@ -77,6 +77,20 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   // the handler must call `event.preventDefault()` to suppress that native dialog (`MDEditor-spec.md`
   // §8's "`Ctrl+P` native-print conflict" note).
   "markdown.pdfExport": "Ctrl+P",
+
+  // `docs/plans/v1.2.0/preview-zoom/PLAN.md` §5.1 — ± buttons in the preview-mode toolbar header
+  // (`paneMode === "preview"` only). Not one of the 16 fixed grid slots and, like
+  // `markdown.paneModeCycle`/`markdown.pdfExport` above, dispatched by a separate,
+  // focus-unconstrained effect in `EditorPane.tsx` (must fire even while focus sits inside the
+  // preview pane's own DOM subtree). `Ctrl+=`/`Ctrl+-` are also WebView2/Chromium's native
+  // page-zoom shortcuts — the handler must call `event.preventDefault()` to suppress that native
+  // behavior, same reasoning as `markdown.pdfExport`'s native-print-dialog conflict. The
+  // `Ctrl+NumpadAdd`/`Ctrl+NumpadSubtract` numpad aliases are handled separately in `EditorPane.tsx`
+  // (§5.3: `Ctrl+NumpadSubtract`'s `e.key` already equals `Ctrl+-`'s via `comboFromEvent`, so it
+  // needs no extra entry here; `Ctrl+NumpadAdd`'s `e.key` differs from `Ctrl+=`'s and is checked via
+  // `e.code` outside this rebindable map instead).
+  "preview.zoomIn": "Ctrl+=",
+  "preview.zoomOut": "Ctrl+-",
 };
 
 /** Action ids that are rebindable via the Settings screen's Shortcuts tab but ship with NO default

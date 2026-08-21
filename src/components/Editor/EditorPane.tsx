@@ -22,7 +22,7 @@ import { Dialog } from "../dialogs/Dialog";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { SearchPanel } from "../Search/SearchPanel";
 import { ConflictDialog } from "./ConflictDialog";
-import { MarkdownToolbar } from "./Toolbar/MarkdownToolbar";
+import { MarkdownToolbar, PREVIEW_ZOOM_MAX, PREVIEW_ZOOM_MIN, PREVIEW_ZOOM_STEP } from "./Toolbar/MarkdownToolbar";
 import type { MarkdownToolbarHandle } from "./Toolbar/MarkdownToolbar";
 import { PreviewPane } from "./PreviewPane";
 import type { PreviewPaneHandle } from "./PreviewPane";
@@ -277,6 +277,27 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   useEffect(() => {
     setPreviewLockOverride(null);
   }, [isMemoEditLocked]);
+
+  // Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §2) — session-only, resets on tab
+  // switch, memo switch (the third `setPreviewZoomPercent(100)` reset, alongside
+  // `liveViewOverride`/`paneModeOverride`/`previewLockOverride`/`jumpToggleRef`, in the
+  // `loadGeneration`-gated view-(re)creation effect below), AND on leaving `paneMode === "preview"`
+  // specifically — a case NOT covered by that same memo-switch reset point, since `paneMode` can
+  // change without a memo switch at all (via the pane-mode-cycle button/shortcut), so it needs this
+  // own separate effect.
+  const [previewZoomPercent, setPreviewZoomPercent] = useState(100);
+  useEffect(() => {
+    if (paneMode !== "preview") setPreviewZoomPercent(100);
+  }, [paneMode]);
+  const onZoomIn = useCallback(() => {
+    setPreviewZoomPercent((current) => Math.min(PREVIEW_ZOOM_MAX, current + PREVIEW_ZOOM_STEP));
+  }, []);
+  const onZoomOut = useCallback(() => {
+    setPreviewZoomPercent((current) => Math.max(PREVIEW_ZOOM_MIN, current - PREVIEW_ZOOM_STEP));
+  }, []);
+  const onZoomReset = useCallback(() => {
+    setPreviewZoomPercent(100);
+  }, []);
 
   const onCyclePaneMode = useCallback(() => {
     // While locked, the pane-mode-cycle toggle itself is a no-op — must be explicitly unlocked
@@ -658,6 +679,10 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     setLiveViewOverride(null);
     setPaneModeOverride(null);
     setPreviewLockOverride(null);
+    // Preview zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §2) joins the same reset group above —
+    // a freshly-opened memo always starts at 100%, never a stale zoom level left over from whatever
+    // memo/tab was previously open in `"preview"` mode.
+    setPreviewZoomPercent(100);
     if (focusEditorTokenRef.current !== consumedFocusTokenRef.current) {
       consumedFocusTokenRef.current = focusEditorTokenRef.current;
       view.focus();
@@ -910,6 +935,47 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     return () => window.removeEventListener("keydown", handler);
   }, [appSettings?.shortcuts, handlePdfExport]);
 
+  // `preview.zoomIn`/`preview.zoomOut` (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §5.2): same
+  // focus-UNconstrained treatment as `markdown.paneModeCycle`/`markdown.pdfExport` above — must fire
+  // regardless of focus location within the editor pane, including while focus is inside the
+  // (possibly hidden, outside `"preview"` mode) preview pane's own DOM subtree. `Ctrl+=`/`Ctrl+-` are
+  // also WebView2/Chromium's native page-zoom shortcuts, so both branches call `e.preventDefault()`
+  // to suppress that native behavior first, same reasoning as `markdown.pdfExport`'s
+  // native-print-dialog conflict.
+  //
+  // Numpad alias asymmetry (§5.3, confirmed via `comboFromEvent`'s `e.key`-based, not `e.code`-based,
+  // implementation):
+  //   - Zoom OUT: `Ctrl+NumpadSubtract`'s `e.key` is already the literal `"-"`, identical to the
+  //     main-row `Ctrl+-`'s `e.key` — `comboFromEvent` already produces the same `"Ctrl+-"` string
+  //     for BOTH physical keys, so the ordinary `resolveShortcuts` match below handles the numpad key
+  //     for free. NOT an oversight that there's no separate numpad-subtract branch here.
+  //   - Zoom IN: `Ctrl+NumpadAdd`'s `e.key` is `"+"`, but the main-row `Ctrl+=`'s `e.key` (no Shift
+  //     held) is `"="` — these are DIFFERENT strings, so `comboFromEvent` does NOT already alias
+  //     them. Handled as a separate, hardcoded, non-rebindable check via `e.code` (not `e.key`, and
+  //     deliberately not routed through `resolveShortcuts` — this alias has no Settings entry of its
+  //     own to go stale against if the user rebinds `preview.zoomIn`).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const shortcuts = resolveShortcuts(appSettings?.shortcuts);
+      if (comboFromEvent(e) === shortcuts["preview.zoomIn"]) {
+        e.preventDefault();
+        onZoomIn();
+        return;
+      }
+      if (comboFromEvent(e) === shortcuts["preview.zoomOut"]) {
+        e.preventDefault();
+        onZoomOut();
+        return;
+      }
+      if (e.ctrlKey && e.code === "NumpadAdd") {
+        e.preventDefault();
+        onZoomIn();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [appSettings?.shortcuts, onZoomIn, onZoomOut]);
+
   const runOnView = (fn: (view: EditorView) => void) => {
     const view = viewRef.current;
     if (view) fn(view);
@@ -1002,6 +1068,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
             renderTick={renderTick}
             debounceMs={appSettings?.preview.debounceMs ?? FALLBACK_PREVIEW_DEBOUNCE_MS}
             paneMode={paneMode}
+            previewZoomPercent={previewZoomPercent}
             tabId={tabId}
             memoKey={memoKey ?? ""}
             readOnly={readOnly}
@@ -1025,6 +1092,10 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         revealSplitIfPreviewOnly={revealSplitIfPreviewOnly}
         previewLocked={previewLocked}
         onTogglePreviewLock={onTogglePreviewLock}
+        previewZoomPercent={previewZoomPercent}
+        onZoomIn={onZoomIn}
+        onZoomOut={onZoomOut}
+        onZoomReset={onZoomReset}
         readOnly={readOnly}
         tabId={tabId}
         onImageError={ed.reportError}

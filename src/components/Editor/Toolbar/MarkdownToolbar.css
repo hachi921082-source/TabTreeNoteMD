@@ -116,6 +116,58 @@
   cursor: default;
 }
 
+/* Preview-pane zoom controls (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §4) — ± / percentage-readout
+ * group, only rendered while `paneMode === "preview"` (see `MarkdownToolbar.tsx`). Sits right after
+ * `.ttn-md-toolbar-pdf-export`, same header row. */
+.ttn-md-toolbar-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.ttn-md-toolbar-zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--ttn-border);
+  border-radius: 3px;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  cursor: pointer;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+}
+
+.ttn-md-toolbar-zoom-btn:hover:not(:disabled) {
+  background: var(--ttn-bg-chrome);
+}
+
+.ttn-md-toolbar-zoom-btn:disabled {
+  color: var(--ttn-fg-subtle);
+  cursor: default;
+}
+
+/* Percentage readout — also acts as the reset-to-100% button (`PLAN.md` §1: "clicking the
+ * percentage readout resets to 100%"). */
+.ttn-md-toolbar-zoom-reset {
+  min-width: 40px;
+  padding: 2px 4px;
+  border: 1px solid var(--ttn-border);
+  border-radius: 3px;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  cursor: pointer;
+  font-size: calc(11px * var(--ui-font-scale));
+}
+
+.ttn-md-toolbar-zoom-reset:hover {
+  background: var(--ttn-bg-chrome);
+}
+
 /* Minimize/restore toggle (GitHub issue #26) — sits right after the view toggle; the view toggle's
  * own `margin-left: auto` already pushes both of them flush to the header's right edge. */
 .ttn-md-toolbar-minimize-btn {
