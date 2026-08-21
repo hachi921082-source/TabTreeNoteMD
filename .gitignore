@@ -8,3 +8,4 @@ src-tauri/gen/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+.claude/files/
