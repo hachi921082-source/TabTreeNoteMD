@@ -69,6 +69,10 @@ pub struct AppSettingsPatch {
     /// "無効" choice) must clear it to disabled.
     #[serde(default, deserialize_with = "double_option")]
     pub tab_lock_auto_relock_minutes: Option<Option<u32>>,
+    /// Additive field, `docs/plans/v1.2.0/i18n/PLAN.md` §2. Nullable ("reset to auto-detect" vs
+    /// "leave unchanged"), same `double_option` treatment as `tab_lock_auto_relock_minutes` above.
+    #[serde(default, deserialize_with = "double_option")]
+    pub language: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -230,6 +234,9 @@ impl AppSettingsPatch {
         }
         if let Some(v) = self.tab_lock_auto_relock_minutes {
             current.tab_lock_auto_relock_minutes = v;
+        }
+        if let Some(v) = self.language {
+            current.language = v;
         }
     }
 }
