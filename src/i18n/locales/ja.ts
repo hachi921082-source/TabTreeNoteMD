@@ -141,6 +141,13 @@ export const ja = {
   "editor.hideWhitespace": "空白/改行の表示を消す",
   "editor.externalLinkTitle": "外部リンクを開く",
   "editor.externalLinkMessageTemplate": "次のリンクを開きます。よろしいですか？ — {value}",
+  /** `editor/decorationCommands.ts`'s `linkCommand` — placeholder label inserted when the "Insert
+   * Link" toolbar action runs with no text selected (e.g. produces `[<this>](url)`). */
+  "editor.defaultLinkLabel": "リンク",
+  /** `editor/checkboxClick.ts`'s `CheckboxWidget` — live-view checkbox glyph tooltip, shown while
+   * the box IS checked (invites unchecking) / is NOT checked (invites checking) respectively. */
+  "editor.checkboxUncheckTooltip": "クリックでチェックを外す",
+  "editor.checkboxCheckTooltip": "クリックでチェック",
 
   // ---- MarkdownToolbar.tsx -------------------------------------------------
   "markdownToolbar.colorRed": "赤",
