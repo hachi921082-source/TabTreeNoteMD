@@ -43,6 +43,7 @@ import { imagePasteExtension } from "../../editor/imagePaste";
 import { releaseMemoImages } from "../../editor/imageLoader";
 import { exportMemoToPdf } from "../../editor/pdfExport";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
+import { useT } from "../../i18n";
 import {
   buildPlainTextExtensions,
   buildSettingsExtension,
@@ -162,6 +163,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   },
   ref,
 ) {
+  const t = useT();
   const ed = useEditor(tabId, memoName, appSettings, isMemoEditLocked);
   useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow, toggleJumpToStart }));
   const search = useSearch();
@@ -992,46 +994,46 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // Separators group the menu by role (GitHub issue #117): history / clipboard-selection / line
   // & text ops / markdown checkbox / search / display toggle / properties.
   const buildMenuItems = (): ContextMenuEntry[] => [
-    { label: "元に戻す", onSelect: () => runOnView(undoCommand), disabled: readOnly },
-    { label: "やり直す", onSelect: () => runOnView(redoCommand), disabled: readOnly },
+    { label: t("common.undo"), onSelect: () => runOnView(undoCommand), disabled: readOnly },
+    { label: t("common.redo"), onSelect: () => runOnView(redoCommand), disabled: readOnly },
     { type: "separator" },
-    { label: "切り取り", onSelect: () => runOnView(cutCommand), disabled: readOnly },
-    { label: "コピー", onSelect: () => runOnView(copyCommand) },
-    { label: "貼り付け", onSelect: () => runOnView(pasteCommand), disabled: readOnly },
-    { label: "すべて選択", onSelect: () => runOnView(selectAllCommand) },
+    { label: t("common.cut"), onSelect: () => runOnView(cutCommand), disabled: readOnly },
+    { label: t("common.copy"), onSelect: () => runOnView(copyCommand) },
+    { label: t("common.paste"), onSelect: () => runOnView(pasteCommand), disabled: readOnly },
+    { label: t("common.selectAll"), onSelect: () => runOnView(selectAllCommand) },
     { type: "separator" },
     {
-      label: "行操作",
+      label: t("editor.lineOpsMenu"),
       submenu: [
-        { label: "行を上に移動", onSelect: () => runOnView(moveLineUpCommand), disabled: readOnly },
-        { label: "行を下に移動", onSelect: () => runOnView(moveLineDownCommand), disabled: readOnly },
-        { label: "行を複製", onSelect: () => runOnView(duplicateLineCommand), disabled: readOnly },
-        { label: "行を削除", onSelect: () => runOnView(deleteLineCommand), disabled: readOnly },
+        { label: t("editor.moveLineUp"), onSelect: () => runOnView(moveLineUpCommand), disabled: readOnly },
+        { label: t("editor.moveLineDown"), onSelect: () => runOnView(moveLineDownCommand), disabled: readOnly },
+        { label: t("editor.duplicateLine"), onSelect: () => runOnView(duplicateLineCommand), disabled: readOnly },
+        { label: t("editor.deleteLine"), onSelect: () => runOnView(deleteLineCommand), disabled: readOnly },
       ],
     },
     {
-      label: "変換",
+      label: t("editor.convertMenu"),
       submenu: [
-        { label: "大文字に変換", onSelect: () => runOnView(convertUppercase), disabled: readOnly },
-        { label: "小文字に変換", onSelect: () => runOnView(convertLowercase), disabled: readOnly },
-        { label: "ひらがなに変換", onSelect: () => runOnView(convertToHiragana), disabled: readOnly },
-        { label: "カタカナに変換", onSelect: () => runOnView(convertToKatakana), disabled: readOnly },
-        { label: "半角に変換", onSelect: () => runOnView(convertToHalfWidth), disabled: readOnly },
-        { label: "全角に変換", onSelect: () => runOnView(convertToFullWidth), disabled: readOnly },
-        { label: "タブをスペースに", onSelect: () => runOnView(convertTabsToSpaces(resolvedSettings.tabWidth)), disabled: readOnly },
-        { label: "スペースをタブに", onSelect: () => runOnView(convertSpacesToTabs(resolvedSettings.tabWidth)), disabled: readOnly },
+        { label: t("editor.convertUpper"), onSelect: () => runOnView(convertUppercase), disabled: readOnly },
+        { label: t("editor.convertLower"), onSelect: () => runOnView(convertLowercase), disabled: readOnly },
+        { label: t("editor.convertHiragana"), onSelect: () => runOnView(convertToHiragana), disabled: readOnly },
+        { label: t("editor.convertKatakana"), onSelect: () => runOnView(convertToKatakana), disabled: readOnly },
+        { label: t("editor.convertHalfWidth"), onSelect: () => runOnView(convertToHalfWidth), disabled: readOnly },
+        { label: t("editor.convertFullWidth"), onSelect: () => runOnView(convertToFullWidth), disabled: readOnly },
+        { label: t("editor.convertTabsToSpaces"), onSelect: () => runOnView(convertTabsToSpaces(resolvedSettings.tabWidth)), disabled: readOnly },
+        { label: t("editor.convertSpacesToTabs"), onSelect: () => runOnView(convertSpacesToTabs(resolvedSettings.tabWidth)), disabled: readOnly },
       ],
     },
     { type: "separator" },
-    { label: "チェック（☐/☑）", onSelect: () => runOnView(cycleCheckbox), disabled: readOnly },
+    { label: t("editor.toggleCheckbox"), onSelect: () => runOnView(cycleCheckbox), disabled: readOnly },
     { type: "separator" },
-    { label: "Googleで検索", onSelect: () => runOnView(searchSelectionWithGoogle) },
-    { label: "検索と置換", onSelect: () => search.open() },
+    { label: t("editor.searchGoogle"), onSelect: () => runOnView(searchSelectionWithGoogle) },
+    { label: t("editor.openSearchReplace"), onSelect: () => search.open() },
     { type: "separator" },
-    { label: showWhitespace ? "空白/改行の表示を消す" : "空白/改行を表示", onSelect: () => setShowWhitespace((v) => !v) },
+    { label: showWhitespace ? t("editor.hideWhitespace") : t("editor.showWhitespace"), onSelect: () => setShowWhitespace((v) => !v) },
     { type: "separator" },
     {
-      label: "プロパティ",
+      label: t("common.properties"),
       onSelect: () => {
         if (!tabId || !memoName) return;
         setPropertiesOpen(true);
@@ -1043,7 +1045,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   ];
 
   if (!memoName) {
-    return <div className="ttn-editor-pane ttn-editor-empty">メモを選択してください</div>;
+    return <div className="ttn-editor-pane ttn-editor-empty">{t("editor.selectMemo")}</div>;
   }
 
   const status = viewRef.current ? getEditorStatus(viewRef.current.state) : null;
@@ -1056,7 +1058,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         setContextMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      {ed.loading && <div className="ttn-editor-loading">読み込み中...</div>}
+      {ed.loading && <div className="ttn-editor-loading">{t("common.loading")}</div>}
 
       {/* §4.2's DOM restructure: the two sub-panes are siblings inside this new wrapper, while the
           floating toolbar/status-bar/dialogs below stay direct children of `.ttn-editor-pane`
@@ -1125,19 +1127,17 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         )}
         {status && (
           <>
-            <span>{status.charCount.toLocaleString()} 文字</span>
-            <span>{status.lineCount} 行</span>
-            <span>
-              {status.line} 行, {status.column} 列
-            </span>
+            <span>{status.charCount.toLocaleString()} {t("editor.charCountSuffix")}</span>
+            <span>{status.lineCount} {t("editor.lineCountSuffix")}</span>
+            <span>{t("editor.cursorPositionTemplate").replace("{line}", String(status.line)).replace("{column}", String(status.column))}</span>
           </>
         )}
-        {readOnly && <span className="ttn-editor-status-locked">🔒 編集ロック中</span>}
+        {readOnly && <span className="ttn-editor-status-locked">{t("editor.editLockedStatus")}</span>}
       </div>
 
       {ed.lastErrorCode && (
         <div className="ttn-editor-error" role="alert">
-          <span>{errorMessageFor(ed.lastErrorCode)}</span>
+          <span>{errorMessageFor(ed.lastErrorCode, t)}</span>
           <button type="button" onClick={ed.clearLastError}>
             ×
           </button>
@@ -1156,9 +1156,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
       {pendingExternalLink && (
         <ConfirmDialog
-          title="外部リンクを開く"
-          message={`次のリンクを開きます。よろしいですか？ — ${pendingExternalLink.value}`}
-          confirmLabel="開く"
+          title={t("editor.externalLinkTitle")}
+          message={t("editor.externalLinkMessageTemplate").replace("{value}", pendingExternalLink.value)}
+          confirmLabel={t("common.open")}
           onConfirm={() => settleExternalConfirm(true)}
           onCancel={() => settleExternalConfirm(false)}
         />
@@ -1166,7 +1166,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
       {propertiesOpen && (
         <Dialog
-          title="プロパティ"
+          title={t("common.properties")}
           onClose={() => {
             setPropertiesOpen(false);
             setProperties(null);
@@ -1182,7 +1182,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
                   });
                 }}
               >
-                ファイルの場所を開く(O)
+                {t("properties.openLocationMnemonic")}
               </button>
               <button
                 type="button"
@@ -1191,7 +1191,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
                   setProperties(null);
                 }}
               >
-                閉じる
+                {t("common.close")}
               </button>
             </>
           }
@@ -1199,34 +1199,34 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           {properties ? (
             <>
               <section>
-                <h3 className="ttn-properties-section-title">ファイル情報</h3>
+                <h3 className="ttn-properties-section-title">{t("properties.fileInfoSection")}</h3>
                 <dl className="ttn-properties-list">
-                  <dt>ファイル名</dt>
+                  <dt>{t("properties.fileName")}</dt>
                   <dd>{properties.fileName}</dd>
-                  <dt>ファイルパス</dt>
+                  <dt>{t("properties.filePath")}</dt>
                   <dd className="ttn-properties-file-path">{properties.filePath}</dd>
-                  <dt>作成日時</dt>
-                  <dd>{formatDateTime(properties.createdMs)}</dd>
-                  <dt>更新日時</dt>
-                  <dd>{formatDateTime(properties.modifiedMs)}</dd>
-                  <dt>ファイルサイズ</dt>
-                  <dd>{properties.fileSizeBytes.toLocaleString()} バイト</dd>
+                  <dt>{t("properties.createdAt")}</dt>
+                  <dd>{formatDateTime(properties.createdMs, t)}</dd>
+                  <dt>{t("properties.modifiedAt")}</dt>
+                  <dd>{formatDateTime(properties.modifiedMs, t)}</dd>
+                  <dt>{t("properties.fileSize")}</dt>
+                  <dd>{properties.fileSizeBytes.toLocaleString()} {t("properties.bytesSuffix")}</dd>
                 </dl>
               </section>
               <section className="ttn-properties-section">
-                <h3 className="ttn-properties-section-title">文字数カウント</h3>
+                <h3 className="ttn-properties-section-title">{t("properties.charCountSection")}</h3>
                 <dl className="ttn-properties-list">
-                  <dt>総字数</dt>
+                  <dt>{t("properties.totalCharCount")}</dt>
                   <dd>{properties.charCount.toLocaleString()}</dd>
-                  <dt>字数</dt>
-                  <dd>{properties.charCountExcludingWhitespace.toLocaleString()}（改行・空白を除く）</dd>
-                  <dt>行数</dt>
+                  <dt>{t("properties.charCount")}</dt>
+                  <dd>{properties.charCountExcludingWhitespace.toLocaleString()}{t("properties.excludingWhitespace")}</dd>
+                  <dt>{t("properties.lineCount")}</dt>
                   <dd>{properties.lineCount.toLocaleString()}</dd>
                 </dl>
               </section>
             </>
           ) : (
-            <p>読み込み中...</p>
+            <p>{t("common.loading")}</p>
           )}
         </Dialog>
       )}
