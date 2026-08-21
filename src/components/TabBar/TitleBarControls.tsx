@@ -9,9 +9,11 @@
 // window (`docs/plans/editor-save/PLAN.md` §6) — no separate flush logic needed here.
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useT } from "../../i18n";
 import "./TitleBarControls.css";
 
 export function TitleBarControls() {
+  const t = useT();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -45,14 +47,14 @@ export function TitleBarControls() {
 
   return (
     <div className="ttn-titlebar-controls">
-      <button type="button" className="ttn-titlebar-btn" title="最小化" aria-label="最小化" onClick={() => void getCurrentWindow().minimize()}>
+      <button type="button" className="ttn-titlebar-btn" title={t("titleBar.minimize")} aria-label={t("titleBar.minimize")} onClick={() => void getCurrentWindow().minimize()}>
         &#x2015;
       </button>
       <button
         type="button"
         className="ttn-titlebar-btn"
-        title={maximized ? "元のサイズに戻す" : "最大化"}
-        aria-label={maximized ? "元のサイズに戻す" : "最大化"}
+        title={maximized ? t("titleBar.restore") : t("titleBar.maximize")}
+        aria-label={maximized ? t("titleBar.restore") : t("titleBar.maximize")}
         onClick={() => void getCurrentWindow().toggleMaximize()}
       >
         {maximized ? "❒" : "□"}
@@ -60,8 +62,8 @@ export function TitleBarControls() {
       <button
         type="button"
         className="ttn-titlebar-btn ttn-titlebar-btn-close"
-        title="閉じる"
-        aria-label="閉じる"
+        title={t("common.close")}
+        aria-label={t("common.close")}
         onClick={() => void getCurrentWindow().close()}
       >
         &#x2715;
