@@ -55,6 +55,11 @@
   --ttn-bg-code: #f0f0f0;
   --ttn-bg-active-line: rgba(0, 0, 0, 0.06);
   --ttn-bg-image-marker: rgba(74, 144, 217, 0.15);
+  /* Math source-view marker (`docs/plans/v1.2.0/math-rendering/PLAN.md` §4, `Editor.css`'s
+   * `.cm-md-source-math-marker`) — a distinct, non-blue hue (amber) from `--ttn-bg-image-marker`
+   * above, per the direct user request for visual distinguishability when both marker kinds appear
+   * in the same memo. */
+  --ttn-bg-math-marker: rgba(224, 130, 40, 0.15);
 
   --ttn-fg: #1a1a1a;
   --ttn-fg-muted: #666666;
@@ -97,6 +102,7 @@
   --ttn-bg-code: #f0f0f0;
   --ttn-bg-active-line: rgba(0, 0, 0, 0.06);
   --ttn-bg-image-marker: rgba(74, 144, 217, 0.15);
+  --ttn-bg-math-marker: rgba(224, 130, 40, 0.15);
 
   --ttn-fg: #1a1a1a;
   --ttn-fg-muted: #666666;
@@ -133,6 +139,7 @@
   --ttn-bg-code: #2b2b2b;
   --ttn-bg-active-line: rgba(255, 255, 255, 0.09);
   --ttn-bg-image-marker: rgba(74, 144, 217, 0.25);
+  --ttn-bg-math-marker: rgba(224, 130, 40, 0.25);
 
   --ttn-fg: #e4e4e4;
   --ttn-fg-muted: #a8a8a8;
