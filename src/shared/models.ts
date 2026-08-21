@@ -37,6 +37,11 @@ export interface AppSettings {
    * the documented default (`15`) before this ever reaches the frontend, so `null` here always
    * means an explicit, user-chosen "無効," never "not yet loaded." */
   tabLockAutoRelockMinutes: number | null;
+  /** Additive field, `docs/plans/v1.2.0/i18n/PLAN.md` §2. `null` = "not yet chosen, auto-detect
+   * default" (`src/i18n/index.tsx`'s `resolveLanguage`); `"ja" | "en"` once the user has explicitly
+   * picked a language from Settings. An unrecognized value (e.g. a hand-edited settings file)
+   * falls through to the same auto-detect default, not a hard error. */
+  language: string | null;
 }
 
 /** "Basic customization" values layered on top of the active theme's CSS variables
@@ -128,6 +133,7 @@ export type AppSettingsPatch = {
   shortcuts?: Record<string, string>;
   autostart?: Partial<{ enabled: boolean }>;
   tabLockAutoRelockMinutes?: number | null;
+  language?: string | null;
 };
 
 // ---------------------------------------------------------------------------
