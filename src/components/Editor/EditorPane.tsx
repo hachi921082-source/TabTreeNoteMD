@@ -33,6 +33,8 @@ import {
   liveViewExtension,
   sourceImageMarkerCompartment,
   sourceImageMarkerViewExtension,
+  sourceMathMarkerCompartment,
+  sourceMathMarkerViewExtension,
 } from "../../editor/codeMirrorSetup";
 import type { MarkdownDecorationConfig } from "../../editor/markdownDecorations";
 import { resolveAndScrollToHeadingAnchor } from "../../editor/links";
@@ -825,6 +827,12 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // via its own compartment since it has no `markdownConfig` dependency at all.
   useEffect(() => {
     viewRef.current?.dispatch({ effects: sourceImageMarkerCompartment.reconfigure(sourceImageMarkerViewExtension(!liveViewEnabled)) });
+  }, [liveViewEnabled]);
+
+  // Source-view math marker (`docs/plans/v1.2.0/math-rendering/PLAN.md` §4) — same opposite-polarity
+  // reconfigure pattern as the image marker above, its own independent compartment.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: sourceMathMarkerCompartment.reconfigure(sourceMathMarkerViewExtension(!liveViewEnabled)) });
   }, [liveViewEnabled]);
 
   // Destroy the view (and flush its scroll position) on unmount.
