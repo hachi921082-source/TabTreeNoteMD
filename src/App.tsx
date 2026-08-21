@@ -12,6 +12,7 @@ import { useTabLockAutoRelock } from "./state/useTabLockAutoRelock";
 import { useToast } from "./state/useToast";
 import { useWindowGeometry } from "./state/useWindowGeometry";
 import { useAppearance } from "./state/useAppearance";
+import { I18nProvider } from "./i18n";
 import { TabBar } from "./components/TabBar/TabBar";
 import { EmptyState } from "./components/TabBar/EmptyState";
 import { TreeView } from "./components/Tree/TreeView";
@@ -270,46 +271,48 @@ function App() {
   );
 
   return (
-    <div className="app-shell">
-      <TabBar
-        tabsState={{ ...tabsState, selectTab: selectTabAndRestore }}
-        tabLockState={tabLockState}
-        beforeLockTab={beforeLockTab}
-        settings={settingsState.settings}
-        patchSettings={settingsState.patch}
-        applyFetched={settingsState.applyFetched}
-        onOpenSearchHit={openSearchHit}
-        onOpenQuickOpenHit={openQuickOpenHit}
-        onActiveTabDoubleClick={() => editorRef.current?.toggleJumpToStart()}
-      />
-      <Toast toasts={toastState.toasts} onDismiss={toastState.dismissToast} />
-      <div className="app-content">
-        {!tabsState.loading && tabsState.tabs.length === 0 ? (
-          <EmptyState tabsState={tabsState} />
-        ) : (
-          <>
-            {treeSide === "left" && treePane}
-            {treeSide === "left" && splitter}
-            <EditorPane
-              ref={editorRef}
-              tabId={treeState.activeTabId}
-              memoName={treeState.openMemoName}
-              focusEditorToken={treeState.focusEditorToken}
-              appSettings={settingsState.settings}
-              memoEditorOverride={openMemoOverride}
-              isMemoEditLocked={openMemoLocked}
-              setEditorOverride={treeState.setEditorOverride}
-              patchSettings={settingsState.patch}
-              onOpenMemoLink={openLinkTarget}
-              pendingAnchorSlug={pendingAnchorSlugRef.current}
-              pendingAnchorToken={pendingAnchorTokenRef.current}
-            />
-            {treeSide === "right" && splitter}
-            {treeSide === "right" && treePane}
-          </>
-        )}
+    <I18nProvider settings={settingsState.settings}>
+      <div className="app-shell">
+        <TabBar
+          tabsState={{ ...tabsState, selectTab: selectTabAndRestore }}
+          tabLockState={tabLockState}
+          beforeLockTab={beforeLockTab}
+          settings={settingsState.settings}
+          patchSettings={settingsState.patch}
+          applyFetched={settingsState.applyFetched}
+          onOpenSearchHit={openSearchHit}
+          onOpenQuickOpenHit={openQuickOpenHit}
+          onActiveTabDoubleClick={() => editorRef.current?.toggleJumpToStart()}
+        />
+        <Toast toasts={toastState.toasts} onDismiss={toastState.dismissToast} />
+        <div className="app-content">
+          {!tabsState.loading && tabsState.tabs.length === 0 ? (
+            <EmptyState tabsState={tabsState} />
+          ) : (
+            <>
+              {treeSide === "left" && treePane}
+              {treeSide === "left" && splitter}
+              <EditorPane
+                ref={editorRef}
+                tabId={treeState.activeTabId}
+                memoName={treeState.openMemoName}
+                focusEditorToken={treeState.focusEditorToken}
+                appSettings={settingsState.settings}
+                memoEditorOverride={openMemoOverride}
+                isMemoEditLocked={openMemoLocked}
+                setEditorOverride={treeState.setEditorOverride}
+                patchSettings={settingsState.patch}
+                onOpenMemoLink={openLinkTarget}
+                pendingAnchorSlug={pendingAnchorSlugRef.current}
+                pendingAnchorToken={pendingAnchorTokenRef.current}
+              />
+              {treeSide === "right" && splitter}
+              {treeSide === "right" && treePane}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </I18nProvider>
   );
 }
 
