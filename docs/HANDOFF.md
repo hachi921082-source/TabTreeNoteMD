@@ -9,94 +9,109 @@
 >
 > **Before acting on anything below, verify it against actual current state** (`git status`, `git log`,
 > `git branch`, whether files described here still exist/match) — this file is a snapshot and can go
-> stale before it's even read. The prior version of this file flagged one unpushed commit on `V1.2.0`;
-> that has since been pushed, and this session's own merge/push/branch-delete all completed without any
-> permission-classifier blocks (unlike the `preview-link-encoding-fix` session, where push/branch-delete
-> were denied mid-session and had to be retried/run by the user).
+> stale before it's even read. This session's merge and push both completed cleanly; **branch deletion
+> (local + remote) was blocked by the Auto Mode permission classifier and is still pending** (see §3) —
+> unlike the prior `cross-tab-anchor-links` session, where all three steps went through without a block.
 
 ## Index
 
 1. Where the project stands
-2. `cross-tab-anchor-links` — implemented, reviewed (approved), merged into `V1.2.0`, pushed
-3. Two long-carried-forward untracked files — still unaddressed
-4. Separate track: GitHub issue #190 (TOC/color-tag bug) — filed only, still not started
-5. Next step — resume the nine-item implementation order, item 3 next
-6. Branch policy for v1.2.0 (unchanged, confirmed again by this session's precedent)
+2. `preview-scroll-fix` — implemented, one blocking bug found and fixed, re-reviewed (approved), merged into `V1.2.0`, pushed
+3. **Pending**: local + remote feature branch deletion (blocked by permission classifier)
+4. Separate track: GitHub issues #190 and #191 — both filed only, neither started
+5. Two long-carried-forward untracked files — still unaddressed
+6. Next step — resume the nine-item implementation order, item 4 next
+7. Branch policy for v1.2.0 (unchanged)
+8. Process lesson reinforced this session — scoping re-review after a fix
 
 ## 1. Where the project stands
 
 - v1.1.0 is fully complete and merged into `V1.1.0` (unchanged).
-- Current branch: **`V1.2.0`**, up to date with `origin/V1.2.0` (`6014789`), zero commits ahead/behind.
-- **This session's new work**: implemented and merged the second item of the nine-item recommended order
-  (`cross-tab-anchor-links`). Item 1 (`preview-link-encoding-fix`) was already done in a prior session.
+- Current branch: **`V1.2.0`**, pushed to `origin/V1.2.0` at `d3edadd`.
+- **This session's new work**: implemented, debugged, and merged the third item of the nine-item
+  recommended order (`preview-scroll-fix`). Items 1 (`preview-link-encoding-fix`) and 2
+  (`cross-tab-anchor-links`) were already done in prior sessions.
 
-## 2. `cross-tab-anchor-links` — implemented, reviewed (approved), merged into `V1.2.0`, pushed
+## 2. `preview-scroll-fix` — implemented, one blocking bug found and fixed, re-reviewed (approved), merged into `V1.2.0`, pushed
 
-Followed the now-standard per-plan flow (branch → implement → review → confirm with user → merge → push
-→ delete branch → write handoff), per `dev-workflow.md` §7 and this project's own "PLAN Implementation
-Workflow" section in `CLAUDE.md`:
+Followed the standard per-plan flow (branch → implement → review → fix → re-review → confirm with user →
+merge → push → [branch delete pending, see §3] → write handoff), per `dev-workflow.md` §7 and this
+project's "PLAN Implementation Workflow" section in `CLAUDE.md`:
 
-- Branch `feature/v1.2.0-cross-tab-anchor-links` cut from `V1.2.0`.
-- `developer-lite` implemented `docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` (§2–§4.3) across 6
-  commits, one file each: `src/editor/links.ts` (`#slug` client-side split before `linkResolve`),
-  `src/editor/markdownDecorations.ts` / `src/editor/preview/previewInteractions.ts` (signature
-  propagation only), `src/components/Editor/PreviewPane.tsx` (new `PreviewPaneHandle.waitForRender` —
-  the §4.3 "preview-render-readiness gate" shared primitive, intended for reuse by the not-yet-implemented
-  `preview-scroll-fix/PLAN.md`), `src/components/Editor/EditorPane.tsx` (anchor consumption, branching on
-  governed `paneMode`: edit/split via existing `resolveAndScrollToHeadingAnchor`, preview via the
-  readiness gate + `querySelector`/`scrollIntoView`), `src/App.tsx` (`pendingLinkFocus.anchorSlug`,
-  unified same-tab/cross-tab deferred pipeline). No `src-tauri/` changes (PLAN §2 confirmed this is
-  frontend-only). `tsc --noEmit` and `vite build` both clean.
-- One noted deviation from the PLAN's literal wording: the preview-DOM anchor-consumption effect gates on
-  `paneMode !== "edit"` rather than strictly `=== "preview"`, to correctly handle
-  `revealSplitIfPreviewOnly()`'s pre-existing auto-reveal-to-split behavior. `reviewer-lite` verified live
-  this causes no double-jump or wrong-mechanism jump.
-- `reviewer-lite` approved after live-testing via `tauri dev` + CDP: all `PLAN.md` §6 scenarios passed
-  (cross-tab and same-tab anchor jump in edit/split/preview modes, tab-only stray-anchor no-op, the
-  preview-render-readiness gate under an artificially slow debounce, all three Tab Lock/unresolved cases
-  from §5, non-ASCII composition with `preview-link-encoding-fix`). One non-blocking observation: a stray
-  pre-existing error toast appeared twice during rapid *scripted* (faster-than-human) Tab Lock
-  session/tab-switch sequences — unrelated to this feature's own code, not reproducible at normal speed,
-  correctly not chased further per this project's live-testing scope discipline.
-- Commits: `f797896`, `38a20b3`, `656cac5`, `b278531`, `415b3fa`, `8dc804d` on the feature branch, then
-  merge commit `6014789` (`git merge --no-ff`, message `Merge feature/v1.2.0-cross-tab-anchor-links: ...`)
-  into `V1.2.0`. User confirmed merge; push and branch delete both went through cleanly, unlike last time.
+- Branch `feature/v1.2.0-preview-scroll-fix` cut from `V1.2.0`.
+- `developer-lite` implemented `docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` (§2–§4) across 2 commits:
+  `src/editor/preview/scrollSync.ts` (new `computeTopVisiblePreviewLine`, PLAN §2) and
+  `src/components/Editor/EditorPane.tsx` (save-path/restore-path `paneMode === "preview"` branches, PLAN
+  §3/§4, reusing `cross-tab-anchor-links`' `PreviewPaneHandle.waitForRender` readiness gate — that
+  primitive's placeholder status in the PLAN's own text is now resolved/landed). `tsc`/`vite build` clean
+  at this point, but **not yet correctly working** (see next bullet).
+- `reviewer-lite`'s first review pass (full `PLAN.md` §6 checklist, live via `tauri dev` + CDP) found a
+  **blocking bug**: `PreviewPaneHandle.getContainer()` in `PreviewPane.tsx` returned the inner
+  `.ttn-editor-preview-pane-content` div (never scrolls) instead of the outer `.ttn-editor-preview-pane`
+  div (the actual `overflow-y: auto` scroll container) — so `computeTopVisiblePreviewLine`'s `scrollTop`
+  read was always `0`, the save-path always computed `null`, and `scrollPosition` silently never persisted
+  in preview mode. Confirmed via 3 independent live methods (direct DOM `scrollTop` check, actual-scroll +
+  on-disk persisted-value check, restore-path-unaffected check).
+- `developer-lite` fixed it in a new commit `4577979`: added a separate `scrollContainerRef` on the outer
+  div, switched `getContainer()` to return it, left the pre-existing `containerRef` (inner div) untouched
+  for its other uses (`dangerouslySetInnerHTML`, click delegation, image resolution). Self-verified live
+  (scroll-position round-trip + cross-memo anchor-jump regression check) before handing back.
+- `reviewer-lite`'s **re-review was deliberately scoped down** (see §8 below — this session's own
+  live-testing-scope-discipline lesson, reinforced after the user flagged token-usage worry) to: code
+  review of the fix diff + exactly 2 live checks (scroll-position round-trip via on-disk value, one
+  cross-memo anchor-jump sanity click) — NOT a full re-run of the whole §6 checklist. **Approved.**
+- Commits: `eb86d8b`, `cc486ad`, `4577979` on the feature branch, then merge commit `d3edadd`
+  (`git merge --no-ff`, message `Merge feature/v1.2.0-preview-scroll-fix: ...`) into `V1.2.0`. User
+  confirmed merge; push succeeded (`origin/V1.2.0` now at `d3edadd`).
 
-## 3. Two long-carried-forward untracked files — still unaddressed
+## 3. Pending: local + remote feature branch deletion (blocked by permission classifier)
 
-Unchanged from the prior `HANDOFF.md` — still present, still not touched this session:
+Unlike the prior `cross-tab-anchor-links` session (where merge/push/branch-delete all went through with no
+block), this session's `git branch -d feature/v1.2.0-preview-scroll-fix` +
+`git push origin --delete feature/v1.2.0-preview-scroll-fix` was **blocked by the Auto Mode permission
+classifier**. The branch (local and remote) is still present as of this writing — already fully merged
+into `V1.2.0` (`d3edadd`), so deleting it is safe/inert whenever the user runs it themselves or grants the
+permission. Not yet done — check `git branch` / `git branch -r` to confirm current state before assuming
+either way.
+
+## 4. Separate track: GitHub issues #190 and #191 — both filed only, neither started
+
+Not part of the v1.2.0 feature set — do not fold either into any v1.2.0 `PLAN.md`.
+
+- **#190** (unchanged from prior `HANDOFF.md`): a heading containing the app's own color/font-size
+  `<span style="...">`/`<mark>` tag produces a garbled slug in `src/editor/tocGenerator.ts`'s
+  `scanHeadings()`. https://github.com/hachi921082-source/TabTreeNoteMD/issues/190
+- **#191** (new this session): a self-referential `memo:TabName/MemoName#slug` anchor link — one whose
+  target memo is the memo already open/focused (typically a memo linking to one of its own other
+  headings) — does not jump; the anchor-jump deferred-consumer effect triggers off a `memoKey` *change*,
+  which never happens for a same-memo/same-tab target. Cross-memo/cross-tab links are unaffected. Found
+  by `developer-lite` while live-testing the `preview-scroll-fix` fix; pre-existing gap in the
+  already-merged `cross-tab-anchor-links` feature, unrelated to that session's own change.
+  https://github.com/hachi921082-source/TabTreeNoteMD/issues/191
+- **User's explicit instruction for both**: file the issue, proceed later. Do not start a `fix/` branch
+  on your own initiative — wait for the user to say to proceed.
+
+## 5. Two long-carried-forward untracked files — still unaddressed
+
+Unchanged from prior `HANDOFF.md` versions — still present, still not touched this session:
 
 ```
 ?? .claude/files/
 ?? "CLAUDE - コピー.md"
 ```
 
-Already inspected in a prior session (see git history / prior `HANDOFF.md` versions for details):
 `.claude/files/` looks like a redundant leftover agent-distribution kit (not byte-verified against the
 live `.claude/agents/*.md`); `"CLAUDE - コピー.md"` is a confirmed-stale backup, not a duplicate. Neither
 deleted — ask the user first if cleanup is ever wanted.
 
-## 4. Separate track: GitHub issue #190 (TOC/color-tag bug) — filed only, still not started
+## 6. Next step — resume the nine-item implementation order, item 4 next
 
-Unchanged. Not part of the v1.2.0 feature set — do not fold it into any v1.2.0 `PLAN.md`.
-
-- **Bug**: a heading containing the app's own color/font-size `<span style="...">`/`<mark>` tag produces
-  a garbled slug in `src/editor/tocGenerator.ts`'s `scanHeadings()`.
-- **Filed**: https://github.com/hachi921082-source/TabTreeNoteMD/issues/190
-- **User's explicit instruction**: file the issue, proceed later. Do not start a `fix/` branch on your
-  own initiative — wait for the user to say to proceed.
-
-## 5. Next step — resume the nine-item implementation order, item 3 next
-
-Recommended order (unchanged from the prior `HANDOFF.md`, item 2 now done):
+Recommended order (unchanged from prior `HANDOFF.md`, item 3 now done):
 
 1. ~~`preview-link-encoding-fix`~~ — done, merged, pushed.
-2. ~~`cross-tab-anchor-links`~~ — **done, merged, pushed (this session, §2).**
-3. **`preview-scroll-fix`** (140 lines, medium) — next up. Reuses item 2's new
-   `PreviewPaneHandle.waitForRender` preview-render-readiness-gate primitive (`docs/plans/v1.2.0/
-   cross-tab-anchor-links/PLAN.md` §4.3) — read that section before starting, since `preview-scroll-fix/
-   PLAN.md` cross-references it by name rather than repeating it.
-4. `quick-open-discoverability` (56 lines, trivial)
+2. ~~`cross-tab-anchor-links`~~ — done, merged, pushed.
+3. ~~`preview-scroll-fix`~~ — **done, merged, pushed (this session, §2).**
+4. **`quick-open-discoverability`** (56 lines, trivial) — next up. No known dependency on items 1–3.
 5. `pane-mode-toolbar-semantics` (85 lines, low)
 6. `tab-double-click-jump` (168 lines, medium)
 7. `preview-zoom` (172 lines, medium) — flagged visual-interaction risk at 180% upper bound, see
@@ -104,18 +119,32 @@ Recommended order (unchanged from the prior `HANDOFF.md`, item 2 now done):
 8. `math-rendering` (155 lines, medium-high) — new KaTeX dependency.
 9. `i18n` (248 lines, largest, deliberately last) — sweeps up every other feature's new UI strings.
 
-Items 4–8 remain mutually independent and reorderable; 1→2→3 is a hard dependency chain, now with 1 and 2
-both done — item 3 has no remaining blockers. Per `docs/plans/README.md`'s "Independent Implementation,
-Mandatory Final Integration Pass" section, `reviewer-lite` must still do one whole-app integration pass
-after all nine land.
+Items 4–8 remain mutually independent and reorderable. Per `docs/plans/README.md`'s "Independent
+Implementation, Mandatory Final Integration Pass" section, `reviewer-lite` must still do one whole-app
+integration pass after all nine land.
 
-Ask the user before starting item 3, same as every stage transition in this project's workflow.
+Ask the user before starting item 4, same as every stage transition in this project's workflow.
 
-## 6. Branch policy for v1.2.0 (unchanged, confirmed again by this session's precedent)
+## 7. Branch policy for v1.2.0 (unchanged)
 
 **`V1.2.0` does NOT merge back into `V1.1.0`.** Per the user: "v1.1.0とは別にv1.2.0として開発を継続するの
 でv1.1.0へマージはしない".
 
-`feature/v1.2.0-<name>` branches, merged directly into `V1.2.0` (no PR), mirroring v1.1.0's established
-pattern — this session's `cross-tab-anchor-links` merge (§2) is the second confirmed instance of this
-pattern after `preview-link-encoding-fix`.
+`feature/v1.2.0-<name>` branches, merged directly into `V1.2.0` (no PR) — this session's
+`preview-scroll-fix` merge (§2) is the third confirmed instance of this pattern.
+
+## 8. Process lesson reinforced this session — scoping re-review after a fix
+
+The user flagged (mid-session) a worry about live-testing token burn recurring "like before." This led to
+two concrete scope-narrowing decisions, both worth repeating in future fix/re-review cycles:
+
+- When a `reviewer-lite` pass finds a bug and the fix goes back to `developer-lite`, the **re-verification
+  request should target only the specific broken behavior** (plus a light regression sanity check on
+  adjacent code the fix touches) — not a full re-run of every scenario the first pass already confirmed
+  passing. Applied both when re-briefing `developer-lite` (self-verify) and when re-briefing `reviewer-lite`
+  (independent re-review).
+- A heavy scenario (e.g. "restart the whole app") can sometimes be swapped for an equivalent
+  cheaper check (reading the persisted value straight from the on-disk settings file) without losing
+  verification value, when the user prefers to do the truly-heavy manual step themselves.
+- This is now recorded in the persistent memory file `feedback_live_testing_scope_discipline.md` (item 5)
+  — read that before writing the next round of `developer-lite`/`reviewer-lite` prompts in a fix cycle.
