@@ -602,7 +602,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         runOnView(quoteCommand);
         break;
       case "link":
-        runOnView(linkCommand);
+        runOnView((v) => linkCommand(v, t("editor.defaultLinkLabel")));
         break;
       case "codeBlock":
         runOnView(codeBlockCommand);
