@@ -10,6 +10,7 @@
 // single password field, optionally showing a previously-set hint for reference.
 import { useState } from "react";
 import { Dialog } from "./Dialog";
+import { useT } from "../../i18n";
 
 export interface PasswordDialogProps {
   title: string;
@@ -28,6 +29,7 @@ export interface PasswordDialogProps {
 }
 
 export function PasswordDialog({ title, mode, hint, errorMessage, busy, submitLabel, onSubmit, onCancel }: PasswordDialogProps) {
+  const t = useT();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [hintInput, setHintInput] = useState("");
@@ -48,21 +50,21 @@ export function PasswordDialog({ title, mode, hint, errorMessage, busy, submitLa
       footer={
         <>
           <button type="button" onClick={onCancel}>
-            キャンセル
+            {t("common.cancel")}
           </button>
           <button type="button" disabled={!canSubmit} onClick={submit}>
-            {busy ? "処理中..." : (submitLabel ?? "OK")}
+            {busy ? t("common.processing") : (submitLabel ?? t("common.ok"))}
           </button>
         </>
       }
     >
       {!isSetup && hint && (
         <p className="ttn-dialog-hint-text">
-          ヒント: {hint}
+          {t("passwordDialog.hintPrefixTemplate").replace("{hint}", hint)}
         </p>
       )}
       <label className="ttn-dialog-field">
-        <span>パスワード</span>
+        <span>{t("passwordDialog.password")}</span>
         <input
           type="password"
           autoFocus
@@ -79,7 +81,7 @@ export function PasswordDialog({ title, mode, hint, errorMessage, busy, submitLa
       {isSetup && (
         <>
           <label className="ttn-dialog-field">
-            <span>パスワード（確認）</span>
+            <span>{t("passwordDialog.confirmPassword")}</span>
             <input
               type="password"
               value={confirmPassword}
@@ -92,9 +94,9 @@ export function PasswordDialog({ title, mode, hint, errorMessage, busy, submitLa
               }}
             />
           </label>
-          {confirmMismatch && <div className="ttn-dialog-error">パスワードが一致しません</div>}
+          {confirmMismatch && <div className="ttn-dialog-error">{t("passwordDialog.mismatch")}</div>}
           <label className="ttn-dialog-field">
-            <span>ヒント（任意）</span>
+            <span>{t("passwordDialog.hintOptional")}</span>
             <input value={hintInput} onChange={(e) => setHintInput(e.target.value)} />
           </label>
         </>
