@@ -188,10 +188,23 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
       "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "hr",
       "table", "thead", "tbody", "tr", "th", "td", "a", "strong", "em", "del", "s", "span", "mark",
       "img", "input", "div", "br",
+      // KaTeX `output: "html"` (`markdownIt.ts`'s math renderer, `docs/plans/v1.2.0/math-rendering/
+      // PLAN.md` §2.2): almost entirely `<span>`, but stretchy/variable-size constructs (`\sqrt`,
+      // `\left(`/`\right)`, `\overbrace`, accents like `\hat`/`\vec`/`\overline`, ...) render as
+      // `<svg><path>` glyphs — verified empirically at implementation time by diffing raw KaTeX
+      // output against the sanitized result for a batch of representative formulas (basic algebra,
+      // `\sqrt`, `\frac`, `\left`/`\right`, `\sum`, `matrix`, `\text`, Greek letters, `\overbrace`/
+      // `\underbrace`, accents, blackboard/calligraphic/fraktur letters): no `<math>`/MathML tag
+      // names appear anywhere (`output: "html"` truly omits the parallel MathML tree), only these
+      // two additions were needed.
+      "svg", "path",
     ],
     ALLOWED_ATTR: [
       "data-source-line", "id", "href", "style", "src", "alt", "width", "height",
       "data-relative-src", "type", "checked", "disabled", "class",
+      // KaTeX `<svg>`/`<path>` attributes (see the `ALLOWED_TAGS` comment above) — `width`/`height`
+      // are already allowlisted (shared with `<img>`), so only these five are new.
+      "aria-hidden", "d", "viewBox", "preserveAspectRatio", "xmlns",
     ],
     // DOMPurify's own default `ALLOWED_URI_REGEXP` (installed dompurify@3.4.13, `purify.cjs.js`'s
     // `IS_ALLOWED_URI` constant) only allows the `f/httpg(s)/mailto/tel/callto/sms/cid/xmpp/matrix`
