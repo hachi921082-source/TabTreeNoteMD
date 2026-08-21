@@ -516,8 +516,15 @@ class MarkdownDecorationsPlugin implements PluginValue {
     // every other `Decoration.replace` scan above.
     for (const math of findMathSpans(docText)) {
       if (overlapsAny(codeSkipRanges, math.from, math.to)) continue;
+      const matchedText = docText.slice(math.from, math.to);
+      // A multi-line `$$...$$` block formula's matched range spans a line break — CM6 throws
+      // `RangeError: Decorations that replace line breaks may not be specified via plugins` when a
+      // `ViewPlugin` (as opposed to a `StateField`) issues such a replace, which crashes the whole
+      // app with no error boundary to catch it (issue #194). Skip the badge for those; the raw
+      // `$$...$$` source just stays visible as plain text in live view instead.
+      if (matchedText.includes("\n")) continue;
       if (!touchesSelection(state, math.from, math.to)) {
-        addReplace(math.from, math.to, Decoration.replace({ widget: new MathPlaceholderWidget(docText.slice(math.from, math.to)) }));
+        addReplace(math.from, math.to, Decoration.replace({ widget: new MathPlaceholderWidget(matchedText) }));
       }
     }
 
