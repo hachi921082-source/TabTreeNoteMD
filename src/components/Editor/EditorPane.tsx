@@ -36,6 +36,7 @@ import {
 } from "../../editor/codeMirrorSetup";
 import type { MarkdownDecorationConfig } from "../../editor/markdownDecorations";
 import { resolveAndScrollToHeadingAnchor } from "../../editor/links";
+import { computeTopVisiblePreviewLine, scrollPreviewToLine } from "../../editor/preview/scrollSync";
 import { imagePasteExtension } from "../../editor/imagePaste";
 import { releaseMemoImages } from "../../editor/imageLoader";
 import { exportMemoToPdf } from "../../editor/pdfExport";
@@ -380,6 +381,16 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   memoNameRef.current = memoName;
   const overrideRef = useRef(memoEditorOverride);
   overrideRef.current = memoEditorOverride;
+  // Live mirror of the `paneMode` component variable (`docs/plans/v1.2.0/preview-scroll-fix/
+  // PLAN.md` §3) -- read by `persistEditorViewState` below, whose reference may be invoked from a
+  // stale closure (the unmount-flush effect has an empty dep array, so its captured function
+  // instance is the very first render's) that must still see the CURRENT pane mode, not the one
+  // from whenever that closure happened to be created. Not used by `flushOutgoingEditorViewState`,
+  // which instead derives the OUTGOING memo's own pane mode from the `override` argument it
+  // already receives (kept in sync by `onCyclePaneMode`/`onTogglePreviewLock` above) -- see that
+  // function's own comment.
+  const paneModeRef = useRef(paneMode);
+  paneModeRef.current = paneMode;
   // One-shot auto-focus signal (`useTree.ts`'s `focusEditorToken`): `focusEditorTokenRef` always
   // holds the latest value; `consumedFocusTokenRef` records which value the view-(re)creation
   // effect below has already acted on, so a click-open focuses exactly once per open and an
@@ -403,6 +414,12 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // not yet re-rendered `paneMode`/mounted `<PreviewPane ref={previewRef}>` for the just-opened
   // memo, so `previewRef.current` cannot be relied on synchronously here.
   const pendingPreviewAnchorRef = useRef<{ memoKey: string; slug: string } | null>(null);
+  // Same deferred-until-`PreviewPane`-mounts treatment as `pendingPreviewAnchorRef` above, for the
+  // `paneMode === "preview"` branch of the `savedScrollLine` restore path (`docs/plans/v1.2.0/
+  // preview-scroll-fix/PLAN.md` §3/§4) -- reuses the exact same deferred-consumer effect below
+  // rather than a second bespoke one, since both are "wait for `previewRef.current` to reflect this
+  // memo, then act on its DOM" cases.
+  const pendingPreviewScrollRef = useRef<{ memoKey: string; line: number } | null>(null);
   const setEditorOverrideRef = useRef(setEditorOverride);
   setEditorOverrideRef.current = setEditorOverride;
   const scrollDebounceRef = useRef<number | null>(null);
@@ -421,6 +438,17 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const loadedOverrideRef = useRef<MemoEditorSettings | undefined>(undefined);
   const loadedTabIdRef = useRef<string | null>(null);
 
+  // Shared by both save-path functions below (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §2/§3)
+  // -- `previewRef.current` may be `null` (no `<PreviewPane>` mounted right now, e.g. `paneMode`
+  // just flipped away from `"preview"`/`"split"` on the SAME render this flush runs in) or its
+  // `getContainer()` may return `null` before first mount; either case is treated the same as "no
+  // rendered block yet" (also `null`) -- the caller skips the whole write rather than persisting a
+  // wrong/zero `scrollPosition`.
+  const currentPreviewTopLine = (): number | null => {
+    const container = previewRef.current?.getContainer();
+    return container ? computeTopVisiblePreviewLine(container) : null;
+  };
+
   // Persists both the scroll position and the cursor/selection for `name`, in the CURRENTLY active
   // tab — grabbed together from `view` since both are read at the same trigger points (debounced
   // scroll, unmount), so one combined write avoids a second `memo_set_editor_override` round-trip
@@ -433,9 +461,16 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const persistEditorViewState = (view: EditorView, name: string | null, override: MemoEditorSettings | undefined) => {
     if (!name) return;
     const { anchor, head } = view.state.selection.main;
+    // `paneMode === "preview"` (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §2/§3): the edit
+    // sub-pane is `display:none` and the user scrolls the preview container directly, never
+    // `view.scrollDOM` -- read the preview's own top-visible line instead. `null` (no rendered
+    // `[data-source-line]` block yet, or no preview container mounted right now) skips the WHOLE
+    // write rather than persisting a wrong/zero `scrollPosition` over a previously-good value.
+    const savedLine = paneModeRef.current === "preview" ? currentPreviewTopLine() : computeTopVisibleLine(view);
+    if (savedLine === null) return;
     void setEditorOverrideRef.current(name, {
       ...override,
-      scrollPosition: computeTopVisibleLine(view),
+      scrollPosition: savedLine,
       cursorAnchor: anchor,
       cursorHead: head,
     });
@@ -459,9 +494,17 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const flushOutgoingEditorViewState = (view: EditorView, outgoingTabId: string | null, name: string | null, override: MemoEditorSettings | undefined) => {
     if (!outgoingTabId || !name) return;
     const { anchor, head } = view.state.selection.main;
+    // Derives the OUTGOING memo's own effective pane mode from `override` (== `loadedOverrideRef.
+    // current`, kept live-synced with any mid-session `onCyclePaneMode`/`onTogglePreviewLock`
+    // toggle for that same memo -- see those functions' own comments) rather than the live
+    // `paneMode`/`paneModeRef`, which by the time this runs may already reflect the INCOMING memo's
+    // own governed pane mode instead (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §3).
+    const outgoingPaneMode = override?.previewLocked ? "preview" : (override?.paneMode ?? editorDefaults.paneMode);
+    const savedLine = outgoingPaneMode === "preview" ? currentPreviewTopLine() : computeTopVisibleLine(view);
+    if (savedLine === null) return;
     void memoSetEditorOverride(outgoingTabId, name, {
       ...override,
-      scrollPosition: computeTopVisibleLine(view),
+      scrollPosition: savedLine,
       cursorAnchor: anchor,
       cursorHead: head,
     });
@@ -595,8 +638,18 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
     const savedScrollLine = ed.content.scrollPosition;
     let raf = 0;
-    if (savedScrollLine) {
+    if (savedScrollLine && resolvedPaneMode === "preview") {
+      // `paneMode === "preview"` (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §3/§4): deferred
+      // until `<PreviewPane ref={previewRef}>` actually mounts/renders for this memo -- same timing
+      // gap as the `#slug` anchor-jump case above (this effect may run before that reset/reveal has
+      // re-rendered), so this reuses the SAME deferred-consumer effect below rather than a second
+      // bespoke one. Split by this memo's own GOVERNED pane-mode, mirroring the anchor-jump branch
+      // just above for the same reason.
+      pendingPreviewScrollRef.current = memoKey ? { memoKey, line: savedScrollLine } : null;
+    } else if (savedScrollLine) {
       raf = requestAnimationFrame(() => scrollToTopVisibleLine(view, savedScrollLine));
+    } else {
+      pendingPreviewScrollRef.current = null;
     }
     const scrollHandler = () => {
       if (scrollDebounceRef.current !== null) window.clearTimeout(scrollDebounceRef.current);
@@ -621,28 +674,47 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ed.loadGeneration]);
 
-  // Deferred `preview`-pane-mode anchor-jump consumer (`docs/plans/v1.2.0/cross-tab-anchor-links/
-  // PLAN.md` §4.2/§4.3): the view-(re)creation effect above may run before `<PreviewPane
-  // ref={previewRef}>` is actually mounted for this memo — `paneModeOverride`'s own reset (also
-  // queued in that same effect) hasn't re-rendered yet. Re-checked on every `paneMode`/`memoKey`
-  // change until `previewRef.current` exists AND still belongs to the pending target memo (a
-  // pending entry for an abandoned memo is simply left inert — a later navigation either overwrites
-  // it with its own target before this ever matches, or never matches at all, matching this app's
-  // silent-no-op-on-edge-case convention). `paneMode === "edit"` means `PreviewPane` never mounts
-  // for this memo at all (governed mode was, and stayed, `edit` — should not happen when the
-  // deferred entry was set for `resolvedPaneMode === "preview"`, but guarded defensively).
+  // Deferred `preview`-pane-mode consumer for BOTH the `#slug` anchor jump
+  // (`docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §4.2/§4.3) and the scroll-position restore
+  // (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §3/§4) — the view-(re)creation effect above may
+  // run before `<PreviewPane ref={previewRef}>` is actually mounted for this memo —
+  // `paneModeOverride`'s own reset (also queued in that same effect) hasn't re-rendered yet.
+  // Re-checked on every `paneMode`/`memoKey` change until `previewRef.current` exists AND still
+  // belongs to a pending target memo (a pending entry for an abandoned memo is simply left inert —
+  // a later navigation either overwrites it with its own target before this ever matches, or never
+  // matches at all, matching this app's silent-no-op-on-edge-case convention). `paneMode === "edit"`
+  // means `PreviewPane` never mounts for this memo at all (governed mode was, and stayed, `edit` —
+  // should not happen when either deferred entry was set for `resolvedPaneMode === "preview"`, but
+  // guarded defensively). The anchor jump wins over a same-open scroll-position restore when both
+  // are pending for the same memo (a link-navigation open's explicit target takes priority over the
+  // previous session's leave-off reading position) — dropping the scroll entry rather than letting
+  // it separately win a later run of this same effect.
   useEffect(() => {
-    const pending = pendingPreviewAnchorRef.current;
-    if (!pending || pending.memoKey !== memoKey) return;
     if (paneMode === "edit") return;
     const handle = previewRef.current;
     if (!handle) return;
-    pendingPreviewAnchorRef.current = null;
-    void handle.waitForRender(pending.memoKey).then((ready) => {
-      if (!ready) return;
-      const container = handle.getContainer();
-      container?.querySelector(`#${CSS.escape(pending.slug)}`)?.scrollIntoView({ block: "start" });
-    });
+
+    const pendingAnchor = pendingPreviewAnchorRef.current;
+    if (pendingAnchor && pendingAnchor.memoKey === memoKey) {
+      pendingPreviewAnchorRef.current = null;
+      if (pendingPreviewScrollRef.current?.memoKey === memoKey) pendingPreviewScrollRef.current = null;
+      void handle.waitForRender(pendingAnchor.memoKey).then((ready) => {
+        if (!ready) return;
+        const container = handle.getContainer();
+        container?.querySelector(`#${CSS.escape(pendingAnchor.slug)}`)?.scrollIntoView({ block: "start" });
+      });
+      return;
+    }
+
+    const pendingScroll = pendingPreviewScrollRef.current;
+    if (pendingScroll && pendingScroll.memoKey === memoKey) {
+      pendingPreviewScrollRef.current = null;
+      void handle.waitForRender(pendingScroll.memoKey).then((ready) => {
+        if (!ready) return;
+        const container = handle.getContainer();
+        if (container) scrollPreviewToLine(container, pendingScroll.line - 1);
+      });
+    }
   }, [paneMode, memoKey]);
 
   // Reconfigure (not recreate) on settings / read-only / whitespace changes.
