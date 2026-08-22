@@ -329,8 +329,10 @@ function protectLinksAndImages(text: string): { protectedText: string; restore: 
 
 /** Unwraps every allowlisted `<span style="...">...</span>` in `text` to its inner content —
  * the combined equivalent of the Color/Font-size buttons' own "clear" controls, applied together.
- * No other HTML tag is touched (outside the sanitization allowlist already, `markdownSanitize.ts`). */
-function unwrapColorSpans(text: string): string {
+ * No other HTML tag is touched (outside the sanitization allowlist already, `markdownSanitize.ts`).
+ * Exported for `tocGenerator.ts`'s heading-text/slug extraction, so a color/font-size-tagged heading
+ * doesn't leak raw `<span style="...">` markup into the TOC label or the anchor slug. */
+export function unwrapColorSpans(text: string): string {
   return text.replace(/<span\s+style="[^"]*"\s*>([\s\S]*?)<\/span>/gi, "$1");
 }
 
