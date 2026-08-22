@@ -336,6 +336,11 @@ export function unwrapColorSpans(text: string): string {
   return text.replace(/<span\s+style="[^"]*"\s*>([\s\S]*?)<\/span>/gi, "$1");
 }
 
+/** Unwraps every `<mark>...</mark>` / `<mark style="...">...</mark>` in `text` to its inner content (issue #190, mirrors `unwrapColorSpans`). */
+export function unwrapMarkSpans(text: string): string {
+  return text.replace(/<mark(?:\s+style="[^"]*")?\s*>([\s\S]*?)<\/mark>/gi, "$1");
+}
+
 const FENCE_RE = /^(\s*)(```|~~~)/;
 const HR_RE = /^\s*(?:-\s*){3,}$|^\s*(?:\*\s*){3,}$|^\s*(?:_\s*){3,}$/;
 const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
