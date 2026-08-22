@@ -145,6 +145,8 @@ export interface EditorPaneHandle {
    * PLAN.md` §2) — invoked from `App.tsx` when `TabBar.tsx` reports a double-click on the
    * already-active tab. No-op if no memo is currently open. */
   toggleJumpToStart: () => void;
+  /** #191: jump to a same-tab/same-memo anchor immediately (bypasses the deferred load pipeline, which never re-fires here). No-op if no memo open. */
+  jumpToAnchor: (slug: string) => void;
 }
 
 export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane(
@@ -165,7 +167,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 ) {
   const t = useT();
   const ed = useEditor(tabId, memoName, appSettings, isMemoEditLocked);
-  useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow, toggleJumpToStart }));
+  useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow, toggleJumpToStart, jumpToAnchor }));
   const search = useSearch();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -533,6 +535,25 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       view.dispatch({ selection: { anchor: 0, head: 0 }, effects: EditorView.scrollIntoView(0, { y: "start" }) });
     }
   }, []);
+  // #191: paneModeRef already reflects the settled mode here (memo is already mounted), unlike the deferred pipeline's mid-creation prediction.
+  const jumpToAnchor = useCallback(
+    (slug: string) => {
+      if (paneModeRef.current === "preview") {
+        const handle = previewRef.current;
+        if (!handle || !memoKey) return;
+        void handle.waitForRender(memoKey).then((ready) => {
+          if (!ready) return;
+          const container = handle.getContainer();
+          container?.querySelector(`#${CSS.escape(slug)}`)?.scrollIntoView({ block: "start" });
+        });
+        return;
+      }
+      const view = viewRef.current;
+      if (!view) return;
+      resolveAndScrollToHeadingAnchor(view, slug);
+    },
+    [memoKey],
+  );
   // Which memo (and which TAB) `viewRef.current` actually belongs to (and that memo's override
   // snapshot at the time its view was created) — set ONLY inside the view-(re)creation effect
   // below, once a view has actually been (re)created for a given `ed.loadGeneration`. Unlike

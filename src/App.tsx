@@ -178,6 +178,11 @@ function App() {
   const pendingAnchorTokenRef = useRef(0);
   const openLinkTarget = useCallback(
     (tabId: string, memoName: string | null, anchorSlug: string | null) => {
+      // #191: self-ref anchor (target already open) never re-fires the deferred load pipeline, so jump immediately instead.
+      if (anchorSlug != null && tabId === treeState.activeTabId && memoName != null && memoName === treeState.openMemoName) {
+        editorRef.current?.jumpToAnchor(anchorSlug);
+        return;
+      }
       if (tabId !== treeState.activeTabId) tabsState.selectTab(tabId);
       if (memoName) setPendingLinkFocus({ tabId, memoName, anchorSlug });
     },
