@@ -11,10 +11,7 @@ import { unwrapColorSpans, unwrapMarkSpans } from "./decorationCommands";
 export interface HeadingInfo {
   /** 1-6, from the ATX `#`..`######` marker count. */
   level: number;
-  /** Heading text with the `#` marker(s), any optional closing ATX sequence, and any wrapping
-   * `<span style="...">` color/font-size tag or `<mark>`/`<mark style="...">` highlight tag
-   * stripped — otherwise a decorated heading would leak raw markup into the TOC label and garble
-   * its slug (GitHub issue #190). */
+  /** Heading text with `#` marker(s) and any `<span style="...">`/`<mark>` wrapping tag stripped (issue #190). */
   text: string;
   /** GitHub-style slug, already de-duplicated against every earlier heading in the same scan
    * (`-1`, `-2`, ... suffix on the second/third/... occurrence of the same base slug). */
