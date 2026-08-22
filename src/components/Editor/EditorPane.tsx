@@ -998,10 +998,27 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       // focus-unconstrained effect below (`docs/plans/markdown/markdown-preview/PLAN.md` §6.3),
       // since (unlike every other `markdown.*` action) it must fire even while focus is outside
       // this editor's own CodeMirror content (e.g. inside the preview pane's own DOM subtree).
-      if (actionId.startsWith("markdown.") && actionId !== "markdown.paneModeCycle") reverse.set(combo, actionId);
+      //
+      // `markdown.hardBreak` is also excluded — unlike every other `markdown.*` action, its real
+      // command (`hardBreakCommand`) already runs directly inside the CodeMirror-layer `"Shift-Enter"`
+      // binding in `textCommands.ts` (see that binding's own comment for why a no-op there wasn't
+      // viable). Routing it through this map too would double-fire it.
+      if (actionId.startsWith("markdown.") && actionId !== "markdown.paneModeCycle" && actionId !== "markdown.hardBreak") reverse.set(combo, actionId);
     }
     const handler = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !viewRef.current) return;
+      // Deliberately NOT bailing on `e.defaultPrevented` (GitHub issue #140's fix regressed this):
+      // `textCommands.ts`'s `neutralizeReservedCombos` claims every combo in `RESERVED_COMBOS` at the
+      // CodeMirror layer with a no-op `{ run: () => true, preventDefault: true }` binding — purely to
+      // stop CodeMirror's own destructive built-in command (and the native contenteditable fallback)
+      // from running, NOT because a real command already ran. That binding's `preventDefault: true`
+      // still sets `e.defaultPrevented`, so checking it here silently swallowed this handler's own
+      // dispatch for every such combo (Ctrl+Z, Ctrl+Y, Ctrl+I, Ctrl+Shift+K — the exact combos
+      // `neutralizeReservedCombos`'s own doc comment lists as colliding with CodeMirror's built-in
+      // keymaps), leaving those shortcuts doing nothing at all instead of running this app's own
+      // bound action. `markdown.hardBreak` is the one `markdown.*` action whose real command DOES
+      // already run at the CodeMirror layer (see above) — it's excluded from `reverse` instead of
+      // relying on this check, so removing this check doesn't reintroduce a double-fire for it.
+      if (!viewRef.current) return;
       if (!containerRef.current?.contains(document.activeElement)) return;
       const actionId = reverse.get(comboFromEvent(e));
       if (!actionId) return;
