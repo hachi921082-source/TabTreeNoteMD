@@ -14,108 +14,87 @@
 ## Index
 
 1. Where the project stands
-2. This session's work: 6 issues resolved (#197/#200 x2/#201/#205/#206)
-3. Process incident this session — read before touching the dev app or any background process
-4. Dev-server startup gotcha: port 1420 conflict from a stray leftover process
-5. Open issues: full list, recommended order
-6. Issue #189: split into #209–212, branching/order decision (unchanged from prior session)
+2. This session's work: issue #198 resolved
+3. Non-blocking findings from #198's live-test, worth a look next session
+4. Open issues: full list, recommended order
+5. Issue #189: split into #209–212, branching/order decision (unchanged from prior sessions)
 
 ## 1. Where the project stands
 
-- `V1.2.0` is at `87f3865`, in sync with `origin/V1.2.0` (pushed).
+- `V1.2.0` is at `a2c1e6a`, in sync with `origin/V1.2.0` (pushed).
 - `"CLAUDE - コピー.md"` (untracked, confirmed-stale backup) still sitting in the repo root, still
-  unaddressed. Ask the user before touching it.
-- The dev app was running earlier this session (`npm run tauri dev`) but **the user has since closed
-  it themselves** — nothing is running as of this writing. Don't assume otherwise; check before any
-  live-testing.
+  unaddressed across multiple sessions now. Ask the user before touching it.
+- No dev server / app instance was left running at the end of this session (reviewer-lite's test
+  process exited on its own during testing — see §3 — and nothing was relaunched after).
 
-## 2. This session's work: 6 issues resolved
+## 2. This session's work: issue #198 resolved
 
-Fixed the 5 "trivial" issues from the prior session's recommended list, plus a same-day follow-up:
+**#198** ("Title bar buttons unreachable at min window size") — the tab bar's toolbar (★📌🔍⇄⚙) and
+`<TitleBarControls/>` (－□×) used to live inside the same horizontally-scrolling flex row as the tabs
+themselves (`.ttn-tab-bar`, `overflow-x: auto`), so when enough tabs overflowed the width, those
+buttons — including window close — could scroll out of reach.
 
-| Issue | PR | Summary |
-|---|---|---|
-| #197 | #213 | Tab bar's 📂 button vertical misalignment/clipping — added flex-centering to `.ttn-tab-create` |
-| #201 | #214 | Preview zoom % readout shifted the ±buttons as digit count changed — fixed width instead of `min-width` |
-| #205 | #215 | Font-size toolbar presets widened 12/20/28px → 12/24/36px; synced 2 stale doc tables |
-| #200 | #216 | `ConfirmDialog` footer button order swapped to confirm-first/cancel-second (all 6 call sites) |
-| #206 | #217 | `ConfirmDialog` Enter-key handler added; a focus-unaware first pass **broke Tab→Cancel→Enter native keyboard nav** (would confirm/delete instead of cancel) — caught by reviewer-lite's live test, fixed with a `document.activeElement` guard |
-| #200 (reopened) | #218 | User tested live, found button *text* itself still said 削除/キャンセル — wanted はい/いいえ specifically for the single-memo delete-confirm dialog. Added `common.yes`/`common.no` i18n keys; **only** `TreeView.tsx`'s `deleteConfirm` call site changed — the other 5 `ConfirmDialog` usages (trash-failed-permanent-delete, permanent-unlock x2, tab remove, external-link-open) intentionally still say 削除/キャンセル or their own labels |
+Fix (agreed with the user after comparing 4 candidate approaches — see PR #219 for the design
+discussion): wrapped the toolbar + `TitleBarControls` together in a new `.ttn-tab-bar-fixed` div with
+`position: sticky; right: 0; z-index: 2; background: var(--ttn-bg-chrome);`, keeping them pinned to the
+visible right edge regardless of scroll position — no restructuring of the scroll container itself, no
+change to drag-region or OS-drop hit-testing. Also raised `tauri.conf.json`'s `minWidth` 640→800 as a
+secondary mitigation (unrelated to the sticky mechanism).
 
-All 6 followed the `fix/<slug>` branch → PR → merge → issue-close → `RESOLVED-ISSUES.md` flow. Note:
-GitHub's auto-close-on-merge (`Closes #N` in the PR body) does **not** fire here, because the repo's
-GitHub-registered default branch is `V1.0.0`, not `V1.2.0` — every issue in this batch had to be closed
-manually with `gh issue close`. Keep doing that; don't rely on the PR body alone.
+Deliberately **no PLAN.md** — scoped as fix/`<slug>`-branch scale (CSS + one config value), not feature
+scale. Flow: `fix/tabbar-sticky-controls` → developer-lite implemented (3 commits) → reviewer-lite
+live-tested with real functional clicks via CDP (not just visual inspection — actually opened Settings,
+actually minimized the window) → approved → PR #219 → merged into `V1.2.0` → issue closed manually
+(`gh issue close`, auto-close doesn't fire — repo's GitHub-registered default branch is `V1.0.0`, not
+`V1.2.0`) → `RESOLVED-ISSUES.md` entry added.
 
-**#200/#206 branch conflict**: both touch `ConfirmDialog.tsx`. Merged #200 first, then had to locally
-merge `origin/V1.2.0` into the `fix/confirm-dialog-enter-key` branch, resolve a real conflict (kept
-#200's button order, kept #206's new refs on both buttons), push, then merge via `gh pr merge`. If a
-similar same-file overlap comes up again, merge one first and expect to do the same local-merge dance
-for the second rather than assuming GitHub will fast-forward cleanly.
+## 3. Non-blocking findings from #198's live-test, worth a look next session
 
-**#205's spec drift**: reviewer-lite's first pass on #205 found the code fix was correct but
-`docs/detailed-spec.md` and `docs/plans/markdown-editing/PLAN.md` still documented the old 20px/28px
-values — a good example of why the review step checks docs, not just code. Both were fixed in a
-follow-up commit before merging.
+reviewer-lite's live-test surfaced a few things that didn't block approval but weren't chased further —
+worth a glance next session, none are urgent:
 
-## 3. Process incident this session — read before touching the dev app or any background process
+- **Pre-existing tab-collapse quirk, unrelated to #198**: under overflow conditions, tabs can collapse
+  to a uniform ~29.6px blank width (`.ttn-tab { overflow: hidden }` triggers flexbox's
+  automatic-minimum-size-0 rule under shrink pressure). Confirmed via a temporary revert to the
+  pre-#198 commit that this reproduces identically without the #198 diff — it's an existing bug, not
+  something this session introduced. **Not yet filed as its own GitHub issue.** If it's visually
+  bothering the user in real use, worth filing.
+- **Two edges of #198's fix were left "unverified" rather than confirmed-passing**, due to tooling
+  limits, not suspected defects: (a) the OS-level interactive drag-resize enforcement of the new
+  800×480 minimum (only a programmatic `setSize()` was tried, which is known to bypass Windows'
+  `WM_GETMINMAXINFO` enforcement — not a code path this diff touches), and (b) the pointer-based
+  tab-drag-to-reorder gesture's interaction with the new sticky wrapper (not simulated — judged not
+  worth the added test complexity given the other passing evidence). Both are cheap to eyeball during
+  any normal manual session with the app.
+- reviewer-lite's dev-mode `tabtreenotemd.exe` process exited on its own late in testing (exit code
+  `0xffffffff`), most likely from the unusually aggressive rapid resize/minimize/HMR-reload test
+  sequence rather than a defect — flagged in case it recurs under similarly aggressive automated
+  testing.
 
-While debugging why the app "wouldn't launch" for the user's manual real-device test, this session (as
-orchestrator) started `npm run tauri dev` in the background via the Bash tool (`run_in_background`-style
-`&`, redirected to a log file). The user then said **「stop」** mid-investigation. What actually happened:
-only the *current tool call* (an unrelated file-read) was halted — the already-launched background
-`npm`/`cargo`/`tabtreenotemd.exe` process tree kept running untouched. The user caught this a message
-later ("それはもうストップしたはずだ" — "that should already have been stopped") when it turned out the
-app process was still alive.
+## 4. Open issues: full list, recommended order
 
-**The lesson**: "stop" from the user must be read as "stop everything you set in motion," not just "stop
-the tool call in front of you." If you've started a detached/background process (dev server, app
-instance, long-running script) and the user says stop, that process needs to actually be killed (or you
-need to immediately ask "including the background process I started?" if there's any ambiguity) — don't
-just let it keep running silently while you go quiet. This is a sibling lesson to the already-established
-CDP/live-target rules from the prior session ([[feedback_verify_live_target_before_cdp_mutation]]), but
-specifically about **process lifecycle**, not data mutation: a stray running process is itself a form of
-unintended persistent side effect.
+Same list as the prior session's HANDOFF minus #198 (closed above). Re-verify scale estimates against
+current code before starting any of these — no new investigation was done on them this session.
 
-In this instance, the user resolved it by restarting/closing the app themselves rather than asking the
-assistant to do it — respect that; don't reflexively re-launch or kill dev-server processes without
-being asked, once a user has taken over managing the app's lifecycle for the session.
-
-## 4. Dev-server startup gotcha: port 1420 conflict from a stray leftover process
-
-Root cause of the original "won't launch" complaint: a bare `npm run dev` (plain Vite, frontend-only,
-**not** `npm run tauri dev`) was left running from an earlier point in the day, bound to
-`[::1]:1420` — Tauri's `tauri.conf.json` `beforeDevCommand` also tries to start Vite on the fixed port
-1420 (required so Tauri's webview knows where to load from), and Vite's own dev server fails outright
-(`Error: Port 1420 is already in use`) instead of finding a free port, which aborts `tauri dev` entirely
-before cargo even starts building — so **no window ever appears**, with no cargo/rustc process at all
-as the visible symptom.
-
-**If "won't launch" recurs**: check `netstat -ano | findstr :1420` (or the PowerShell
-`Get-NetTCPConnection`/`netstat` equivalent) for a stale listener before assuming a code-level bug in the
-Rust/Tauri layer. Kill the stale process, then re-run `npm run tauri dev`.
-
-## 5. Open issues: full list, recommended order
-
-Same list as the prior session's HANDOFF minus the 5 (+1 reopened) closed above. Re-verify scale
-estimates against current code before starting any of these — no new investigation was done on them
-this session.
-
-| # | Title (short) | Scale (from prior session's estimate, unverified since) |
+| # | Title (short) | Scale (from prior sessions' estimate, unverified since) |
 |---|---|---|
 | 196 | Scroll-position restore (#195-class bug) | Near-zero — fix already merged into `V1.2.0`; just needs live re-verification and closing |
-| 202 | Locked-tab distinguishing label | Small/medium — spec fully decided (see `docs/DECISIONS.md`, "Locked Tab Distinguishing Label") |
+| 202 | Locked-tab distinguishing label | Small/medium — spec fully decided (see `docs/DECISIONS.md`, "Locked Tab Distinguishing Label"); per a prior session's PLAN-scale review, needs a designer-lite spec-confirmation pass before implementation despite being otherwise fix/`<slug>`-scale |
 | 203 | Right-click paste doesn't handle images | Small/medium — reuse `saveAndInsertImage`, add `clipboard.read()` |
 | 208 | Preview-only double-click jump-to-start doesn't scroll | Medium — `paneMode` branch + wire `PreviewPane.getContainer()` |
-| 198 | Title bar buttons unreachable at min window size | Medium — likely needs `TitleBarControls` moved out of the scrolling tab-bar container |
 | 190 | TOC `<mark>` tag + live-view decoration overlap | Medium — `<mark>` part is the same pattern already fixed for `<span>`; decoration-overlap part unverified |
 | 204 | Whole-line-span-wrapped heading vanishes from TOC | Medium/large — structural (lezer syntax-tree level) |
 | 191 | Self-referential same-memo `#slug` anchor doesn't jump | Medium — uninvestigated, adjacent to already-understood anchor-jump logic |
 | 207 | Settings shortcut rebinding doesn't work | Unknown — code reading found no cause; needs live reproduction first |
 | 199 | UI font-size setting doesn't affect tooltips | Large — structural (native `title` attribute outside app CSS reach) |
-| 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §6** |
+| 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §5** |
 
-## 6. Issue #189: split into #209–212, branching/order decision (unchanged from prior session)
+A prior session's cross-issue review found only **#189** to be genuinely PLAN.md-scale (already has one:
+`docs/plans/persistence-fs/PLAN.md`); everything else in this table is fix/`<slug>`-branch scale, with
+**#202** as the one exception needing a spec-confirmation step first (not a full PLAN) due to
+`docs/DECISIONS.md`'s existing locked-tab-display decision.
+
+## 5. Issue #189: split into #209–212, branching/order decision (unchanged from prior sessions)
 
 `docs/plans/persistence-fs/PLAN.md` §5 already designed this; backend watcher/conflict logic is already
 implemented and unit-tested, just never wired to any lifecycle trigger.
@@ -127,4 +106,4 @@ implemented and unit-tested, just never wired to any lifecycle trigger.
 - **#212** — verify/implement the frontend's handling of those events. Depends on #211.
 
 **Recommended order**: #209 → #211 → #212 → #210. **Branching**: each gets its own `fix/<slug>` branch
-+ PR (one issue = one branch = one PR), same as every other issue this session.
++ PR (one issue = one branch = one PR), same as every other issue resolved so far.
