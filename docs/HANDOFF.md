@@ -14,113 +14,146 @@
 ## Index
 
 1. Where the project stands
-2. `preview-zoom` (item 7) — implemented, reviewed, merged, pushed (this session)
-3. Separate track: GitHub issues #190 and #191 — both filed only, neither started
-4. Untracked file — `CLAUDE - コピー.md` still unaddressed
-5. Next step — resume the nine-item implementation order, item 8 next
-6. Branch policy for v1.2.0 (unchanged)
-7. Process note — Auto Mode classifier blocked `git merge` even after chat confirmation (pointer to memory, not repeated in full here)
+2. All nine v1.2.0 items implemented; merge deliberately held back
+3. Cross-tab anchor-link bug: root cause found and fixed (was §4's blocking item)
+4. QA fixture state (registered test tabs, known crash trap, corrupted-then-fixed content)
+5. Manual testing checklist — now fully resolved
+6. The "対象が見つかりませんでした" toast — traced, deprioritized
+7. Process notes for the next session
 
 ## 1. Where the project stands
 
-- v1.1.0 is fully complete and merged into `V1.1.0` (unchanged).
-- Current branch: **`V1.2.0`**, pushed to `origin/V1.2.0` at `3f42c15` (this session's merge + push).
-- **This session's work**: item 7 (`preview-zoom`) implemented, reviewed, merged into `V1.2.0`, and
-  pushed. Feature branch deleted locally after merge (per user confirmation). 7 of 9 items now done.
+- v1.1.0 fully complete, merged into `V1.1.0` (unchanged).
+- `V1.2.0` pushed to `origin/V1.2.0` at `7b74a1a` (i18n merge, item 9 of nine v1.2.0 features).
+  **Nothing has been merged into `V1.2.0` since.**
+- Current branch: **`fix/scroll-restore-timing`** (based on `fix/cross-tab-anchor-scroll-timing`,
+  which is based on `V1.2.0`). Latest commit: **`fa5c32f`** — the cross-tab anchor-link root-cause
+  fix (see §3). Commits on this branch so far: `c68acf0` (#195), `42d36a1` (#196), `fa5c32f`
+  (this session's fix, superseding the old uncommitted #197 patch described in a prior revision of
+  this file — that patch's `anchorJumpPending` gating idea was kept, but the actual root causes were
+  elsewhere; see §3).
+- `"CLAUDE - コピー.md"` (untracked, confirmed-stale backup) still sitting in the repo root, still
+  unaddressed. Ask the user before touching it.
 
-## 2. `preview-zoom` (item 7) — implemented, reviewed, merged, pushed (this session)
+## 2. All nine v1.2.0 items implemented; merge deliberately held back
 
-- Branch `feature/v1.2.0-preview-zoom` cut from `V1.2.0`, implemented per
-  `docs/plans/v1.2.0/preview-zoom/PLAN.md` §1–§7:
-  - `src/shared/shortcuts.ts`: `DEFAULT_SHORTCUTS` gains `"preview.zoomIn": "Ctrl+="` /
-    `"preview.zoomOut": "Ctrl+-"`.
-  - `PreviewPane.tsx`: new `previewZoomPercent` prop, applied as CSS `zoom` (not `transform: scale()`)
-    on the rendered-content wrapper.
-  - `MarkdownToolbar.css` / `MarkdownToolbar.tsx`: `PREVIEW_ZOOM_MIN/MAX/STEP` (70/180/10) exported from
-    the toolbar file (developer-lite's discretionary placement call, PLAN.md left this open); ± /
-    percentage-readout button group, conditionally rendered only while `paneMode === "preview"`, disabled
-    at bounds, tooltips driven by `resolveShortcuts`.
-  - `EditorPane.tsx`: `previewZoomPercent` state (default 100) with three independent reset triggers
-    (tab switch, memo switch — joined to the existing `loadGeneration`-gated reset point alongside
-    `tab-double-click-jump`'s toggle reset — and `paneMode` leaving `"preview"`, its own effect); a
-    focus-unconstrained keydown handler (works even with focus inside the preview pane's DOM, mirroring
-    the `markdown.paneModeCycle`/`markdown.pdfExport` pattern) handling `Ctrl+=`/`Ctrl+-` plus the
-    confirmed §5.3 numpad-alias asymmetry (`Ctrl+NumpadSubtract` needs no special code since its `e.key`
-    already equals `Ctrl+-`'s; `Ctrl+NumpadAdd` needs an explicit non-rebindable `e.code === "NumpadAdd"`
-    check since its `e.key` differs from `Ctrl+=`'s).
-- `reviewer-lite` ran the full PLAN §7 scenario list live via CDP-driven `tauri dev` — zoom stepping/
-  bounds-disabling, percentage-readout reset, keyboard shortcuts including numpad aliases with focus
-  inside the preview pane, shortcut-rebinding + numpad-alias survival, reset on tab/memo switch and on
-  leaving preview mode, split-mode preview fixed at 100% regardless of preview-mode zoom, ± group absent
-  outside `paneMode === "preview"`. `tsc --noEmit` and `cargo check` both clean. **Approved.**
-  - One item PLAN.md §3 explicitly reserved for the user (not reviewer-lite's call): whether a wide
-    table/image looks correct at 180% zoom. reviewer-lite's test memo had no wide content to check this
-    against; the user then launched the app directly (`npm run tauri dev`) and confirmed visually — no
-    layout breakage. This closes the one open caveat from PLAN.md.
-  - Non-blocking observation: `SettingsDialog.tsx`'s `SHORTCUT_LABELS` has no Japanese label for
-    `preview.zoomIn`/`preview.zoomOut` (shows the raw action id) — matches existing precedent
-    (`markdown.pdfExport` has the same gap) and is explicitly deferred to item 9 (`i18n`) per PLAN.md's
-    own header. Not a regression, not blocking.
-- Commits (5, one file each): `0d6b5f7` (MarkdownToolbar.css), `77300a5` (MarkdownToolbar.tsx),
-  `0eec54d` (EditorPane.tsx), plus the `shortcuts.ts` and `PreviewPane.tsx` commits → merge commit
-  ("Merge feature/v1.2.0-preview-zoom: ...") into `V1.2.0` at `3f42c15`, pushed, feature branch deleted
-  locally after user confirmation.
+Unchanged from prior sessions. **The user explicitly does not want `V1.2.0` merged with anything
+further, and does not want any of the `fix/` branches merged into `V1.2.0` either, until their own
+manual cross-feature testing pass is fully done.** Do not merge anything without asking, even if a
+fix looks done and approved. `fix/math-badge-multiline-crash` (`705d85d`, issue #194) and
+`fix/cross-tab-anchor-scroll-timing` (`c68acf0`, issue #195) are also still unmerged, holding for the
+same reason — **`fix/scroll-restore-timing` (this branch) does NOT include #194's fix**, so any test
+memo containing multi-line `$$...$$` block math will still crash the app on this branch (see §4).
 
-## 3. Separate track: GitHub issues #190 and #191 — both filed only, neither started
+## 3. Cross-tab anchor-link bug: root cause found and fixed
 
-Not part of the v1.2.0 feature set — do not fold either into any v1.2.0 `PLAN.md`. Unchanged this
-session.
+The previous session's HANDOFF left this as an unresolved, blocking question: clicking a cross-tab
+`memo:...#slug` link sometimes didn't scroll to the linked heading, and it was unclear whether this
+was a CDP-testing artifact or a real bug. This session resolved it with live, instrumented testing
+(a `scrollIntoView` call-logging hook injected via CDP, plus real clicks from the user to rule out
+synthetic-click unreliability). **Three real, independent bugs were found and fixed, all in
+`EditorPane.tsx`, all in commit `fa5c32f`:**
 
-- **#190**: a heading containing the app's own color/font-size `<span style="...">`/`<mark>` tag
-  produces a garbled slug in `src/editor/tocGenerator.ts`'s `scanHeadings()`.
-  https://github.com/hachi921082-source/TabTreeNoteMD/issues/190
-- **#191**: a self-referential `memo:TabName/MemoName#slug` anchor link (target memo already
-  open/focused) doesn't jump — pre-existing gap in the already-merged `cross-tab-anchor-links` feature.
-  https://github.com/hachi921082-source/TabTreeNoteMD/issues/191
-- **User's explicit instruction for both**: file the issue, proceed later. Do not start a `fix/` branch
-  on your own initiative — wait for the user to say to proceed.
+1. **Stale cursor masking a failed jump.** The persisted `cursorAnchor`/`cursorHead` used to be
+   applied unconditionally as the new `EditorView`'s initial selection, even when an anchor jump was
+   about to run. If the anchor jump's own dispatch ever failed silently, the memo landed on its
+   last-saved position instead of a neutral default — "didn't jump" looked like "jumped to the wrong
+   place." Fixed: this initial-selection restore is now skipped whenever an anchor jump is pending
+   for that load.
+2. **Anchor-jump branch decision used a stale pane-mode value.** The code decided "CodeMirror-direct
+   jump" vs. "preview-DOM jump" by checking `resolvedPaneMode` alone. Two things make the *actual*
+   on-screen mode differ from that raw value: (a) `previewLocked` forces the visible pane to
+   `"preview"` regardless of `resolvedPaneMode` — a `"split"`/`"edit"`-governed but preview-*locked*
+   memo was incorrectly taking the CodeMirror branch and dispatching into a hidden (`display:none`)
+   container; (b) a governed-`"preview"`, *not*-locked memo about to be auto-revealed to `"split"`
+   (`revealSplitIfPreviewOnly()`) still read `"preview"` in this same render, since that reveal's own
+   state update doesn't land until the next render. Fixed: the branch decision now predicts the
+   post-effect on-screen mode by re-deriving both `previewLocked` and the reveal logic up front.
+3. **Deferred preview-side consumer effect missing a dependency.** The effect that actually consumes
+   `pendingPreviewAnchorRef` (scrolling the preview DOM to the `#slug` element) was keyed on
+   `[paneMode, memoKey]`. `memoKey` changes the instant `focusOnMemo` selects the destination memo
+   (synchronous), but the anchor ref is only populated later, once the async `editorLoad` resolves —
+   by which point `memoKey` isn't changing again, so the effect never got a second chance to run.
+   Reproduced live specifically when the destination tab (or the source tab itself) was *already*
+   showing `preview` mode this session, so the separate mount-timing gap didn't apply. Fixed: added
+   `previewMountTick` (bumped via a callback ref when `<PreviewPane>` actually mounts, for the
+   never-mounted-this-session case) and `ed.loadGeneration` (for this case) to that effect's
+   dependency array.
 
-## 4. Untracked file — `CLAUDE - コピー.md` still unaddressed
+**Not filed as a separate GitHub issue** — the user decided a fix + detailed commit message is enough
+for now; file a real issue only if this regresses.
 
-`"CLAUDE - コピー.md"` (a confirmed-stale backup, not a duplicate) remains untracked and untouched,
-unchanged across this session. Ask the user first if cleanup is ever wanted.
+**Also confirmed working / non-issues found along the way, via live testing:**
+- Cross-tab anchor jump into a tab that is locked with **no active unlock session**: silently does
+  nothing (switches the tab bar to show the lock screen; no crash, no error). Matches this app's
+  general silent-no-op-on-edge-case convention.
+- Cross-tab anchor jump whose slug **doesn't match any heading** in the target memo: navigates to the
+  correct memo but doesn't scroll/jump; also a silent no-op, no error. Confirmed as intended.
+- "Locked with an **active** unlock session," observed via a link click from a different tab, is
+  **not a reachable state in practice** — a Tauri window OS-focus-loss event immediately tears down
+  any active tab-lock session (`useTabLockAutoRelock.ts`), independent of the 5-minute inactivity
+  timer, and switching to type/read in a chat window counts as focus loss. This collapses to the same
+  behavior as "no session." **Confirmed by the user as correct, intentional security behavior**, not
+  a gap needing a fix.
+- Tab-double-click-jump-to-start toggle, combined with a same-tab anchor-link jump in between:
+  toggling back always restores the position *before the first jump-to-start*, silently discarding
+  whatever the intervening anchor-link navigation did. No crash/corruption — `jumpToggleRef` is
+  simply untouched by anchor-link jumps. **Confirmed by the user as intended (仕様通り)**, not a bug.
+- 180%-zoom wide-table/wide-block-formula layout: user confirmed this passed (carried over from
+  before this session).
 
-## 5. Next step — resume the nine-item implementation order, item 8 next
+## 4. QA fixture state
 
-Recommended order (unchanged; items 1–7 done):
+- `src-tauri/target/debug/data/settings.json`'s `tabs` array now additionally registers
+  **`CDPTestSrc`**, **`CDPTestDst-日本語`**, and **`CDPTestLock`** (previously present as data folders
+  but not registered as tabs, so invisible in the tab bar) — these were the pre-built fixtures for
+  the locked/non-matching-slug link scenarios in §3, and are now reusable directly from the tab bar.
+  `CDPTestLock`'s (and, incidentally, `CDPTestDst-日本語`'s) unlock passphrase is `1111`.
+- **Known crash trap on this branch**: `Issue112Verify`'s `VerifyMemo.md` and `11111.md` both contain
+  multi-line `$$...$$` block math and will crash the app (issue #194's bug — see §2) if opened on
+  this branch. Use `memoA.md` (math-free) for anything in this tab.
+- `Issue112Verify/memoA.md` had a stray `"kaik"` prefix before its `# Link Test Source` heading
+  (cause unknown — possibly a stray keystroke from some earlier live-test interaction) and was fixed
+  during this session. It currently has 48 lines (35 trailing blank filler lines, added at some point
+  this session, cause also unknown) — enough to require scrolling, which happened to be useful for
+  §3's combination test. Its persisted `editor.paneMode` is currently `"split"`/`previewLocked: false`
+  (changed this session from `"preview"`/`previewLocked: true` to make a test cleaner) — reset it if
+  a future session specifically needs to retest the preview-locked case.
+- All of the above is disposable QA data (gitignored `target/debug/data`), not real user content —
+  safe to further modify/regenerate freely.
 
-1. ~~`preview-link-encoding-fix`~~ — done, merged, pushed.
-2. ~~`cross-tab-anchor-links`~~ — done, merged, pushed.
-3. ~~`preview-scroll-fix`~~ — done, merged, pushed.
-4. ~~`quick-open-discoverability`~~ — done, merged, pushed.
-5. ~~`pane-mode-toolbar-semantics`~~ — done, merged, pushed.
-6. ~~`tab-double-click-jump`~~ — done, merged, pushed.
-7. ~~`preview-zoom`~~ — done, merged, pushed (§2, this session).
-8. **`math-rendering`** (155 lines, medium-high) — next up. New KaTeX dependency.
-9. `i18n` (248 lines, largest, deliberately last) — sweeps up every other feature's new UI strings,
-   including the `preview.zoomIn`/`preview.zoomOut` `SHORTCUT_LABELS` gap noted in §2.
+## 5. Manual testing checklist — now fully resolved
 
-Item 8 has no plan-listed dependency on item 9. Per `docs/plans/README.md`'s "Independent
-Implementation, Mandatory Final Integration Pass" section, `reviewer-lite` must still do one whole-app
-integration pass after all nine land — item 9 still unimplemented, so this pass is not due yet.
+Every item the previous HANDOFF revision listed as open is now closed (see §3's bullet list for
+results): the three `cross-tab-anchor-links` scenarios, the Quick-Open × tab-double-click-jump ×
+cross-tab-anchor-link combination, and the 180%-zoom layout check. Nothing outstanding here.
 
-Ask the user before starting item 8, same as every stage transition in this project's workflow.
+## 6. The "対象が見つかりませんでした" toast — traced, deprioritized
 
-## 6. Branch policy for v1.2.0 (unchanged)
+Previously an open mystery ("probably unrelated, from some old placeholder image"). This session
+traced its actual display mechanism: `EditorPane.tsx`'s `ed.lastErrorCode` (from `useEditor.ts`),
+rendered as the `.ttn-editor-error` banner — set either by `reportError` (image-paste/load errors)
+or by several `editorLoad`/`editor_save` failure paths inside `useEditor.ts` itself (autosave's
+conflict-check re-read, in particular). No `<img>` tags exist anywhere in the tabs used this session,
+ruling out the old "stale placeholder image" theory. The much more likely explanation, given how much
+tab-locking/unlocking happened this session: a memo's autosave-flush conflict-check re-read
+(`editor_save` → re-`editor_load`) hit a tab that had just gotten (auto-)locked mid-flush, returning
+`NOT_FOUND`. **Very likely a self-inflicted artifact of this session's own aggressive tab-lock
+testing, not a real bug** — user decided to leave it alone (`とりま放っておけ`). Revisit only if it
+recurs during ordinary (non-lock-testing) use.
 
-**`V1.2.0` does NOT merge back into `V1.1.0`.** Per the user: "v1.1.0とは別にv1.2.0として開発を継続するの
-でv1.1.0へマージはしない".
+## 7. Process notes for the next session
 
-`feature/v1.2.0-<name>` branches, merged directly into `V1.2.0` (no PR) — item 7 (§2) is the seventh
-confirmed instance of this pattern.
-
-## 7. Process note — Auto Mode classifier blocked `git merge` even after chat confirmation
-
-Mid-session, `git checkout V1.2.0 && git merge --no-ff feature/v1.2.0-preview-zoom` was denied outright
-by Claude Code's Auto Mode permission classifier ("Blocked by classifier"), despite the user having
-already said "ok" to merging in chat. Chat confirmation and the harness's classifier permission are two
-independent gates — clearing one does not clear the other. The user resolved it by switching Claude
-Code's permission mode from Auto Mode to manual, after which the identical command succeeded
-immediately. Full detail (including the three concrete unblock paths and the "don't suggest
-`AskUserQuestion` as a workaround" note) recorded in `feedback_confirm_before_merge_push_delete.md`'s
-2026-08-21 update — not repeated here in full, read that before the next merge if this recurs.
+- This session ran long; multiple corrections from the user are saved to durable memory (`type:
+  feedback`) — check memory before repeating any of them. Two new ones from this session worth
+  calling out specifically: (1) don't add "just confirm cleanly" side steps beyond the literal ask —
+  the user calls this the most-despised kind of waste; (2) when a live test keeps failing in a way
+  that suggests a *conceptual* misunderstanding (not flaky reproduction), ask the user directly
+  instead of continuing to probe via more automation — and if you do rebut a user's own direct claim,
+  the grounds must come from a *complete* check of the specific mechanism in question, not a partial
+  file skim (this cost real tokens this session, on the tab-lock auto-relock focus-loss trigger).
+- Background `npm run tauri dev` processes from earlier in a long session can linger (port 1420/9222
+  conflicts were hit a few times) — check for and clean up stray processes if a fresh launch fails
+  with "port already in use," rather than assuming something else is wrong.
+- No PLAN.md exists yet for whatever v1.2.0 feature comes after this bug round; nothing in this repo
+  currently blocks starting one, other than the user's own manual-testing-before-merge policy (§2).
