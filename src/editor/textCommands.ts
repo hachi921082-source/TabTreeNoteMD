@@ -20,6 +20,8 @@ import type { EditorDefaults, MemoEditorSettings } from "../shared/models";
 import { linkOpenExternal } from "../ipc/link";
 import { RESERVED_COMBOS, normalizeCodeMirrorKey } from "../shared/shortcuts";
 import { hardBreakCommand } from "./decorationCommands";
+import { saveAndInsertImage } from "./imagePaste";
+import type { ErrorCode } from "../shared/result";
 
 // ---------------------------------------------------------------------------
 // Settings resolution (`[spec §3.4]`: per-memo override falls back to `AppSettings.editorDefaults`)
@@ -374,13 +376,68 @@ export function cutCommand(view: EditorView): boolean {
   return true;
 }
 
-export function pasteCommand(view: EditorView): boolean {
-  void navigator.clipboard
-    .readText()
-    .then((text) => view.dispatch(view.state.replaceSelection(text)))
-    .catch((err) => console.warn("paste failed", err))
-    .finally(() => view.focus());
+/** Context the right-click menu's Paste item needs to save a pasted image, mirroring
+ * `imagePaste.ts`'s `ImagePasteConfig` (same shape, kept as a separate type here since this
+ * module has no other dependency on `imagePaste.ts`'s config beyond these three fields). `null`
+ * `tabId`/`memoName` (no memo open) or an omitted `imageConfig` altogether both mean "text-only
+ * paste, same as before this command supported images." */
+export interface PasteImageContext {
+  tabId: string | null;
+  memoName: string | null;
+  onError: (code: ErrorCode) => void;
+}
+
+/** Right-click menu's Paste (GitHub issue #203). Unlike Ctrl+V — which reaches image content via
+ * a native browser `paste` DOM event carrying `clipboardData` (`imagePaste.ts`'s
+ * `imagePasteExtension`) — this menu item is triggered programmatically by a click, so there is no
+ * native paste event to intercept; the async Clipboard API (`navigator.clipboard.read()`) is the
+ * only way to inspect what's actually on the clipboard here. When an image item is found, this
+ * reuses `imagePaste.ts`'s `saveAndInsertImage` (the same save/downscale/insert logic Ctrl+V
+ * already uses) rather than duplicating it. Falls back to the original plain-text `readText()`
+ * behavior whenever there's no image on the clipboard, no `imageConfig` (or no tab/memo open to
+ * save an image into), or `clipboard.read()` itself is unsupported/rejects. */
+export function pasteCommand(view: EditorView, imageConfig?: PasteImageContext): boolean {
+  void pasteFromClipboard(view, imageConfig);
   return true;
+}
+
+async function pasteAsText(view: EditorView): Promise<void> {
+  try {
+    const text = await navigator.clipboard.readText();
+    view.dispatch(view.state.replaceSelection(text));
+  } catch (err) {
+    console.warn("paste failed", err);
+  } finally {
+    view.focus();
+  }
+}
+
+async function pasteFromClipboard(view: EditorView, imageConfig?: PasteImageContext): Promise<void> {
+  const tabId = imageConfig?.tabId;
+  const memoName = imageConfig?.memoName;
+  const onError = imageConfig?.onError;
+  if (!tabId || !memoName || !onError || typeof navigator.clipboard.read !== "function") {
+    await pasteAsText(view);
+    return;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const imageType = item.types.find((type) => type.startsWith("image/"));
+      if (!imageType) continue;
+      const blob = await item.getType(imageType);
+      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      const insertPos = view.state.selection.main.from;
+      await saveAndInsertImage(view, tabId, memoName, insertPos, bytes, imageType, onError);
+      return;
+    }
+  } catch (err) {
+    // `clipboard.read()` can reject (permission denied, an item type the browser refuses to
+    // expose, etc.) — fall through to the plain-text path below rather than leaving Paste as a
+    // silent no-op.
+    console.warn("clipboard image read failed", err);
+  }
+  await pasteAsText(view);
 }
 
 // ---------------------------------------------------------------------------

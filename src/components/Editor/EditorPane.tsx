@@ -1127,7 +1127,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     { type: "separator" },
     { label: t("common.cut"), onSelect: () => runOnView(cutCommand), disabled: readOnly },
     { label: t("common.copy"), onSelect: () => runOnView(copyCommand) },
-    { label: t("common.paste"), onSelect: () => runOnView(pasteCommand), disabled: readOnly },
+    {
+      label: t("common.paste"),
+      onSelect: () => runOnView((view) => pasteCommand(view, { tabId, memoName, onError: ed.reportError })),
+      disabled: readOnly,
+    },
     { label: t("common.selectAll"), onSelect: () => runOnView(selectAllCommand) },
     { type: "separator" },
     {
