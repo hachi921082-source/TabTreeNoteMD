@@ -709,6 +709,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // against the last-consumed value" shape as `focusEditorTokenRef`/`consumedFocusTokenRef`
     // directly above. Deliberately gated on its OWN token (not `focusEditorTokenRef`'s), so an
     // ordinary tree-row-click/arrow-nav open occurring later never replays a stale anchor.
+    let anchorTimeout = 0;
     if (pendingAnchorTokenRef.current !== consumedAnchorTokenRef.current) {
       consumedAnchorTokenRef.current = pendingAnchorTokenRef.current;
       const anchorSlug = pendingAnchorSlugRef.current;
@@ -724,7 +725,24 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         if (resolvedPaneMode === "preview") {
           pendingPreviewAnchorRef.current = memoKey ? { memoKey, slug: anchorSlug } : null;
         } else {
-          resolveAndScrollToHeadingAnchor(view, anchorSlug);
+          // Deferred to a macrotask (GitHub issue #195): `view` was just constructed above in this
+          // same synchronous tick, so CodeMirror hasn't finished its own initial layout/measure pass
+          // yet — an immediate call here dispatches `resolveAndScrollToHeadingAnchor`'s
+          // `EditorView.scrollIntoView` effect before that pass completes, so the selection lands
+          // correctly but the viewport never actually scrolls. `requestAnimationFrame` was tried
+          // first (mirroring the `savedScrollLine` restore's own rAF deferral just below) but proved
+          // unreliable here: verified via live reproduction (CDP-driven) that CodeMirror's own
+          // initial-mount measure/flush cycle is *itself* scheduled through `requestAnimationFrame`,
+          // so an app-level rAF callback races it — sometimes running before that internal cycle has
+          // completed (silently producing a wrong, "stuck" viewport with no further re-measure ever
+          // triggered), and via `view.requestMeasure`'s `write` phase it throws outright ("Calls to
+          // EditorView.update are not allowed while an update is in progress"), since CM disallows a
+          // nested `dispatch()` while its own update is in progress. A macrotask via `setTimeout`
+          // reliably runs only after the browser has fully finished the current animation-frame's
+          // rAF callbacks + style/layout/paint (and thus after CodeMirror's own internal cycle),
+          // confirmed reliable across repeated live reproductions of the exact GitHub issue #195
+          // repro steps.
+          anchorTimeout = window.setTimeout(() => resolveAndScrollToHeadingAnchor(view, anchorSlug), 0);
         }
       }
     }
@@ -758,6 +776,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     view.scrollDOM.addEventListener("scroll", scrollHandler);
 
     return () => {
+      if (anchorTimeout) window.clearTimeout(anchorTimeout);
       if (raf) cancelAnimationFrame(raf);
       view.scrollDOM.removeEventListener("scroll", scrollHandler);
     };
