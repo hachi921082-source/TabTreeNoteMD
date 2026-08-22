@@ -3,6 +3,7 @@
 // confirm step per the app's general custom-dialog convention is still
 // appropriate UX") and the permanent-unlock confirmation
 // (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.5, §7.8).
+import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { Dialog } from "./Dialog";
 import { useT } from "../../i18n";
@@ -21,6 +22,22 @@ export interface ConfirmDialogProps {
 
 export function ConfirmDialog({ title, message, confirmLabel, cancelLabel, onConfirm, onCancel }: ConfirmDialogProps) {
   const t = useT();
+
+  // Issue #206 — Enter triggers the same action as clicking the confirm button, mirroring
+  // Dialog.tsx's window-level Escape→onCancel handler. Scoped to ConfirmDialog specifically
+  // (not the generic Dialog shell) since only this dialog has one well-defined "primary
+  // confirm" action; other Dialog usages (e.g. Settings) do not.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onConfirm();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onConfirm]);
+
   return (
     <Dialog
       title={title}
