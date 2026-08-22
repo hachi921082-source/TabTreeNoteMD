@@ -336,6 +336,16 @@ export function unwrapColorSpans(text: string): string {
   return text.replace(/<span\s+style="[^"]*"\s*>([\s\S]*?)<\/span>/gi, "$1");
 }
 
+/** Unwraps every allowlisted `<mark>...</mark>` / `<mark style="...">...</mark>` (GitHub issue
+ * #112, `markdownSpanParser.ts`'s `MARK_RE`, mirrored here) in `text` to its inner content. Kept as
+ * a separate function from `unwrapColorSpans` above rather than folded into it — different tag
+ * name, own optional-`style` shape — but exported for the same reason: `tocGenerator.ts`'s
+ * heading-text/slug extraction needs a `<mark>`-tagged heading to leak just as little raw markup as
+ * a color/font-size-`<span>`-tagged one does (GitHub issue #190). */
+export function unwrapMarkSpans(text: string): string {
+  return text.replace(/<mark(?:\s+style="[^"]*")?\s*>([\s\S]*?)<\/mark>/gi, "$1");
+}
+
 const FENCE_RE = /^(\s*)(```|~~~)/;
 const HR_RE = /^\s*(?:-\s*){3,}$|^\s*(?:\*\s*){3,}$|^\s*(?:_\s*){3,}$/;
 const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
