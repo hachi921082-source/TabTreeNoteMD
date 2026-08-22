@@ -173,6 +173,13 @@
   font-size: calc(16px * var(--ui-font-scale));
   cursor: pointer;
   flex: none;
+  /* GitHub issue #197: 📂 and ＋ glyphs have very different inline line-box metrics, so relying on
+     text-baseline layout left 📂 sitting visibly lower than ＋ and clipping below the button box.
+     Flex-centering both glyphs makes vertical position independent of font metrics. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
 
 .ttn-tab-create:hover {
