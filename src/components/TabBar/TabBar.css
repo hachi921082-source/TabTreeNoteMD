@@ -186,10 +186,27 @@
   background: var(--ttn-bg-hover-chrome);
 }
 
-.ttn-tab-bar-toolbar {
+/* GitHub issue #198 — sticky wrapper around the toolbar group + `<TitleBarControls>`, pinned to
+ * the visible right edge (`right: 0` only takes effect once `.ttn-tab-bar` actually overflows and
+ * is scrolled left; in the normal non-overflowing case this wrapper just sits at its natural
+ * flush-right position via the `margin-left: auto` moved here from `.ttn-tab-bar-toolbar` below).
+ * `z-index: 2` keeps it above `.ttn-tab-active`'s `z-index: 1` so tabs scrolling underneath never
+ * paint over it; the explicit `background` (this bar is otherwise transparent) is what makes those
+ * underlying tabs actually disappear behind it rather than show through.
+ */
+.ttn-tab-bar-fixed {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--ttn-bg-chrome);
   display: flex;
   align-items: center;
   margin-left: auto;
+}
+
+.ttn-tab-bar-toolbar {
+  display: flex;
+  align-items: center;
   flex: none;
 }
 
