@@ -321,6 +321,42 @@ tooltips that also need to reference the locked tab's placeholder name).
 
 **Where elaborated**: `detailed-spec.md` §3.2's placeholder-name bullet, restated as decided.
 
+**Superseded 2026-08-22 — see "Locked Tab Distinguishing Label" below.** With several locked tabs at
+once (GitHub issue #202), the bare glyph alone made every locked tab visually identical; the plain
+"no text" default is now overridden by an optional, user-settable per-tab label. This entry is kept
+for history.
+
+## Locked Tab Distinguishing Label: User-Settable, Editable Anytime via Context Menu (2026-08-22)
+
+**Decision**: supersedes the "🔒 Glyph Alone" decision above. Multiple locked tabs at once (GitHub
+issue #202, reported after several test-fixture tabs ended up locked with no way to tell them apart
+without unlocking each one) made the bare-glyph-only default impractical in practice. Rather than an
+automatic, generated identifier, the label is entirely user-authored:
+
+- A new tab right-click context-menu item (e.g. "ロック名を設定"/"Set lock label") opens a
+  single-text-input prompt (reusing the existing `PromptDialog` pattern already used identically for
+  lock/unlock/permanent-unlock in `TabBar.tsx`) to set or change the label, at any time — not only at
+  lock-setup time.
+- New persisted field on the tab record (e.g. `AppSettings.tabs[i].lockLabel: string | null`), keyed
+  to the tab's internal `id` — stable regardless of the underlying folder's real name/path, and
+  unaffected if that folder is later renamed (see "separately noted" gap recorded on issue #202 about
+  external folder renames in general, which is unrelated to this).
+- Until the user sets one, display falls back to the original bare 🔒 — this is an opt-in enhancement,
+  not a new mandatory default for every locked tab.
+- Must still never reference or hint at the real tab/folder name — the label is the user's own free
+  text, entirely under their control (same privacy intent as the original decision).
+
+**Rejected alternative — auto-generated sequential label ("LockTabA"/"LockTabB"/...)**: considered
+first (assigned in lock order, permanently fixed per tab, never reused even after a tab's deletion —
+to avoid a stale letter later being reassigned to an unrelated tab — continuing past "Z" via a
+spreadsheet-column-style `AA`/`AB`/... scheme for effectively unlimited capacity). Rejected because
+permanently skipping a deleted tab's letter (e.g. no tab ever being "B" again after the original "B"
+is removed) was judged visually/conceptually unpleasant, and a generated letter carries no actual
+memory hook to the tab's real content the way a user's own chosen label would.
+
+**Where elaborated**: GitHub issue #202 and its comment thread carry the full decision history
+(including the rejected alternative's own sub-decisions on gap-handling and overflow past "Z").
+
 ## Icon Submenu Clarified as the `label.color` Picker; Concrete Palette Adopted from Legacy; `label.kind` Confirmed Reserved (2026-08-01)
 
 **Background**: `spec.md` §2.2 confirms a right-click "Icon" submenu on tree memos, but neither
