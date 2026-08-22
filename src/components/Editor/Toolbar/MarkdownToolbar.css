@@ -152,9 +152,14 @@
 }
 
 /* Percentage readout — also acts as the reset-to-100% button (`PLAN.md` §1: "clicking the
- * percentage readout resets to 100%"). */
+ * percentage readout resets to 100%"). Fixed (not min-) width so the box never resizes as the
+ * digit count changes (70%/100%/180% — `PREVIEW_ZOOM_MIN`/`MAX` in MarkdownToolbar.tsx), which
+ * would otherwise shift the ±/－/＋ buttons after every click (GitHub issue #201). Sized for the
+ * widest actual value, "180%" (4 chars); box-sizing: border-box keeps padding/border inside that
+ * width instead of adding to it. */
 .ttn-md-toolbar-zoom-reset {
-  min-width: 40px;
+  box-sizing: border-box;
+  width: 40px;
   padding: 2px 4px;
   border: 1px solid var(--ttn-border);
   border-radius: 3px;
@@ -162,6 +167,7 @@
   color: var(--ttn-fg);
   cursor: pointer;
   font-size: calc(11px * var(--ui-font-scale));
+  text-align: center;
 }
 
 .ttn-md-toolbar-zoom-reset:hover {
