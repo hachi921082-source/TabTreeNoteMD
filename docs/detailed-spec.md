@@ -916,8 +916,8 @@ in this §5.10 stayed here).
   | Choice | value |
   |---|---|
   | Small | `12px` |
-  | Large | `20px` |
-  | Extra-large | `28px` |
+  | Large | `24px` |
+  | Extra-large | `36px` |
 
   A 4th control removes the font-size styling from the selection ("clear size"), same treatment as
   Color's clear control.
