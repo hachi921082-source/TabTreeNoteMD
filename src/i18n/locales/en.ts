@@ -9,6 +9,8 @@ export const en: Record<keyof typeof ja, string> = {
   // ---- common -------------------------------------------------------------
   "common.cancel": "Cancel",
   "common.ok": "OK",
+  "common.yes": "Yes",
+  "common.no": "No",
   "common.close": "Close",
   "common.delete": "Delete",
   "common.create": "Create",
