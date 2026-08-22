@@ -684,7 +684,8 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
         <ConfirmDialog
           title={t("tree.deleteMemoTitle")}
           message={t("tree.deleteMemoMessageTemplate").replace("{count}", String(pendingDialog.paths.length))}
-          confirmLabel={t("common.delete")}
+          confirmLabel={t("common.yes")}
+          cancelLabel={t("common.no")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             const paths = pendingDialog.paths;

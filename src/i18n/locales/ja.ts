@@ -11,6 +11,8 @@ export const ja = {
   // ---- common (context-free, reused across many dialogs/menus) ----------
   "common.cancel": "キャンセル",
   "common.ok": "OK",
+  "common.yes": "はい",
+  "common.no": "いいえ",
   "common.close": "閉じる",
   "common.delete": "削除",
   "common.create": "作成",
