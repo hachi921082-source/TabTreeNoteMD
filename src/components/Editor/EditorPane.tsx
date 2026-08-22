@@ -475,33 +475,62 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const scrollDebounceRef = useRef<number | null>(null);
   // Toggle-back position for double-click-active-tab jump-to-start (`docs/plans/v1.2.0/
   // tab-double-click-jump/PLAN.md` §3) -- `null` when no jump is currently "pending toggle-back"
-  // (either never jumped for this memo, or already toggled back). Character-offset pair shape
-  // mirrors `EditorSelection.main.{anchor,head}`, but is a SEPARATE, transient, in-memory-only
-  // value -- never reused by or shared with the persisted `MemoEditorSettings.cursorAnchor`/
-  // `cursorHead`/`scrollPosition` fields (GitHub issue #28). Continuously remapped through
-  // `ChangeDesc.mapPos()` on every doc change in the `updateListener` below, so an edit between
-  // jump and toggle-back doesn't leave a stale raw offset; reset to `null` on every memo switch
-  // (view-(re)creation effect below, PLAN.md §4).
-  const jumpToggleRef = useRef<{ anchor: number; head: number; topLinePos: number } | null>(null);
+  // (either never jumped for this memo, or already toggled back). A SEPARATE, transient,
+  // in-memory-only value -- never reused by or shared with the persisted `MemoEditorSettings.
+  // cursorAnchor`/`cursorHead`/`scrollPosition` fields (GitHub issue #28).
+  // Discriminated union (GitHub issue #208): `paneMode === "preview"` hides the CodeMirror view
+  // entirely (`display: none`) and the user scrolls `<PreviewPane>`'s own container instead, which
+  // has no cursor/selection concept and no `ChangeDesc`-mappable positions -- a raw `scrollTop`
+  // pixel offset is the only meaningful saved shape there. `"edit"`/`"split"` keep the original
+  // character-offset pair shape (mirrors `EditorSelection.main.{anchor,head}`), continuously
+  // remapped through `ChangeDesc.mapPos()` on every doc change in the `updateListener` below, so an
+  // edit between jump and toggle-back doesn't leave a stale raw offset. A saved value whose `mode`
+  // no longer matches the CURRENT pane mode (the user toggled pane mode mid-toggle-back) is treated
+  // as absent -- the next double-click starts fresh for the new mode rather than trying to
+  // reconcile two unrelated position shapes. Reset to `null` on every memo switch (view-
+  // (re)creation effect below, PLAN.md §4).
+  const jumpToggleRef = useRef<
+    | { mode: "edit"; anchor: number; head: number; topLinePos: number }
+    | { mode: "preview"; scrollTop: number }
+    | null
+  >(null);
   // Imperative counterpart to `jumpToggleRef` above -- exposed via `useImperativeHandle` at the
-  // top of this component. First call (no saved position) captures the current cursor/scroll
-  // position then jumps to document start; a second call restores the saved position and clears
-  // the ref, so a third call starts fresh (`PLAN.md` §3.2).
+  // top of this component. First call (no saved position for the current pane mode) captures the
+  // current cursor/scroll position (or, in preview-only mode, the preview container's `scrollTop`)
+  // then jumps to document start; a second call restores the saved position and clears the ref, so
+  // a third call starts fresh (`PLAN.md` §3.2). Reads `paneModeRef.current` rather than the `paneMode`
+  // closure variable directly since this callback's identity is memoized once (`useCallback(..., [])`)
+  // -- same stale-closure concern `persistEditorViewState` above documents for `paneModeRef`.
   const toggleJumpToStart = useCallback(() => {
+    if (paneModeRef.current === "preview") {
+      const container = previewRef.current?.getContainer();
+      // No rendered preview container to scroll (not mounted yet, or nothing rendered) -- no-op,
+      // same "skip rather than act on a missing target" treatment as `currentPreviewTopLine` above.
+      if (!container) return;
+      const saved = jumpToggleRef.current;
+      if (saved !== null && saved.mode === "preview") {
+        container.scrollTop = saved.scrollTop;
+        jumpToggleRef.current = null;
+      } else {
+        jumpToggleRef.current = { mode: "preview", scrollTop: container.scrollTop };
+        container.scrollTop = 0;
+      }
+      return;
+    }
     const view = viewRef.current;
     if (!view) return;
     const saved = jumpToggleRef.current;
-    if (saved === null) {
-      const { anchor, head } = view.state.selection.main;
-      const topLinePos = view.state.doc.line(computeTopVisibleLine(view)).from;
-      jumpToggleRef.current = { anchor, head, topLinePos };
-      view.dispatch({ selection: { anchor: 0, head: 0 }, effects: EditorView.scrollIntoView(0, { y: "start" }) });
-    } else {
+    if (saved !== null && saved.mode === "edit") {
       view.dispatch({
         selection: { anchor: saved.anchor, head: saved.head },
         effects: EditorView.scrollIntoView(saved.topLinePos, { y: "start" }),
       });
       jumpToggleRef.current = null;
+    } else {
+      const { anchor, head } = view.state.selection.main;
+      const topLinePos = view.state.doc.line(computeTopVisibleLine(view)).from;
+      jumpToggleRef.current = { mode: "edit", anchor, head, topLinePos };
+      view.dispatch({ selection: { anchor: 0, head: 0 }, effects: EditorView.scrollIntoView(0, { y: "start" }) });
     }
   }, []);
   // Which memo (and which TAB) `viewRef.current` actually belongs to (and that memo's override
@@ -695,9 +724,12 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           // is the "adjusted for lines/characters inserted or removed before it" guarantee the
           // spec describes; `update.changes` already represents the combined `ChangeDesc` for the
           // whole update even if it composed multiple sub-changes, so a single `mapPos()` call per
-          // saved value handles that case too.
-          if (update.docChanged && jumpToggleRef.current) {
+          // saved value handles that case too. Only the `"edit"`-shaped saved value is a document
+          // position at all (GitHub issue #208) -- the `"preview"`-shaped `scrollTop` pixel offset
+          // has nothing to remap here.
+          if (update.docChanged && jumpToggleRef.current && jumpToggleRef.current.mode === "edit") {
             jumpToggleRef.current = {
+              mode: "edit",
               anchor: update.changes.mapPos(jumpToggleRef.current.anchor),
               head: update.changes.mapPos(jumpToggleRef.current.head),
               topLinePos: update.changes.mapPos(jumpToggleRef.current.topLinePos),
