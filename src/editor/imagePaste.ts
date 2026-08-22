@@ -52,12 +52,14 @@ async function readFileBytes(file: File): Promise<number[]> {
   return Array.from(new Uint8Array(buffer));
 }
 
-/** Core save-then-insert logic shared by the paste handler and the toolbar's file-picker
- * (`docs/plans/image-handling/PLAN.md` §6 steps 2-4). `insertPos` is captured by the caller
+/** Core save-then-insert logic shared by the paste handler, the toolbar's file-picker
+ * (`docs/plans/image-handling/PLAN.md` §6 steps 2-4), and the right-click context menu's Paste
+ * item (`textCommands.ts`'s `pasteCommand`, GitHub issue #203 — reused rather than duplicated so
+ * both paste paths save/downscale/insert identically). `insertPos` is captured by the caller
  * *before* the async `image_save_pasted` round-trip (at paste/pick time), matching where the user
  * was actually pointing — not recomputed after the await, since the selection may have moved by
  * then. `![alt](url)` with an empty `alt` (`PLAN.md` §4: "`alt` may be empty... not mandated"). */
-async function saveAndInsertImage(view: EditorView, tabId: string, memoName: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
+export async function saveAndInsertImage(view: EditorView, tabId: string, memoName: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
   // Downscale oversized source images before saving (GitHub issue #82) — shared by both call
   // sites below since they both funnel through this function. No-op (returns `bytes` unchanged)
   // for already-small images, `image/gif`, missing `mimeHint`, or any decode/encode failure.
