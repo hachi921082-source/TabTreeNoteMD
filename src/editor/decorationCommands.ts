@@ -11,6 +11,7 @@
 // shape of exception — see `tocGenerator.ts`'s `tocUpdateCommand`, also imported directly by that
 // component rather than re-exported from here, since it's `table-of-contents/PLAN.md`'s own
 // module, not this plan's.
+import type { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { findColorSpans } from "./markdownSpanParser";
 import { mergeStyleDeclaration } from "./markdownSanitize";
@@ -183,7 +184,52 @@ export function linkCommand(view: EditorView, defaultLabel: string): boolean {
 // a naive second wrap mis-pairs open/close tags and corrupts rendering (GitHub issue #87). Any
 // existing span overlapping the selection has `prop` merged into its own `style` instead of being
 // re-wrapped; only text outside every overlapping span gets a fresh `<span>`.
+//
+// Heading-marker exclusion (issue #204): a wrapped range's leading ATX `#` marker is cut out and left raw, since wrapping it stops `@lezer/markdown` parsing the line as a heading (dropping it from the TOC).
 // ---------------------------------------------------------------------------
+
+/** ATX heading marker (`#` through `######` + trailing whitespace) — same shape as `headingCommand` above. */
+const HEADING_MARKER_RE = /^#{1,6}\s+/;
+
+/** Line-start ATX heading-marker ranges inside `[from, to)`, clipped to that range; empty if no line in range starts with a marker. */
+function headingMarkerExclusions(state: EditorState, from: number, to: number): { from: number; to: number }[] {
+  const exclusions: { from: number; to: number }[] = [];
+  if (from >= to) return exclusions;
+  const startLine = state.doc.lineAt(from).number;
+  const endLine = state.doc.lineAt(to).number;
+  for (let n = startLine; n <= endLine; n++) {
+    const line = state.doc.line(n);
+    const match = HEADING_MARKER_RE.exec(line.text);
+    if (!match) continue;
+    const markerEnd = line.from + match[0].length;
+    // Also absorb the newline before a non-first heading line, or the preceding span's close tag would land right before the marker and break parsing the same way.
+    const exFrom = Math.max(line.from > from ? line.from - 1 : line.from, from);
+    const exTo = Math.min(markerEnd, to);
+    if (exFrom < exTo) exclusions.push({ from: exFrom, to: exTo });
+  }
+  return exclusions;
+}
+
+/** Wraps `[from, to)` in `<span style="${styleDecl}">...</span>`, splitting around any `headingMarkerExclusions` so markers stay raw. */
+function wrapPlainRange(state: EditorState, from: number, to: number, styleDecl: string): string {
+  const exclusions = headingMarkerExclusions(state, from, to);
+  if (exclusions.length === 0) {
+    return `<span style="${styleDecl}">${state.sliceDoc(from, to)}</span>`;
+  }
+  let cursor = from;
+  let insert = "";
+  for (const ex of exclusions) {
+    if (ex.from > cursor) {
+      insert += `<span style="${styleDecl}">${state.sliceDoc(cursor, ex.from)}</span>`;
+    }
+    insert += state.sliceDoc(ex.from, ex.to); // raw marker text — never wrapped
+    cursor = ex.to;
+  }
+  if (cursor < to) {
+    insert += `<span style="${styleDecl}">${state.sliceDoc(cursor, to)}</span>`;
+  }
+  return insert;
+}
 
 function wrapSelectionInSpan(view: EditorView, prop: "color" | "font-size", value: string): boolean {
   const { state } = view;
@@ -196,11 +242,17 @@ function wrapSelectionInSpan(view: EditorView, prop: "color" | "font-size", valu
 
   if (overlapping.length === 0) {
     const text = state.sliceDoc(sel.from, sel.to);
-    const openTag = `<span style="${styleDecl}">`;
-    const insert = `${openTag}${text}</span>`;
+    if (text === "") {
+      const openTag = `<span style="${styleDecl}">`;
+      const insert = `${openTag}</span>`;
+      view.dispatch({ changes: { from: sel.from, to: sel.to, insert }, selection: { anchor: sel.from + openTag.length } });
+      view.focus();
+      return true;
+    }
+    const insert = wrapPlainRange(state, sel.from, sel.to, styleDecl);
     view.dispatch({
       changes: { from: sel.from, to: sel.to, insert },
-      selection: text === "" ? { anchor: sel.from + openTag.length } : { anchor: sel.from, head: sel.from + insert.length },
+      selection: { anchor: sel.from, head: sel.from + insert.length },
     });
     view.focus();
     return true;
@@ -209,7 +261,8 @@ function wrapSelectionInSpan(view: EditorView, prop: "color" | "font-size", valu
   // At least one existing span overlaps — expand the edited range to fully cover every overlapping
   // span first, so a span's own tag characters are never split mid-tag, then rebuild that whole
   // range: text already inside an overlapping span merges `prop` into that span's existing style
-  // (reusing its tags, never re-wrapping); everything else gets a fresh `<span style="...">`.
+  // (reusing its tags, never re-wrapping); everything else gets a fresh `<span style="...">`
+  // (marker-excluded via `wrapPlainRange`, same as the no-overlap case above).
   let effFrom = sel.from;
   let effTo = sel.to;
   for (const s of overlapping) {
@@ -221,8 +274,7 @@ function wrapSelectionInSpan(view: EditorView, prop: "color" | "font-size", valu
   let insert = "";
   for (const s of overlapping) {
     if (s.openFrom > cursor) {
-      const plain = state.sliceDoc(cursor, s.openFrom);
-      insert += `<span style="${styleDecl}">${plain}</span>`;
+      insert += wrapPlainRange(state, cursor, s.openFrom, styleDecl);
     }
     const mergedStyle = mergeStyleDeclaration(s.style, prop, value);
     const inner = state.sliceDoc(s.contentFrom, s.contentTo);
@@ -230,8 +282,7 @@ function wrapSelectionInSpan(view: EditorView, prop: "color" | "font-size", valu
     cursor = s.closeTo;
   }
   if (cursor < effTo) {
-    const plain = state.sliceDoc(cursor, effTo);
-    insert += `<span style="${styleDecl}">${plain}</span>`;
+    insert += wrapPlainRange(state, cursor, effTo, styleDecl);
   }
 
   view.dispatch({
