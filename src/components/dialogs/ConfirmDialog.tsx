@@ -27,11 +27,11 @@ export function ConfirmDialog({ title, message, confirmLabel, cancelLabel, onCon
       onClose={onCancel}
       footer={
         <>
-          <button type="button" onClick={onCancel}>
-            {cancelLabel ?? t("common.cancel")}
-          </button>
           <button type="button" onClick={onConfirm}>
             {confirmLabel ?? t("common.ok")}
+          </button>
+          <button type="button" onClick={onCancel}>
+            {cancelLabel ?? t("common.cancel")}
           </button>
         </>
       }
