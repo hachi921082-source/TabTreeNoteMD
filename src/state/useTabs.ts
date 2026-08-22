@@ -9,7 +9,7 @@
 // (`docs/DECISIONS.md` "'Pin' Button: Global Window Always-On-Top Toggle,
 // Not Per-Tab").
 import { useCallback, useEffect, useState } from "react";
-import { tabList, tabCreate, tabCreateNew, tabRegisterExisting, tabRename, tabReorder, tabRemove, tabOpenLocation } from "../ipc/tab";
+import { tabList, tabCreate, tabCreateNew, tabRegisterExisting, tabRename, tabSetLockLabel, tabReorder, tabRemove, tabOpenLocation } from "../ipc/tab";
 import type { TabInfo } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 
@@ -38,6 +38,9 @@ export interface UseTabsResult {
    * re-opening the dialog. */
   retryCreateWithName: (path: string, name: string) => Promise<TabMutationOutcome>;
   renameTab: (id: string, newName: string) => Promise<TabMutationOutcome>;
+  /** Sets or clears (`label: null`) a locked tab's distinguishing label (`docs/spec.v1.2.0.md`
+   * §10). Unlike `renameTab`, works regardless of lock/session state. */
+  setTabLockLabel: (id: string, label: string | null) => Promise<TabMutationOutcome>;
   reorderTabs: (order: string[]) => Promise<void>;
   removeTab: (id: string) => Promise<TabMutationOutcome>;
   openTabLocation: (id: string) => Promise<void>;
@@ -143,6 +146,19 @@ export function useTabs(): UseTabsResult {
     [refresh],
   );
 
+  const setTabLockLabel = useCallback(
+    async (id: string, label: string | null): Promise<TabMutationOutcome> => {
+      const result = await tabSetLockLabel(id, label);
+      if (result.ok) {
+        await refresh();
+        return { ok: true };
+      }
+      setLastErrorCode(result.error.code);
+      return { ok: false, code: result.error.code, message: result.error.message };
+    },
+    [refresh],
+  );
+
   const reorderTabs = useCallback(
     async (order: string[]) => {
       // Optimistic local reorder for a snappy drag; `refresh()` corrects it
@@ -193,6 +209,7 @@ export function useTabs(): UseTabsResult {
     createNewTab,
     retryCreateWithName,
     renameTab,
+    setTabLockLabel,
     reorderTabs,
     removeTab,
     openTabLocation,
