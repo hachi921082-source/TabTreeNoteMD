@@ -8,12 +8,14 @@
 > `developer-lite` (`docs/plans/<feature-name>/PLAN.md`). Every item below that builds on or modifies
 > existing baseline/prior-version behavior is cited as `[spec §x]` / `[spec v1.1.0 §x]` /
 > `[MDEditor-spec §x]`. Decision rationale, comparative analysis, and rejected alternatives belong in
-> `DECISIONS.md`, not here. As of 2026-08-20.
+> `DECISIONS.md`, not here. As of 2026-08-20 for §1–§9; §10 added 2026-08-22.
 >
 > **Status**: all six requested features (§1–§6), plus a discoverability follow-up (§7) and two bug
 > fixes surfaced during review (§8 preview-only-mode scroll tracking, §9 preview-pane link-encoding —
 > `#slug` anchor navigation **and**, per a decision made after implementation planning began, the
-> adjacent `memo:` link navigation branch too), are fully decided; no open points remain.
+> adjacent `memo:` link navigation branch too), are fully decided; no open points remain. A tenth item,
+> the Locked Tab Distinguishing Label (§10), was added 2026-08-22 after GitHub issue #202 surfaced that
+> multiple locked tabs are visually indistinguishable — also fully decided, no open points.
 
 ---
 
@@ -71,6 +73,10 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   working correctly in `preview`/`split` mode — for both halves of a `memo:TabName/MemoName#slug` link,
   not just the anchor half. Decided (the `memo:`-branch half was added to this fix's scope after
   implementation planning began, resolving `QA.md`'s `Q-v1.2.0-1`; see `DECISIONS.md`).
+- **§10 Locked Tab Distinguishing Label (New — GitHub issue #202, added 2026-08-22)** — elaborates
+  `[spec §4.1]` Tab Lock. Supersedes `[spec §4.1]`'s "bare 🔒 glyph, no accompanying text" placeholder
+  as the *only* option: an optional, user-authored, per-tab label, set/edited any time via a new tab
+  right-click context-menu item, falling back to the bare glyph when unset. Decided.
 - **Open Questions for User**
 
 ---
@@ -95,6 +101,11 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - None of the six modify data already persisted by `spec.md`/`spec.v1.1.0.md`. §3 is a pure UI-behavior
   change to an existing toolbar affordance (no schema change). §5's toggle-back state is transient,
   in-memory-only (no schema change, no persistence).
+- §10 was added later still, after the other nine were already fully decided (2026-08-22, GitHub issue
+  #202, reported against a since-shipped v1.2.0 preview build with several tabs locked at once). Unlike
+  §7/§8/§9, it does add new persisted data (`AppSettings.tabs[i].lockLabel`, `[spec §3.4]`), and it
+  supersedes part of `[spec §4.1]`'s existing Tab Lock placeholder-name behavior (see §10 itself and
+  `DECISIONS.md`) rather than being a pure addition.
 
 ---
 
@@ -647,6 +658,35 @@ branch this section's original fix did not touch.
 
 ---
 
+## 10. Locked Tab Distinguishing Label (New — GitHub issue #202, added 2026-08-22)
+
+**Problem**: `[spec §4.1]`'s locked-tab placeholder is the bare 🔒 glyph alone, with no accompanying
+text (`DECISIONS.md` "Tab-Lock Placeholder Display Name: 🔒 Glyph Alone"). With several locked tabs open
+at once, every locked tab renders identically on the tab bar — no way to tell them apart without
+unlocking each one to check (GitHub issue #202).
+
+**Decided fix**: an optional, entirely user-authored, per-tab label — not an automatically generated
+one:
+
+- A new tab right-click context-menu item (e.g. "ロック名を設定" / "Set lock label") opens a
+  single-text-input prompt to set or change the label, usable at any time, not only when first locking
+  the tab.
+- New persisted field, `AppSettings.tabs[i].lockLabel: string | null` (`[spec §3.4]`), keyed to the
+  tab's internal `id` — stable across an external folder rename, unaffected by it.
+- Until the user sets one, display falls back unchanged to the bare 🔒 glyph — additive only, not a new
+  mandatory default for every locked tab.
+- The label must never be auto-derived, auto-suggested, or hinted from the real tab/folder name — it is
+  the user's own free text, entirely under their control, same privacy intent as the original
+  glyph-only placeholder decision.
+
+**Rejected alternative**: an automatically generated sequential label (e.g. "LockTabA"/"LockTabB"/...,
+never reused even after a tab's deletion, continuing past "Z" spreadsheet-column-style). Rejected —
+see `DECISIONS.md` for the full rationale.
+
+Decided 2026-08-22 (GitHub issue #202 and its comment thread); no open points.
+
+---
+
 ## Open Questions for User
 
-None. All nine items (§1–§9) are fully decided.
+None. All ten items (§1–§10) are fully decided.

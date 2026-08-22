@@ -1,7 +1,7 @@
 # TabTreeNoteMD v1.2.0 Detailed Specification (detailed-spec.v1.2.0.md)
 
 > Elaboration of [spec.v1.2.0.md](spec.v1.2.0.md) to a level usable by `developer-lite` when writing
-> implementation plans (`docs/plans/<feature-name>/PLAN.md`) for the nine v1.2.0 items (§1–§9). This
+> implementation plans (`docs/plans/<feature-name>/PLAN.md`) for the ten v1.2.0 items (§1–§10). This
 > document plays the same role for `spec.v1.2.0.md` that
 > [detailed-spec.v1.1.0.md](detailed-spec.v1.1.0.md) plays for `spec.v1.1.0.md`, and that
 > [detailed-spec.md](detailed-spec.md) plays for `spec.md` — it does not introduce new product decisions;
@@ -12,7 +12,7 @@
 > `cursorHead`/`previewLocked` exist in `src/shared/models.ts` today but are undocumented in
 > `spec.md`/`detailed-spec.md`/`MDEditor-spec.md`, and are load-bearing context for this document's own
 > elaboration). A genuine ambiguity `spec.v1.2.0.md` did not decide or delegate is never decided here — it
-> is logged in [QA.md](QA.md) instead (see §4.4/§9.2/§12 for the one case this pass found, since resolved
+> is logged in [QA.md](QA.md) instead (see §4.4/§9.2/§13 for the one case this pass found, since resolved
 > by the user — rationale in `DECISIONS.md`).
 >
 > **Citation convention** (matches `detailed-spec.v1.1.0.md`'s own convention, extended one more level):
@@ -24,7 +24,7 @@
 > - `` `detailed-spec.md` §x `` / `` `detailed-spec.v1.1.0.md` §x `` (no brackets) — cite the two earlier
 >   detailed-spec files, for mechanisms and conventions this file reuses rather than redefines.
 > - A bare file path (e.g. `src/editor/links.ts`) cites the actual source file inspected while writing
->   this document — used throughout, since most of v1.2.0's nine items are surgical changes to specific,
+>   this document — used throughout, since most of v1.2.0's ten items are surgical changes to specific,
 >   already-identified call sites rather than new subsystems.
 >
 > Read `spec.v1.2.0.md` first; this document assumes familiarity with it and does not repeat rationale
@@ -73,33 +73,38 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - **§8 Preview-Only-Mode Scroll-Position Tracking Fix — Elaboration** (elaborates `[spec v1.2.0 §8]`)
   - §8.1 New Function: Reverse of `scrollPreviewToLine`
   - §8.2 Save-Path and Restore-Path Touch Points
-  - §8.3 Shared Timing Concern With §4 — See §10.1
+  - §8.3 Shared Timing Concern With §4 — See §11.1
 - **§9 Preview-Pane Link-Encoding Fix — `#slug` Anchor Navigation and `memo:` Link Navigation —
   Elaboration** (elaborates `[spec v1.2.0 §9]`, including its `memo:`-branch bundled follow-up)
   - §9.1 `#slug` Branch (as Originally Decided)
   - §9.2 `memo:` Branch (Bundled Follow-Up, Resolves `Q-v1.2.0-1`)
-- **§10 Cross-Cutting Additions**
-  - §10.1 New Shared Primitive: Preview-Render-Readiness Gate (needed by §4 and §8 alike)
-  - §10.2 `schemaVersion` / Migration Handling
-  - §10.3 Error Handling — No New `ErrorCode`s
-- **§11 Deferred-to-Implementation Details (Not Ambiguities — No User Decision Needed)**
-- **§12 Open Questions Requiring User Decision** — none remaining; `Q-v1.2.0-1` resolved (§4.4/§9.2)
+- **§10 Locked Tab Distinguishing Label — Elaboration** (elaborates `[spec v1.2.0 §10]`)
+  - §10.1 Data Model — `TabSettingsEntry`/`TabInfo`, Both Rust and TS Sides
+  - §10.2 New Command `tab_set_lock_label` and Context-Menu Wiring
+  - §10.3 Display Logic
+- **§11 Cross-Cutting Additions**
+  - §11.1 New Shared Primitive: Preview-Render-Readiness Gate (needed by §4 and §8 alike)
+  - §11.2 `schemaVersion` / Migration Handling
+  - §11.3 Error Handling — No New `ErrorCode`s
+- **§12 Deferred-to-Implementation Details (Not Ambiguities — No User Decision Needed)**
+- **§13 Open Questions Requiring User Decision** — none remaining; `Q-v1.2.0-1` resolved (§4.4/§9.2)
 
 ---
 
 ## 0. How to Use This Document
 
-- `spec.v1.2.0.md` = authoritative "what is decided" for the nine v1.2.0 items. This document = "how
+- `spec.v1.2.0.md` = authoritative "what is decided" for the ten v1.2.0 items. This document = "how
   that decided behavior plays out precisely enough to plan and build it," reusing every mechanism already
   established by `spec.md`/`detailed-spec.md`/`spec.v1.1.0.md`/`detailed-spec.v1.1.0.md`/
   `MDEditor-spec.md` rather than redefining it. Neither document dictates Rust module layout or Tauri
   command naming — that stays `PLAN.md`-level.
-- `spec.v1.2.0.md` itself already reaches a very high level of detail (its own §0 notes "all nine
-  items... fully decided; no open points remain"). This document's job is therefore **grounding** each
+- `spec.v1.2.0.md` itself already reaches a very high level of detail (its own §0 notes all ten
+  items are fully decided, no open points remaining). This document's job is therefore **grounding** each
   decided behavior against the actual, current `src/`/`src-tauri/` implementation — concrete function
   names, concrete data flow, and edge cases that only become visible once a decided behavior is mapped
   onto real code. One gap was found this way (§4.4/§9.2, resolved — rationale in `DECISIONS.md`, resolution
-  recorded in §12).
+  recorded in §13). §10 was added later, after the original nine were already all decided — its own
+  elaboration below follows the same grounding approach.
 - **Implementation-discretion calls made in this pass** (§1.1, §2.2, §2.3, §6.2): `spec.v1.2.0.md` itself
   explicitly delegated these to "`developer-lite`/`designer-lite`'s detailed-spec pass" (see each
   section's own citation). Each is stated with its reasoning inline, same "starting default, not a fixed
@@ -162,7 +167,7 @@ Elaborates `[spec v1.2.0 §1.3]`.
   and `uiFontScale: number;` sit at lines ~12–13 of that interface today — `language` goes directly
   alongside these, not nested under `appearance`, since language is not a visual-styling concern the way
   `AppearanceSettings` is). Matching `AppSettingsPatch` gains `language?: string | null`.
-- Bumps `AppSettings.schemaVersion` once — see §10.2.
+- Bumps `AppSettings.schemaVersion` once — see §11.2.
 - **Settings UI**: new row in the existing 一般 (General) tab of `SettingsDialog.tsx`, placed near the
   existing `theme`/`uiFontScale` rows (both already in that tab per the file's own header comment,
   "General houses Appearance... theme, uiFontScale..."). Concrete pattern, copied from the adjacent
@@ -604,7 +609,7 @@ compared against actual scroll-sync wiring:
   debounced re-render replaces it). Firing the `querySelector` lookup immediately upon consuming §4.2's
   pending anchor would therefore, in the common case, either match nothing or match a stale heading from
   the memo just switched away from. **This same wait condition also applies to §8's restore path** (§8.3)
-  — see §10.1 for the shared primitive proposed to solve both at once, rather than each implementing its
+  — see §11.1 for the shared primitive proposed to solve both at once, rather than each implementing its
   own ad hoc polling/timeout.
 
 ### 4.4 Adjacent `memo:`-Branch Encoding Bug — Bundled Into §9's Fix (resolved; see `DECISIONS.md`)
@@ -887,7 +892,7 @@ content-size change; see `DECISIONS.md`, "Preview-Pane Zoom CSS Mechanism: `zoom
   (e.g. the 18-toolbar-action keydown handler, `EditorPane.tsx` line ~626) and in `TabBar.tsx` (per `[spec
   v1.2.0 §6]`'s own citation).
 - **Disabled-at-bounds check**: `previewZoomPercent <= 70`/`>= 180` — a plain numeric comparison against
-  the fixed range constants (§10.2 area — worth defining as named constants, e.g. `PREVIEW_ZOOM_MIN = 70`,
+  the fixed range constants (§11.2 area — worth defining as named constants, e.g. `PREVIEW_ZOOM_MIN = 70`,
   `PREVIEW_ZOOM_MAX = 180`, `PREVIEW_ZOOM_STEP = 10`, alongside `PANE_MODE_LABEL` near the top of
   `MarkdownToolbar.tsx`, or in `src/shared/models.ts` if `developer-lite` prefers co-locating with other
   numeric-range constants like `uiFontScale`'s 80–150% bounds, which — confirmed by inspection of
@@ -998,7 +1003,7 @@ Elaborates `[spec v1.2.0 §8]` in full.
       if (el.offsetTop <= container.scrollTop) best = el; // same "last match wins" scan shape as scrollPreviewToLine
       else break;
     }
-    if (!best) return null; // no rendered block yet (e.g. empty memo, or html not yet caught up — see §8.3/§10.1)
+    if (!best) return null; // no rendered block yet (e.g. empty memo, or html not yet caught up — see §8.3/§11.1)
     return Number(best.dataset.sourceLine) + 1; // +1: data-source-line is 0-indexed (token.map[0]), scrollPosition is 1-indexed
   }
   ```
@@ -1011,7 +1016,7 @@ Elaborates `[spec v1.2.0 §8]` in full.
   deliberately consistent, not coincidentally similar.
   - **Scan-comparison basis differs slightly from `scrollPreviewToLine`'s own**: `scrollPreviewToLine`
     compares `data-source-line` values directly against a target *line number* (an approximate match, per
-    `[MDEditor-spec §4]`'s "closest value ≤..." description, §10.1's own note on this existing tolerance).
+    `[MDEditor-spec §4]`'s "closest value ≤..." description, §11.1's own note on this existing tolerance).
     `computeTopVisiblePreviewLine` above instead compares each block's `offsetTop` (a pixel position)
     against `container.scrollTop` (also a pixel position) — the correct basis for "which block is
     currently topmost in the viewport," mirroring `computeTopVisibleLine`'s own `view.lineBlockAtHeight
@@ -1037,7 +1042,7 @@ Elaborates `[spec v1.2.0 §8]` in full.
   instead (note the **inverse** `- 1` conversion, undoing §8.1's `+ 1`, since `scrollPreviewToLine`'s own
   `targetLine` parameter is compared directly against the 0-indexed `data-source-line` attribute, per
   `scrollPreviewToLine`'s own source, §8.1's citation) — timing-gated on the preview container actually
-  reflecting the target memo first (§8.3/§10.1), not merely on the container existing.
+  reflecting the target memo first (§8.3/§11.1), not merely on the container existing.
 - **`edit`/`split` unaffected**: both branches' existing, non-`"preview"` code path is untouched — `[spec
   v1.2.0 §8]`'s "edit/split mode unaffected" requirement is satisfied by construction, since the new logic
   is purely an added `if (paneMode === "preview") { ... } else { /* existing code, unchanged */ }` branch
@@ -1054,13 +1059,13 @@ Elaborates `[spec v1.2.0 §8]` in full.
   established, ever runs. This fix therefore does not, even inadvertently, introduce the excluded
   live-bidirectional-sync behavior.
 
-### 8.3 Shared Timing Concern With §4 — See §10.1
+### 8.3 Shared Timing Concern With §4 — See §11.1
 
 The restore-path timing gate above needs the exact same "wait until the preview container's rendered
 content actually belongs to the just-opened memo" condition §4.3 already identified independently for its
 own cross-tab anchor jump (both read from `[data-source-line]`/`id` attributes inside a `PreviewPane`
 whose `html` state lags a memo switch by up to `debounceMs`). Rather than each feature inventing its own
-ad hoc wait/poll logic, §10.1 proposes one shared primitive both can call.
+ad hoc wait/poll logic, §11.1 proposes one shared primitive both can call.
 
 ---
 
@@ -1161,9 +1166,84 @@ if (href.startsWith("memo:")) {
 
 ---
 
-## 10. Cross-Cutting Additions
+## 10. Locked Tab Distinguishing Label — Elaboration
 
-### 10.1 New Shared Primitive: Preview-Render-Readiness Gate (needed by §4 and §8 alike)
+Elaborates `[spec v1.2.0 §10]` in full, grounded in direct inspection of the existing tab-lock plumbing
+(`src-tauri/src/model/app_settings.rs`, `src-tauri/src/commands/tab.rs`, `src/shared/models.ts`,
+`src/ipc/tab.ts`, `src/components/TabBar/TabBar.tsx`, `src/components/dialogs/PromptDialog.tsx`).
+
+### 10.1 Data Model — `TabSettingsEntry`/`TabInfo`, Both Rust and TS Sides
+
+New field, plaintext, living in `AppSettings.tabs[i]` — **not** inside the tab-lock encrypted blob
+(`[detailed-spec §3.4]`). This placement is what makes §10.2's command work on a locked tab **without**
+an active unlock session — the entire point of the feature (distinguishing several locked tabs from
+each other without unlocking any of them):
+
+- Rust: `TabSettingsEntry` (`src-tauri/src/model/app_settings.rs`, alongside the existing `locked: Option<bool>`
+  field) gains `pub lock_label: Option<String>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`,
+  same optional-field convention as `locked`; `camelCase` rename already applies to the whole struct, so it
+  serializes as `lockLabel`).
+- Rust: `TabInfo` (`src-tauri/src/commands/tab.rs`, the DTO returned by `tab_list`/`tab_rename`/etc.) gains
+  the same `pub lock_label: Option<String>` field, and `impl From<&TabSettingsEntry> for TabInfo` copies it
+  across (`lock_label: entry.lock_label.clone()`), mirroring how `locked` is already copied there.
+- TS: `TabSettingsEntry` and `TabInfo` (`src/shared/models.ts`) both gain `lockLabel: string | null`
+  (`null`, not `undefined`, to round-trip cleanly through `serde_json`'s `Option<String>` → JSON `null`).
+- No `schemaVersion` bump is needed (§11.2's existing "new optional field, old files parse fine with it
+  absent" case already covers this — same pattern already used for `locked` itself when it was originally
+  added).
+
+### 10.2 New Command `tab_set_lock_label` and Context-Menu Wiring
+
+- New Tauri command `tab_set_lock_label(id: String, label: Option<String>) -> AppResult<TabInfo>`
+  (`src-tauri/src/commands/tab.rs`, alongside `tab_rename`), and a matching thin TS wrapper
+  `tabSetLockLabel(id: string, label: string | null): Promise<Result<TabInfo>>` (`src/ipc/tab.ts`,
+  mirroring `tabRename`'s shape).
+- **Must not** reuse `tab_rename`'s locked-tab guard
+  (`Some(t) if t.locked.unwrap_or(false) => Err(TabLocked)`). That guard exists because renaming requires
+  the tab's *real* name, which is inaccessible without an unlock session — it does not apply here, since
+  `lock_label` is a separate plaintext field the command reads/writes directly on the `TabSettingsEntry`
+  regardless of `locked`/session state. The command works identically whether the target tab is unlocked,
+  locked-with-no-session, or locked-with-an-active-session.
+- Validation: `label` is free text (`[spec v1.2.0 §10]`'s "the user's own free text, entirely under their
+  control"), not passed through `validate_name`/`ValidationMode::Strict` (that validator enforces
+  filesystem-safe-name rules, which don't apply to a display label). Exact length limit, if any, is left to
+  implementation (§12).
+- Context-menu wiring (`src/components/TabBar/TabBar.tsx`, alongside the existing
+  `rename`/`lockSetup`/`unlock`/`permanentUnlockConfirm`/`permanentUnlockPassword` entries in
+  `ContextMenuState`'s `kind` union and the `ContextMenu` items array around line 469): a new
+  `{ kind: "setLockLabel"; tab: TabInfo }` pending-dialog kind, and one new context-menu item (e.g.
+  `t("tabBar.setLockLabel")`, translated per `[spec v1.2.0 §1]`'s i18n mechanism) that opens a
+  `PromptDialog` — the same shared single-text-input modal already used for `rename`/`duplicateName`/
+  `createNew` (`[spec v1.2.0 §10]`'s "single-text-input prompt" language matches `PromptDialog`'s actual
+  shape more closely than `PasswordDialog`, which is what `lockSetup`/`unlock`/`permanentUnlockPassword`
+  actually use for their two-field password+hint/password-only forms) — with `initialValue` prefilled from
+  `contextTab.lockLabel ?? ""` and `onSubmit` calling `tabSetLockLabel`.
+- Whether the menu item is shown only when `contextTab.locked` is `true`, or always (allowing a label to be
+  pre-staged before locking, harmless either way since §10.3's display logic only surfaces the label on a
+  locked tab), is left to implementation (§12) — `spec.v1.2.0.md` does not distinguish between the two.
+
+### 10.3 Display Logic
+
+- Tab bar rendering (`TabBar.tsx`'s per-tab render, same spot the existing `tab.locked` /
+  `sessionRealName` branching already lives): for a locked tab with `tabLockState.activeSessionRealNames`
+  not containing its id (i.e. showing the placeholder, not the real name), display `tab.lockLabel` when
+  non-null/non-empty, falling back to the bare 🔒 glyph exactly as today when `lockLabel` is `null`
+  (`[spec v1.2.0 §10]`'s "additive only, not a new mandatory default"). Exact rendering (glyph + label
+  side-by-side vs. glyph replaced by label) is left to implementation (§12); the constraint from
+  `[spec v1.2.0 §10]` is only that the *real* tab/folder name is never shown or hinted at.
+- An unlocked tab, or a locked tab with an active unlock session showing `sessionRealName`, ignores
+  `lockLabel` entirely — the field only matters for the placeholder-name path.
+- Submitting an empty string via the §10.2 prompt clears the label back to unset (`lockLabel: null`), same
+  as leaving it unset from the start — no separate "clear" affordance is needed. Left to implementation as
+  the natural interpretation of "editable anytime" (§12); `spec.v1.2.0.md` does not spell this out
+  explicitly, but no other interpretation (e.g. rejecting empty input, or treating empty string as a
+  distinct "labeled with nothing" state) has any different observable effect for the user.
+
+---
+
+## 11. Cross-Cutting Additions
+
+### 11.1 New Shared Primitive: Preview-Render-Readiness Gate (needed by §4 and §8 alike)
 
 Both §4.3 and §8.3 independently need the same underlying condition: "wait until `PreviewPane`'s rendered
 `html` actually reflects the target memo before reading/querying its DOM." Rather than each feature
@@ -1176,7 +1256,7 @@ decision):
 - **Mechanism**: `PreviewPane.tsx`'s existing debounced-render effect (§4.3's citation, `setTimeout(() =>
   { if (view) setHtml(renderMarkdownToHtml(view.state).html); }, debounceMs)`) already has access to
   `memoKey` (`${tabId}:${memoName}`, confirmed already computed in `EditorPane.tsx` and passed down as a
-  prop, per §10's own earlier citations). Track which `memoKey` the **current** `html` was actually
+  prop, per §11's own earlier citations). Track which `memoKey` the **current** `html` was actually
   rendered for, e.g. a new `renderedForMemoKeyRef` ref set at the same moment `setHtml(...)` is called
   inside that timeout callback.
 - **Consumption**: both §4.3's post-navigation anchor jump and §8.3's preview-mode scroll restore, instead
@@ -1192,30 +1272,36 @@ decision):
   `developer-lite`'s call on exact shape, same as every other "which exact React plumbing pattern" choice
   already left open throughout this document.
 
-### 10.2 `schemaVersion` / Migration Handling
+### 11.2 `schemaVersion` / Migration Handling
 
-Elaborates the one new persisted field this whole v1.2.0 pass introduces: `AppSettings.language` (§1.2).
-None of the other eight items add any persisted field — §5's toggle-back state and §6's zoom level are
-both explicitly session-only/transient (`[spec v1.2.0 §5]`, `[spec v1.2.0 §6]`), and §2/§3/§4/§7/§8/§9
-are rendering/behavior/bug-fix changes with no new schema field at all (§4's `#slug` suffix is parsed,
-never stored).
+Elaborates the two new persisted fields this whole v1.2.0 pass introduces: `AppSettings.language` (§1.2)
+and `AppSettings.tabs[i].lockLabel` (§10.1, added later, 2026-08-22). None of the other eight items add
+any persisted field — §5's toggle-back state and §6's zoom level are both explicitly session-only/
+transient (`[spec v1.2.0 §5]`, `[spec v1.2.0 §6]`), and §2/§3/§4/§7/§8/§9 are rendering/behavior/bug-fix
+changes with no new schema field at all (§4's `#slug` suffix is parsed, never stored).
 
-- `AppSettings.schemaVersion` increments once, covering `language` alone (unlike `detailed-spec.v1.1.0.md`
-  §4.1's two-fields-in-one-bump case, there is only one new `AppSettings` field this time, and no new
-  `TabMeta`/`MetaTreeNode` field at all — `TabMeta.schemaVersion` does **not** need to bump for v1.2.0).
-- **No destructive migration logic required**: `language: string | null`, absent on a pre-upgrade file,
-  resolves to `null` on read (the existing generic "optional field, absent means not-yet-set" JSON-parsing
-  behavior already used for every other optional `AppSettings` field, e.g. `tabLockAutoRelockMinutes`,
-  `detailed-spec.v1.1.0.md` §1.2) — `[spec v1.2.0 §1.5]`'s own default-resolution rule (§1.2 above) is
-  exactly what runs for that `null` case; no field-migration step beyond the schema bump itself.
-- The concrete new integer value `AppSettings.schemaVersion` bumps **to** depends on whatever value is
-  currently shipping at v1.2.0 implementation time — not hardcoded here, same convention
+- `AppSettings.schemaVersion` increments once, covering both `language` and `lockLabel` together if both
+  ship in the same release (mirroring `detailed-spec.v1.1.0.md` §4.1's two-fields-in-one-bump precedent) —
+  or twice, if `lockLabel` (§10) ships in a later release than the original nine items, since it was
+  decided separately and later. No new `TabMeta`/`MetaTreeNode` field either way —
+  `TabMeta.schemaVersion` does **not** need to bump for v1.2.0.
+- **No destructive migration logic required for either field**: both `language: string | null` and
+  `tabs[i].lockLabel: string | null`, absent on a pre-upgrade file, resolve to `null`/absent-and-optional
+  on read (the existing generic "optional field, absent means not-yet-set" JSON-parsing behavior already
+  used for every other optional `AppSettings`/`TabSettingsEntry` field, e.g. `tabLockAutoRelockMinutes`,
+  `detailed-spec.v1.1.0.md` §1.2, and `tabs[i].locked` itself) — `[spec v1.2.0 §1.5]`'s own
+  default-resolution rule (§1.2 above) covers `language`'s `null` case; `lockLabel`'s `null` case resolves
+  directly to §10.3's bare-glyph fallback, no further migration step needed for either.
+- The concrete new integer value(s) `AppSettings.schemaVersion` bumps **to** depend on whatever value is
+  currently shipping at implementation time — not hardcoded here, same convention
   `detailed-spec.v1.1.0.md` §4.1 and `detailed-spec.md` §9 both already establish.
 
-### 10.3 Error Handling — No New `ErrorCode`s
+### 11.3 Error Handling — No New `ErrorCode`s
 
-None of the nine v1.2.0 items introduce a new `ErrorCode` or change any existing `Result<T>` error
-handling:
+None of the ten v1.2.0 items introduce a new `ErrorCode` or change any existing `Result<T>` error
+handling. (§10's new `tab_set_lock_label` command reuses the existing `NotFound`/`Unknown` codes already
+used by `tab_rename` for the same failure shapes — no dedicated code needed since, unlike renaming, there
+is no name-collision case to distinguish.)
 
 - §1 (i18n) is a pure frontend string-lookup change; §1.4 above already confirms no backend/`message`-
   wire-shape change.
@@ -1230,9 +1316,9 @@ handling:
 
 ---
 
-## 11. Deferred-to-Implementation Details (Not Ambiguities — No User Decision Needed)
+## 12. Deferred-to-Implementation Details (Not Ambiguities — No User Decision Needed)
 
-Mirrors the role of `detailed-spec.md` §9 and `detailed-spec.v1.1.0.md` §5, scoped to v1.2.0's nine items.
+Mirrors the role of `detailed-spec.md` §9 and `detailed-spec.v1.1.0.md` §5, scoped to v1.2.0's ten items.
 Every item below is either explicitly delegated by `spec.v1.2.0.md` itself, or a pure "which exact React/
 CSS/Rust plumbing shape" choice with no observable behavioral consequence either way:
 
@@ -1247,14 +1333,14 @@ CSS/Rust plumbing shape" choice with no observable behavioral consequence either
 - Exact wording of the pane-mode toggle's next-state `aria-label` phrasing (§3) — only "next-state-only,
   no current-state suffix" is spec-level.
 - Exact shape of the `EditorPane.tsx` ↔ `PreviewPane.tsx` handle/callback used to read the preview
-  container's scroll state (§8.2) and to expose the render-readiness signal (§10.1).
+  container's scroll state (§8.2) and to expose the render-readiness signal (§11.1).
 - `aria-label` copy for §6's zoom buttons, and whether it matches `title` verbatim or is a shorter variant
   (§6.3) — same non-decision `[spec v1.2.0 §7]` itself leaves for that section's own aria-label.
-- Exact bounded-timeout duration for §10.1's render-readiness wait, and its user-visible failure behavior
+- Exact bounded-timeout duration for §11.1's render-readiness wait, and its user-visible failure behavior
   (silent no-op vs. some other fallback) — a `PLAN.md`-level constant choice, same class as this app's
   other already-established "reasonable timeout" constants (e.g. `[MDEditor-spec §6]`'s ~3-second
   per-image PDF-export wait).
-- The concrete new integer value `AppSettings.schemaVersion` bumps to (§10.2).
+- The concrete new integer value `AppSettings.schemaVersion` bumps to (§11.2).
 - Exact CSS class name for block-math's wide-formula horizontal-scroll wrapper (§2.5 — `.ttn-preview-
   math-wrap` is this document's own suggested spelling, not binding, mirroring `.ttn-preview-table-wrap`'s
   own naming, same discretion class as `detailed-spec.v1.1.0.md` §5's "exact action-ID string spellings").
@@ -1262,10 +1348,19 @@ CSS/Rust plumbing shape" choice with no observable behavioral consequence either
   `output: "htmlAndMathml"`/`"mathml"` (§2.1) — a genuine, if minor, accessibility/copy-paste-fidelity
   vs. sanitizer-surface-area tradeoff, left to `developer-lite`'s ordinary engineering judgment since
   `spec.v1.2.0.md` does not distinguish between the two output modes anywhere.
+- Exact length limit (if any) and allowed-character set for §10's `lockLabel` free-text input (§10.2) —
+  `[spec v1.2.0 §10]` only specifies "the user's own free text," no length/character constraint.
+- Whether §10's "Set lock label" context-menu item is shown only on locked tabs, or on unlocked tabs too
+  (§10.2) — harmless either way per §10.2's own note.
+- Exact display treatment of a set `lockLabel` on the tab bar — glyph-plus-label vs. label-replaces-glyph,
+  spacing/truncation for a long label (§10.3) — `[spec v1.2.0 §10]` only specifies the fallback (bare
+  glyph when unset), not the set-label rendering shape.
+- Whether submitting an empty string via §10.2's prompt clears `lockLabel` back to `null`, vs. some other
+  empty-input handling (§10.3) — no differing observable effect either way per §10.3's own note.
 
 ---
 
-## 12. Open Questions Requiring User Decision
+## 13. Open Questions Requiring User Decision
 
 **None remaining.** `Q-v1.2.0-1` (whether to bundle the §4.4 `memo:`-branch encoding-bug fix into this
 v1.2.0 pass) was resolved by the user — bundle it, using `[spec v1.2.0 §9]`'s already-decided `#slug`-
@@ -1273,5 +1368,8 @@ branch fix pattern. Reflected in `spec.v1.2.0.md` §9 and this document's §4.4/
 `DECISIONS.md` ("Preview-Pane `memo:` Link Non-ASCII Name Encoding Bug: Bundled into v1.2.0's §9 Fix, Not
 Deferred").
 
-Every other point in `spec.v1.2.0.md`'s nine items was either already fully decided there, or was an
-implementation-discretion item this pass resolved directly (§1.1, §2.2, §2.3, §6.2 above).
+Every other point in `spec.v1.2.0.md`'s ten items was either already fully decided there, or was an
+implementation-discretion item this pass resolved directly (§1.1, §2.2, §2.3, §6.2 above). §10 (added
+2026-08-22, GitHub issue #202) was likewise already fully decided by the user on the GitHub issue thread
+before this elaboration was written — see `DECISIONS.md` ("Locked Tab Distinguishing Label:
+User-Settable, Editable Anytime via Context Menu").

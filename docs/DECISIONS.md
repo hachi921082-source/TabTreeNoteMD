@@ -354,8 +354,11 @@ permanently skipping a deleted tab's letter (e.g. no tab ever being "B" again af
 is removed) was judged visually/conceptually unpleasant, and a generated letter carries no actual
 memory hook to the tab's real content the way a user's own chosen label would.
 
-**Where elaborated**: GitHub issue #202 and its comment thread carry the full decision history
-(including the rejected alternative's own sub-decisions on gap-handling and overflow past "Z").
+**Where elaborated**: `spec.v1.2.0.md` §10 (user-facing decided behavior) and `detailed-spec.v1.2.0.md`
+§10 (data model, command, and context-menu/display elaboration). GitHub issue #202 and its comment thread
+still carry the full decision history (including the rejected alternative's own sub-decisions on
+gap-handling and overflow past "Z"), but the decided behavior itself is now also reflected in the spec
+files `developer-lite` works from.
 
 ## Icon Submenu Clarified as the `label.color` Picker; Concrete Palette Adopted from Legacy; `label.kind` Confirmed Reserved (2026-08-01)
 
