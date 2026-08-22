@@ -14,82 +14,76 @@
 ## Index
 
 1. Where the project stands
-2. This session's work: issues #196, #202, #203, #208 resolved
+2. This session's work: issues #190, #204, #191 resolved
 3. Open issues: full list, recommended order
 4. Issue #189: split into #209–212, branching/order decision (unchanged from prior sessions)
+5. Process note for next session: live-testing/comment-verbosity discipline
 
 ## 1. Where the project stands
 
-- `V1.2.0` is at `685f1be`, in sync with `origin/V1.2.0` (pushed).
-- All three feature branches created this session (`fix/locked-tab-label`, `fix/context-menu-paste-image`,
-  `fix/preview-jump-to-start-scroll`) were merged via PR and deleted both remotely (`--delete-branch`) and
-  locally — none remain.
+- `V1.2.0` is at `400e88b`, in sync with `origin/V1.2.0` (pushed). All three fix branches from this
+  session (`fix/toc-inline-markup-strip`, `fix/heading-color-wrap-exclude-marker`,
+  `fix/self-referential-anchor-jump`) were merged via PR (#223/#224/#225) and deleted both remotely
+  and locally — none remain.
+- GitHub auto-close via "Closes #N" in the PR body does **not** fire when merging into `V1.2.0`,
+  since the repo's actual default branch is `V1.0.0` — issues #190/#204/#191 were closed manually
+  with `gh issue close` after each merge. Keep this in mind for future issue-branch merges into
+  `V1.2.0`: always close the issue as an explicit step, don't assume the PR merge did it.
 - `"CLAUDE - コピー.md"` (untracked, confirmed-stale backup) still sitting in the repo root, still
   unaddressed across multiple sessions now. Ask the user before touching it.
 - No dev server / app instance was left running at the end of this session (each reviewer-lite pass
   killed its own `tauri dev`/CDP session before finishing; verified no lingering `tabtreenotemd.exe`/
   `cargo.exe` processes after the last one).
 
-## 2. This session's work: issues #196, #202, #203, #208 resolved
+## 2. This session's work: issues #190, #204, #191 resolved
 
-All four were run through this repo's standard GitHub Issue Workflow (`fix/<slug>` branch →
-developer-lite → reviewer-lite live-test/approve → PR → merge into `V1.2.0` → issue closed → entry added
-to `RESOLVED-ISSUES.md`), except #196 which needed no new code (see below). None were PLAN.md-scale.
+All three ran through this repo's standard GitHub Issue Workflow (`fix/<slug>` branch →
+developer-lite → reviewer-lite live-test/approve → PR → merge into `V1.2.0` → issue closed → entry
+added to `RESOLVED-ISSUES.md`). None were PLAN.md-scale.
 
-- **#196** (scroll-position restore used the same unreliable `requestAnimationFrame` timing as #195) —
-  turned out to already be fixed by a prior session's commit `42d36a1`, just never live-verified/closed.
-  reviewer-lite live-verified via CDP (`scrollTop` 450.4→438.4 and 250.4→242.4 across tab-switch/reopen,
-  no top-snap) — no branch/PR, closed directly after verification.
-- **#202** (locked tabs indistinguishable — all show only 🔒) — design was already fully decided in a
-  prior session (`docs/DECISIONS.md`, confirmed by the user directly on the GitHub issue thread) but never
-  elaborated into the spec files developer-lite reads from; this session's designer-lite pass wrote that
-  elaboration into `spec.v1.2.0.md` §10 / `detailed-spec.v1.2.0.md` §10 (renumbering old §10–§12 to
-  §11–§13, updating all cross-references) before implementation. developer-lite then added
-  `AppSettings.tabs[i].lockLabel: string | null` (plaintext, works regardless of lock/session state), a
-  `tab_set_lock_label` command, and a `TabBar.tsx` context-menu item reusing `PromptDialog`. reviewer-lite
-  live-verified 8 scenarios via CDP (set/display/clear/multi-tab distinction/no-real-name-leak/coexistence
-  with an active unlock session/pre-staging on an unlocked tab). PR #220.
-- **#203** (right-click "貼り付け" didn't paste images, unlike Ctrl+V) — exported `imagePaste.ts`'s
-  existing `saveAndInsertImage` (already used by Ctrl+V) and had `pasteCommand` check
-  `navigator.clipboard.read()` for an `image/*` item first, falling back to the original `readText()`
-  path otherwise. reviewer-lite live-verified with a **real OS-clipboard image** (PowerShell
-  `Clipboard.SetImage`) via CDP — image paste, text paste, Ctrl+V (both types), and empty-clipboard
-  fallback all passed. PR #221.
-- **#208** (preview-only-mode double-click jump-to-start scrolled the hidden CodeMirror view instead of
-  the visible `<PreviewPane>`) — `toggleJumpToStart` now branches on `paneMode`, saving/restoring
-  `PreviewPane.getContainer().scrollTop` directly in preview mode; `jumpToggleRef` became a discriminated
-  union (`{mode:"edit",...}` vs `{mode:"preview",scrollTop}`) so a saved value is correctly treated as
-  absent if the pane mode changed mid-toggle. reviewer-lite live-verified 7 scenarios via CDP, including
-  the mode-mismatch edge case and memo-switch reset. PR #222.
-
-No non-blocking findings worth carrying forward from this session's reviewer-lite passes — each report's
-"non-blocking observations" section noted only pre-existing, already-understood, unrelated behavior (e.g.
-edit-mode's non-pixel-exact scroll restore on toggle-back, existing PLAN.md-documented no-orphan-cleanup
-behavior), nothing new to file.
+- **#190** (color/font-size `<span>`- or `<mark>`-tagged heading text leaked raw markup into the
+  generated TOC label/slug) — `scanHeadings()` (`tocGenerator.ts`) now strips both via the existing
+  `unwrapColorSpans` and a new `unwrapMarkSpans` (`decorationCommands.ts`). The `<span>` half turned
+  out already fixed by an earlier commit on `V1.2.0`; this pass added the `<mark>` half. The issue's
+  suspected live-view click-jump breakage (from a decoration-overlap theory) did not reproduce under
+  live CDP testing — no change needed in `markdownDecorations.ts`. PR #223.
+- **#204** (coloring/font-sizing an entire heading line including its `#` marker made
+  `@lezer/markdown` stop parsing it as a heading, dropping it from the TOC entirely) — user chose the
+  "prevent the wrap" fix direction over "detect after the fact" when asked. `wrapSelectionInSpan`
+  (`decorationCommands.ts`) now excludes a line's leading ATX marker (+ preceding newline, when the
+  heading isn't the wrap's first line) from the `<span>` wrap, keeping the line parseable. **Known
+  residual, not fixed**: selecting a heading line plus trailing non-heading lines together still lets
+  a single unclosed `<span>` leak into that heading's TOC label — cosmetic garbling only (verified via
+  a throwaway script: TOC still lists the heading, slug/label just contain leaked tag text; clicking
+  it still jumps correctly since the same garbled value is used for both generation and resolution).
+  Not filed as a separate issue yet — ask the user if they want one. PR #224.
+- **#191** (self-referential `memo:...#slug` anchor link, same memo/tab, didn't jump) — root cause:
+  the deferred `pendingLinkFocus` → `loadGeneration` pipeline only re-fires on an actual memo
+  (re)load, which a same-tab/same-memo click never triggers. Fixed via a new
+  `EditorPaneHandle.jumpToAnchor(slug)`, called directly from `App.tsx`'s `openLinkTarget` for this
+  case only (bypasses the deferred pipeline entirely); every other case (cross-tab, cross-memo)
+  untouched. PR #225.
 
 ## 3. Open issues: full list, recommended order
 
-Same list as the prior session's HANDOFF minus #196/#202/#203/#208 (all closed above). Re-verify scale
-estimates against current code before starting any of these — no new investigation was done on them this
-session.
+Same list as the prior session's HANDOFF minus #190/#204/#191 (all closed above). Re-verify scale
+estimates against current code before starting any of these — no new investigation was done on them
+this session.
 
 | # | Title (short) | Scale (from prior sessions' estimate, unverified since) |
 |---|---|---|
-| 190 | TOC `<mark>` tag + live-view decoration overlap | Medium — `<mark>` part is the same pattern already fixed for `<span>`; decoration-overlap part unverified |
-| 204 | Whole-line-span-wrapped heading vanishes from TOC | Medium/large — structural (lezer syntax-tree level) |
-| 191 | Self-referential same-memo `#slug` anchor doesn't jump | Medium — uninvestigated, adjacent to already-understood anchor-jump logic |
 | 207 | Settings shortcut rebinding doesn't work | Unknown — code reading found no cause; needs live reproduction first |
 | 199 | UI font-size setting doesn't affect tooltips | Large — structural (native `title` attribute outside app CSS reach) |
 | 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §4** |
+| — | (new, optional) TOC label garbling when a heading + trailing non-heading lines are colored together | Small/cosmetic — see #204 residual above; not yet filed as its own issue |
 
-A prior session's cross-issue review found only **#189** to be genuinely PLAN.md-scale (already has one:
-`docs/plans/persistence-fs/PLAN.md`); everything else in this table is fix/`<slug>`-branch scale, with no
-outstanding spec-confirmation blockers remaining (#202's was the last one, resolved this session).
+A prior session's cross-issue review found only **#189** to be genuinely PLAN.md-scale (already has
+one: `docs/plans/persistence-fs/PLAN.md`); everything else in this table is fix/`<slug>`-branch scale.
 
 ## 4. Issue #189: split into #209–212, branching/order decision (unchanged from prior sessions)
 
-`docs/plans/persistence-fs/PLAN.md` §5 already designed this; backend watcher/conflict logic is already
-implemented and unit-tested, just never wired to any lifecycle trigger.
+`docs/plans/persistence-fs/PLAN.md` §5 already designed this; backend watcher/conflict logic is
+already implemented and unit-tested, just never wired to any lifecycle trigger.
 
 - **#209** — watcher lifecycle for plain (unlocked) tabs. No dependency.
 - **#210** — watcher lifecycle for locked tabs, session-scoped. Depends on #209's mechanism.
@@ -97,5 +91,29 @@ implemented and unit-tested, just never wired to any lifecycle trigger.
   Practically depends on #209.
 - **#212** — verify/implement the frontend's handling of those events. Depends on #211.
 
-**Recommended order**: #209 → #211 → #212 → #210. **Branching**: each gets its own `fix/<slug>` branch
-+ PR (one issue = one branch = one PR), same as every other issue resolved so far.
+**Recommended order**: #209 → #211 → #212 → #210. **Branching**: each gets its own `fix/<slug>`
+branch + PR (one issue = one branch = one PR), same as every other issue resolved so far.
+
+## 5. Process note for next session: live-testing/comment-verbosity discipline
+
+Two efficiency lessons surfaced hard this session, both now in persistent memory
+(`feedback_live_testing_scope_discipline`) — re-read that memory before writing any
+`developer-lite`/`reviewer-lite` prompt that involves live/CDP testing:
+
+1. **Don't over-provision verification.** Early passes this session wrote 7-8-scenario live-CDP test
+   prompts for small, isolated bugfixes (90-129 tool calls, 10-20 real minutes each). Only the one
+   reported-broken behavior needs live verification; at most one adjacent regression check if the
+   diff plausibly touches it, not every path the diff's code happens to pass through. The
+   course-corrected #191 pass ran the same kind of review in 67 tool calls.
+2. **Scroll/jump verification: shrink the viewport, don't pad the test document.** To make a scroll
+   delta measurable, shrink the actual `tauri dev` window (CDP `Browser.setWindowBounds` — note
+   `Emulation.setDeviceMetricsOverride` did not reliably stick on this WebView2 build) instead of
+   writing a long test document to force scroll distance. A short 2-heading memo in a small window
+   already overflows and produces a real, measurable `scrollTop` change.
+
+Also flagged and fixed mid-session (not memory-worthy, just a one-time cleanup): several multi-line
+JSDoc/comment blocks added by `developer-lite` across all three fixes violated CLAUDE.md's
+"no multi-paragraph docstrings/multi-line comment blocks — one short line max" rule. Trimmed to one
+line each before merge (see the "冗長な複数行コメントを1行に整理" commits on each branch's history,
+now folded into `V1.2.0`). Worth double-checking future `developer-lite` output against this rule
+before it reaches review, rather than catching it after PRs are already open.
