@@ -14,146 +14,117 @@
 ## Index
 
 1. Where the project stands
-2. **Read this first — process failures this session and the resulting standing rules**
-3. Workflow policy change: PRs now used for PLAN Implementation Workflow too
-4. Open issues: full list with scale/difficulty, recommended order
-5. Issue #189: split into #209–212, branching/order decision
-6. Issue #202: locked-tab label spec, finalized
-7. QA data changes made this session
+2. This session's work: 6 issues resolved (#197/#200 x2/#201/#205/#206)
+3. Process incident this session — read before touching the dev app or any background process
+4. Dev-server startup gotcha: port 1420 conflict from a stray leftover process
+5. Open issues: full list, recommended order
+6. Issue #189: split into #209–212, branching/order decision (unchanged from prior session)
 
 ## 1. Where the project stands
 
-- `V1.2.0` is at `817e68f`, **6 commits ahead of `origin/V1.2.0`, not yet pushed**. Ask before pushing.
-- All 6 of those commits were made **directly on `V1.2.0`** rather than on their own `fix/<slug>`
-  branches (`bca53d5`/`6e48f09` TOC color-tag fix, `c8ead9e` shortcut-dispatcher `defaultPrevented`
-  regression fix, `c72859a`/`817e68f` doc-only decision/workflow updates). The first three of those
-  were a genuine process violation — see §2. **Going forward, every fix goes on its own `fix/<slug>`
-  branch with a PR**, not directly on `V1.2.0`.
+- `V1.2.0` is at `87f3865`, in sync with `origin/V1.2.0` (pushed).
 - `"CLAUDE - コピー.md"` (untracked, confirmed-stale backup) still sitting in the repo root, still
   unaddressed. Ask the user before touching it.
-- The dev app (`npm run tauri dev`, WebView2 CDP on port 9222) has been running long enough to span
-  several sessions. **The user actively uses this exact running instance for real note-taking** (the
-  "AI" tab, `folderPath` on a separate `G:\TabTreeNote\...` drive, is real content, not a QA fixture —
-  see §2's incident). Verify current focused tab/memo via CDP before any mutating action, every time.
+- The dev app was running earlier this session (`npm run tauri dev`) but **the user has since closed
+  it themselves** — nothing is running as of this writing. Don't assume otherwise; check before any
+  live-testing.
 
-## 2. Read this first — process failures this session and the resulting standing rules
+## 2. This session's work: 6 issues resolved
 
-This session had a serious, real incident and a long string of corrections after it. **Read the full
-memory file [[feedback_verify_live_target_before_cdp_mutation]] and [[feedback_dont_ask_before_each_commit]]
-before doing any live-app testing or any "should I just fix this" judgment call.** Summary:
+Fixed the 5 "trivial" issues from the prior session's recommended list, plus a same-day follow-up:
 
-- **The incident**: a CDP script assumed a previously-tested QA fixture tab was still focused and typed
-  test content directly into the live editor without checking first. It was actually the user's real
-  "AI"/"issue" tab (their own running notes on a separate drive, not test data) — the test content got
-  autosaved over real content. Recovery was only possible because the app's own `.bak` autosave-backup
-  file happened to still hold the pre-edit content; even restoring it required falling back from Bash
-  (blocked by the sandbox for a path outside the repo, even after the user explicitly authorized it in
-  chat — chat authorization does not lift that block) to PowerShell's `Copy-Item`, which worked.
-- **Repeated "acted without asking" pattern, corrected multiple times in one session**: implementing and
-  committing a fix (the Ctrl+Z/Y/I/Shift+K dispatcher bug) when the session's established default was
-  "investigate → file as GitHub issue → implement later" — without ever asking whether to switch out of
-  that mode. Also: committing directly to `V1.2.0` instead of cutting a `fix/<slug>` branch (the actual
-  underlying complaint — branches are what make an ad-hoc fix reversible; direct-to-`V1.2.0` commits
-  aren't). Also: exceeding a user-granted "try it just once" live-test limit by not treating a failed
-  first attempt (due to the tester's own script bug) as a stopping point to ask before retrying.
-- **The resolved standing rule** (as narrow and literal as the user stated it, after several rounds of
-  correction — don't re-derive a looser version of this from first principles):
-  - Default is still "investigate → file as GitHub issue → implement later." Switching into
-    "implement now" needs the user's buy-in, not just a declarative heads-up, unless they've already
-    said so for that specific item.
-  - When implementation *is* agreed to, it goes on a `fix/<slug>` (or `feature/<version>-<name>`)
-    branch — never committed directly to `V1.2.0`.
-  - Once on the correct branch, routine `git commit`/`git merge` don't need a stop-and-wait permission
-    question each time — the branch itself is the safety mechanism now, not the question-asking. (This
-    was explicitly walked back once already from a looser "don't ask about commit/merge at all"
-    reading — re-read [[feedback_dont_ask_before_each_commit]] in full if this comes up again, don't
-    assume the first line is the whole story.)
-  - A user-granted count/scope limit ("try it once") is literal — every tool call touching the live
-    target counts, successful or not. The moment an attempt fails for *any* reason, including your own
-    tooling bug, stop and ask before retrying rather than deciding the failure "didn't count."
-  - Before any CDP action that types/edits/pastes into the live app, verify the currently-active
-    tab/memo (and that its `folderPath` is under the repo's own gitignored QA data, not a real external
-    path) — every time, not just once per session.
-
-## 3. Workflow policy change: PRs now used for PLAN Implementation Workflow too
-
-`CLAUDE.md`'s "PLAN Implementation Workflow" section (commit `817e68f`) changed from "direct
-`git merge --no-ff`, no PR" to "via a GitHub PR" — superseding the original no-PR precedent, for the
-same reversibility reasoning `fix/<slug>` branches already get: a PR gives a visible reviewable diff,
-an explicit merge action as its own checkpoint, and a durable GitHub-side record. Applies to both
-`feature/<version>-<name>` branches and (per §5 below) the `fix/<slug>` branches for issue #189's split.
-
-## 4. Open issues: full list with scale/difficulty, recommended order
-
-All still open as of this writing. "Scale" is a rough estimate from today's investigation, not a
-guarantee — re-verify against current code before starting.
-
-| # | Title (short) | Scale |
+| Issue | PR | Summary |
 |---|---|---|
-| 197 | 📂 button vertical misalignment | Trivial — CSS fix already identified (flex centering) |
-| 200 | Delete-dialog button order | Trivial — swap two JSX lines |
-| 201 | Preview zoom % width shift | Trivial — one CSS fixed-width rule |
-| 205 | Font-size tag preset steps too small | Trivial — edit a 3-value constant array |
-| 206 | Delete-dialog Enter key doesn't confirm | Trivial — add a keydown handler to `ConfirmDialog` |
+| #197 | #213 | Tab bar's 📂 button vertical misalignment/clipping — added flex-centering to `.ttn-tab-create` |
+| #201 | #214 | Preview zoom % readout shifted the ±buttons as digit count changed — fixed width instead of `min-width` |
+| #205 | #215 | Font-size toolbar presets widened 12/20/28px → 12/24/36px; synced 2 stale doc tables |
+| #200 | #216 | `ConfirmDialog` footer button order swapped to confirm-first/cancel-second (all 6 call sites) |
+| #206 | #217 | `ConfirmDialog` Enter-key handler added; a focus-unaware first pass **broke Tab→Cancel→Enter native keyboard nav** (would confirm/delete instead of cancel) — caught by reviewer-lite's live test, fixed with a `document.activeElement` guard |
+| #200 (reopened) | #218 | User tested live, found button *text* itself still said 削除/キャンセル — wanted はい/いいえ specifically for the single-memo delete-confirm dialog. Added `common.yes`/`common.no` i18n keys; **only** `TreeView.tsx`'s `deleteConfirm` call site changed — the other 5 `ConfirmDialog` usages (trash-failed-permanent-delete, permanent-unlock x2, tab remove, external-link-open) intentionally still say 削除/キャンセル or their own labels |
+
+All 6 followed the `fix/<slug>` branch → PR → merge → issue-close → `RESOLVED-ISSUES.md` flow. Note:
+GitHub's auto-close-on-merge (`Closes #N` in the PR body) does **not** fire here, because the repo's
+GitHub-registered default branch is `V1.0.0`, not `V1.2.0` — every issue in this batch had to be closed
+manually with `gh issue close`. Keep doing that; don't rely on the PR body alone.
+
+**#200/#206 branch conflict**: both touch `ConfirmDialog.tsx`. Merged #200 first, then had to locally
+merge `origin/V1.2.0` into the `fix/confirm-dialog-enter-key` branch, resolve a real conflict (kept
+#200's button order, kept #206's new refs on both buttons), push, then merge via `gh pr merge`. If a
+similar same-file overlap comes up again, merge one first and expect to do the same local-merge dance
+for the second rather than assuming GitHub will fast-forward cleanly.
+
+**#205's spec drift**: reviewer-lite's first pass on #205 found the code fix was correct but
+`docs/detailed-spec.md` and `docs/plans/markdown-editing/PLAN.md` still documented the old 20px/28px
+values — a good example of why the review step checks docs, not just code. Both were fixed in a
+follow-up commit before merging.
+
+## 3. Process incident this session — read before touching the dev app or any background process
+
+While debugging why the app "wouldn't launch" for the user's manual real-device test, this session (as
+orchestrator) started `npm run tauri dev` in the background via the Bash tool (`run_in_background`-style
+`&`, redirected to a log file). The user then said **「stop」** mid-investigation. What actually happened:
+only the *current tool call* (an unrelated file-read) was halted — the already-launched background
+`npm`/`cargo`/`tabtreenotemd.exe` process tree kept running untouched. The user caught this a message
+later ("それはもうストップしたはずだ" — "that should already have been stopped") when it turned out the
+app process was still alive.
+
+**The lesson**: "stop" from the user must be read as "stop everything you set in motion," not just "stop
+the tool call in front of you." If you've started a detached/background process (dev server, app
+instance, long-running script) and the user says stop, that process needs to actually be killed (or you
+need to immediately ask "including the background process I started?" if there's any ambiguity) — don't
+just let it keep running silently while you go quiet. This is a sibling lesson to the already-established
+CDP/live-target rules from the prior session ([[feedback_verify_live_target_before_cdp_mutation]]), but
+specifically about **process lifecycle**, not data mutation: a stray running process is itself a form of
+unintended persistent side effect.
+
+In this instance, the user resolved it by restarting/closing the app themselves rather than asking the
+assistant to do it — respect that; don't reflexively re-launch or kill dev-server processes without
+being asked, once a user has taken over managing the app's lifecycle for the session.
+
+## 4. Dev-server startup gotcha: port 1420 conflict from a stray leftover process
+
+Root cause of the original "won't launch" complaint: a bare `npm run dev` (plain Vite, frontend-only,
+**not** `npm run tauri dev`) was left running from an earlier point in the day, bound to
+`[::1]:1420` — Tauri's `tauri.conf.json` `beforeDevCommand` also tries to start Vite on the fixed port
+1420 (required so Tauri's webview knows where to load from), and Vite's own dev server fails outright
+(`Error: Port 1420 is already in use`) instead of finding a free port, which aborts `tauri dev` entirely
+before cargo even starts building — so **no window ever appears**, with no cargo/rustc process at all
+as the visible symptom.
+
+**If "won't launch" recurs**: check `netstat -ano | findstr :1420` (or the PowerShell
+`Get-NetTCPConnection`/`netstat` equivalent) for a stale listener before assuming a code-level bug in the
+Rust/Tauri layer. Kill the stale process, then re-run `npm run tauri dev`.
+
+## 5. Open issues: full list, recommended order
+
+Same list as the prior session's HANDOFF minus the 5 (+1 reopened) closed above. Re-verify scale
+estimates against current code before starting any of these — no new investigation was done on them
+this session.
+
+| # | Title (short) | Scale (from prior session's estimate, unverified since) |
+|---|---|---|
 | 196 | Scroll-position restore (#195-class bug) | Near-zero — fix already merged into `V1.2.0`; just needs live re-verification and closing |
-| 202 | Locked-tab distinguishing label | Small/medium — spec is fully decided, see §6 |
+| 202 | Locked-tab distinguishing label | Small/medium — spec fully decided (see `docs/DECISIONS.md`, "Locked Tab Distinguishing Label") |
 | 203 | Right-click paste doesn't handle images | Small/medium — reuse `saveAndInsertImage`, add `clipboard.read()` |
 | 208 | Preview-only double-click jump-to-start doesn't scroll | Medium — `paneMode` branch + wire `PreviewPane.getContainer()` |
 | 198 | Title bar buttons unreachable at min window size | Medium — likely needs `TitleBarControls` moved out of the scrolling tab-bar container |
-| 190 | TOC `<mark>` tag + live-view decoration overlap | Medium — `<mark>` part is the same pattern already fixed for `<span>`; the decoration-overlap part is unverified, live-testing required |
-| 204 | Whole-line-span-wrapped heading vanishes from TOC | Medium/large — structural (lezer syntax-tree level), not fixable in `tocGenerator.ts` alone |
-| 191 | Self-referential same-memo `#slug` anchor doesn't jump | Medium — uninvestigated, but adjacent to this session's already-deeply-understood anchor-jump logic |
-| 207 | Settings shortcut rebinding doesn't work | Unknown — code reading found no cause; needs live reproduction first (user already confirmed it reproduces) |
-| 199 | UI font-size setting doesn't affect tooltips | Large — structural (native `title` attribute is outside any app CSS reach); may need a custom tooltip component if pursued |
-| 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §5** |
+| 190 | TOC `<mark>` tag + live-view decoration overlap | Medium — `<mark>` part is the same pattern already fixed for `<span>`; decoration-overlap part unverified |
+| 204 | Whole-line-span-wrapped heading vanishes from TOC | Medium/large — structural (lezer syntax-tree level) |
+| 191 | Self-referential same-memo `#slug` anchor doesn't jump | Medium — uninvestigated, adjacent to already-understood anchor-jump logic |
+| 207 | Settings shortcut rebinding doesn't work | Unknown — code reading found no cause; needs live reproduction first |
+| 199 | UI font-size setting doesn't affect tooltips | Large — structural (native `title` attribute outside app CSS reach) |
+| 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §6** |
 
-## 5. Issue #189: split into #209–212, branching/order decision
+## 6. Issue #189: split into #209–212, branching/order decision (unchanged from prior session)
 
-`docs/plans/persistence-fs/PLAN.md` §5 already designed this; the backend watcher/conflict logic is
-already implemented and unit-tested, just never wired to any lifecycle trigger. Split (as GitHub
-sub-issues of #189, confirmed linked via the sub-issues API) and decided this session:
+`docs/plans/persistence-fs/PLAN.md` §5 already designed this; backend watcher/conflict logic is already
+implemented and unit-tested, just never wired to any lifecycle trigger.
 
-- **#209** — watcher lifecycle for plain (unlocked) tabs (start: app boot / new tab; stop: tab delete).
-  No dependency.
-- **#210** — watcher lifecycle for locked tabs, session-scoped (start: `tab_unlock`; stop: any of the 3
-  existing session-teardown paths). Depends on #209's mechanism.
-- **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit
-  `evt:fs:external-change`/`evt:editor:conflict`. Practically depends on #209 to have anything to test.
-- **#212** — verify/implement the frontend's handling of those events (may already be a working stub,
-  unconfirmed). Depends on #211 actually emitting real events.
+- **#209** — watcher lifecycle for plain (unlocked) tabs. No dependency.
+- **#210** — watcher lifecycle for locked tabs, session-scoped. Depends on #209's mechanism.
+- **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit events.
+  Practically depends on #209.
+- **#212** — verify/implement the frontend's handling of those events. Depends on #211.
 
-**Recommended order**: #209 → #211 → #212 → #210 — get the full plain-tab pipeline working end-to-end
-first (fastest path to real, testable value), extend to locked tabs last.
-
-**Branching**: each of the four gets its **own** `fix/<slug>` branch + PR (not one combined
-`feature/...` branch) — decided to keep "one issue = one branch = one PR" consistent everywhere now
-that PRs are used uniformly (§3), rather than special-casing this set. Recorded on #189 itself.
-
-## 6. Issue #202: locked-tab label spec, finalized
-
-Full decision history is on the issue's comment thread and now also in `docs/DECISIONS.md` ("Locked Tab
-Distinguishing Label: User-Settable, Editable Anytime via Context Menu", 2026-08-22, commit `c72859a`).
-Short version: an **auto-sequential "LockTabA/B/C..." scheme was proposed, fully speced (including
-letter-reuse-after-delete and post-"Z" overflow rules), then explicitly rejected** — the user found
-permanently-skipped letters (never reused, to avoid future ambiguity) visually/conceptually unpleasant.
-**Final**: a new tab right-click context-menu item opens a `PromptDialog` (reusing the exact pattern
-`TabBar.tsx` already uses 3× for lock/unlock/permanent-unlock) to set/change a free-text label at any
-time, not just at lock time — stored as a new persisted field keyed to the tab's internal `id` (e.g.
-`AppSettings.tabs[i].lockLabel: string | null`), falling back to the existing bare 🔒 until set. Also
-flagged (separately, not part of #202's scope): if a tab's root folder is renamed externally via
-Explorer, `folderPath` appears to go stale with no re-link mechanism in `tab.rs` — a general,
-pre-existing gap, not yet filed as its own issue.
-
-## 7. QA data changes made this session
-
-- `src-tauri/target/debug/data/settings.json`: **5 locked tabs with unknown passphrases were deleted**
-  (registration removed + folder deleted from disk) at the user's explicit instruction, after
-  confirming (a) they were all under the gitignored QA data path, not real content, and (b) the app's
-  own `tab_remove` command refuses to remove a locked tab with no active session, so there was no
-  in-app path to clean these up otherwise: `ImportReviewTest`, `MemoryTestB`, `LVMemoryTestX1`,
-  `AutoRelockTest`, `CDPTestSrc`. **Remaining locked QA tabs**: `CDPTestLock` and `CDPTestDst-日本語`
-  (passphrase `1111` for both, per earlier sessions) — left alone, not part of this deletion.
-- **The running dev app was NOT restarted after this edit.** Its in-memory tab list still includes the
-  5 deleted entries; if it writes `settings.json` again before a restart (e.g. any unrelated settings
-  patch), it could resurrect them. Restart the app before relying on the deletion having stuck, if this
-  matters for whatever the next session does.
+**Recommended order**: #209 → #211 → #212 → #210. **Branching**: each gets its own `fix/<slug>` branch
++ PR (one issue = one branch = one PR), same as every other issue this session.
