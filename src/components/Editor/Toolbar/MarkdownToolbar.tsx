@@ -57,8 +57,8 @@ const COLOR_SWATCHES: { labelKey: TranslationKey; hex: string }[] = [
 /** Toolbar's Font-size button — closed 3-choice enum, same treatment as `COLOR_SWATCHES`. */
 const FONT_SIZE_CHOICES: { labelKey: TranslationKey; px: string }[] = [
   { labelKey: "markdownToolbar.fontSizeSmall", px: "12px" },
-  { labelKey: "markdownToolbar.fontSizeLarge", px: "20px" },
-  { labelKey: "markdownToolbar.fontSizeExtraLarge", px: "28px" },
+  { labelKey: "markdownToolbar.fontSizeLarge", px: "24px" },
+  { labelKey: "markdownToolbar.fontSizeExtraLarge", px: "36px" },
 ];
 
 /** Pane-mode header button's current-state label (`docs/plans/markdown/markdown-preview/PLAN.md`
