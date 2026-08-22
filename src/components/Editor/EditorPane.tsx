@@ -172,7 +172,21 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const viewRef = useRef<EditorView | null>(null);
   // `docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §4.2/§4.3 — lets this component call
   // `PreviewPane`'s readiness gate/container accessor for a `preview`-pane-mode `#slug` anchor jump.
-  const previewRef = useRef<PreviewPaneHandle>(null);
+  const previewRef = useRef<PreviewPaneHandle | null>(null);
+  // `<PreviewPane ref={...}>`が実際に(再)マウントされるたびに、下の`setPreviewRef`がこれをbumpする
+  // — 下の「プレビュー側アンカー/スクロール消費用の遅延effect」の依存配列に追加してあり、
+  // `previewRef.current`が実際に入った時点でそのeffectがもう一度走る機会を得られるようにしている。
+  // これがないと、そのセッションで一度も`PreviewPane`を描画していないタブへのクロスタブジャンプ
+  // (遷移先タブの`PreviewPane`が初めてマウントされるケース)では、そのeffectの唯一の実行タイミングで
+  // `previewRef.current`がまだ`null`のままになり(`[paneMode, memoKey]`はrefのマウント完了だけでは
+  // 変化しない)、`pendingPreviewAnchorRef`/`pendingPreviewScrollRef`が永遠にキューされたままになって
+  // しまう — 実機クリックで再現した「そのセッションで遷移先タブを既に開いていれば動くが、未開封だと
+  // ジャンプしない」という不具合そのものだった。
+  const [previewMountTick, setPreviewMountTick] = useState(0);
+  const setPreviewRef = useCallback((handle: PreviewPaneHandle | null) => {
+    previewRef.current = handle;
+    if (handle) setPreviewMountTick((n) => n + 1);
+  }, []);
   // Bumped after view (re)creation and on every CodeMirror update (doc change or cursor/selection
   // move), so the status bar's char/line/cursor-position derived state stays live. Also reused,
   // unmodified, as `PreviewPane.tsx`'s own re-render trigger (`docs/plans/markdown/markdown-
@@ -622,6 +636,17 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     loadedMemoNameRef.current = memoName;
     loadedOverrideRef.current = memoEditorOverride;
 
+    // 今回のロードで`#slug`アンカージャンプが必要かどうか(`docs/plans/v1.2.0/cross-tab-anchor-links/
+    // PLAN.md` §3) — 下の`EditorState.selection`の初期化より前に判定する。これにより、今回アンカー
+    // ジャンプが予約されている場合は保存済みカーソル/選択範囲の復元をスキップできる。トークンの消費も
+    // ここで行う(アンカーディスパッチ側ではなく) — 「今回のロードでジャンプが要求されたか」を判定
+    // する場所を一箇所に統一するため。
+    let anchorSlugForThisLoad: string | null = null;
+    if (pendingAnchorTokenRef.current !== consumedAnchorTokenRef.current) {
+      consumedAnchorTokenRef.current = pendingAnchorTokenRef.current;
+      anchorSlugForThisLoad = pendingAnchorSlugRef.current;
+    }
+
     // A fresh load always starts at the *governed* view mode (per-memo override falling back to
     // the global default) — any prior session's runtime toggle never carries over to a newly
     // opened memo (`docs/plans/markdown-editing/PLAN.md` §3). Computed directly from
@@ -629,17 +654,24 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // `liveViewOverride` left over from the memo just switched away from.
     const initialLiveView = resolvedViewMode === "live";
 
-    // Restored cursor/selection (GitHub issue #28) — set at state-creation time (not a later
-    // dispatch, unlike scroll position below which needs the view's first layout/measure pass)
-    // since an initial `EditorState.selection` avoids an extra transaction/history entry.
-    // Clamped to the just-loaded document's length in case the file was edited externally between
-    // saves and the persisted offsets are now stale/out of range.
+    // カーソル/選択範囲の復元(GitHub issue #28) — 状態生成時に設定する(下のスクロール位置のように
+    // ビューの初回レイアウト計測を待って後からディスパッチするのではない)。初期`EditorState.selection`
+    // として渡すことで、余分なトランザクション/履歴エントリを避けられる。保存後にファイルが外部で
+    // 編集され、保存済みオフセットが範囲外になっている場合に備えて、読み込んだ文書長でクランプする。
+    // 今回のロードでアンカージャンプが予約されている場合はこの復元を丸ごとスキップする(下の
+    // `savedScrollLine`に既に適用されている「明示的なナビゲーション先が、直前の閲覧位置に優先する」
+    // というルール#197と同じ考え方 — ここが唯一未対応だった箇所: 従来は保存済みカーソル位置を
+    // 無条件にここで適用していたため、この後のアンカージャンプ側のディスパッチが何らかの理由で発火
+    // しなかった場合、「ジャンプしていない」ことが「間違った場所にジャンプした」ように見えてしまい、
+    // 不具合を覆い隠していた)。
     const docLength = ed.content.text.length;
     const clamp = (value: number) => Math.min(Math.max(value, 0), docLength);
     const savedAnchor = ed.content.cursorAnchor;
     const savedHead = ed.content.cursorHead;
     const initialSelection =
-      savedAnchor != null && savedHead != null ? EditorSelection.single(clamp(savedAnchor), clamp(savedHead)) : undefined;
+      anchorSlugForThisLoad == null && savedAnchor != null && savedHead != null
+        ? EditorSelection.single(clamp(savedAnchor), clamp(savedHead))
+        : undefined;
 
     const state = EditorState.create({
       doc: ed.content.text,
@@ -710,46 +742,78 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // directly above. Deliberately gated on its OWN token (not `focusEditorTokenRef`'s), so an
     // ordinary tree-row-click/arrow-nav open occurring later never replays a stale anchor.
     let anchorTimeout = 0;
-    if (pendingAnchorTokenRef.current !== consumedAnchorTokenRef.current) {
-      consumedAnchorTokenRef.current = pendingAnchorTokenRef.current;
-      const anchorSlug = pendingAnchorSlugRef.current;
-      if (anchorSlug) {
-        // Split by this memo's own GOVERNED pane-mode (`PLAN.md` §4: `MemoEditorSettings.paneMode ??
-        // AppSettings.editorDefaults.paneMode`) — `edit`/`split` reuse the existing CodeMirror-based
-        // `resolveAndScrollToHeadingAnchor` (§4.1: works for `split` too, since `PreviewPane`'s own
-        // scroll-sync listener follows the CodeMirror `scroll` event this produces as a side effect,
-        // no preview-specific code needed). `preview` acts on the preview DOM directly instead (§4.2:
-        // a zero-height `scrollDOM` can't compute a meaningful scroll offset there) — deferred via
-        // `pendingPreviewAnchorRef` below rather than reading `previewRef.current` here, because it
-        // may not be mounted for this memo yet on this exact render (see that ref's own comment).
-        if (resolvedPaneMode === "preview") {
-          pendingPreviewAnchorRef.current = memoKey ? { memoKey, slug: anchorSlug } : null;
-        } else {
-          // Deferred to a macrotask (GitHub issue #195): `view` was just constructed above in this
-          // same synchronous tick, so CodeMirror hasn't finished its own initial layout/measure pass
-          // yet — an immediate call here dispatches `resolveAndScrollToHeadingAnchor`'s
-          // `EditorView.scrollIntoView` effect before that pass completes, so the selection lands
-          // correctly but the viewport never actually scrolls. `requestAnimationFrame` was tried
-          // first (mirroring the `savedScrollLine` restore's own rAF deferral just below) but proved
-          // unreliable here: verified via live reproduction (CDP-driven) that CodeMirror's own
-          // initial-mount measure/flush cycle is *itself* scheduled through `requestAnimationFrame`,
-          // so an app-level rAF callback races it — sometimes running before that internal cycle has
-          // completed (silently producing a wrong, "stuck" viewport with no further re-measure ever
-          // triggered), and via `view.requestMeasure`'s `write` phase it throws outright ("Calls to
-          // EditorView.update are not allowed while an update is in progress"), since CM disallows a
-          // nested `dispatch()` while its own update is in progress. A macrotask via `setTimeout`
-          // reliably runs only after the browser has fully finished the current animation-frame's
-          // rAF callbacks + style/layout/paint (and thus after CodeMirror's own internal cycle),
-          // confirmed reliable across repeated live reproductions of the exact GitHub issue #195
-          // repro steps.
-          anchorTimeout = window.setTimeout(() => resolveAndScrollToHeadingAnchor(view, anchorSlug), 0);
-        }
+    // 今回のeffectで実際にアンカージャンプが実行されるかどうか(下のどちらかの分岐) — 数行下の
+    // `savedScrollLine`復元をゲートし、アンカージャンプと同時/直後に発火して古い保存位置で上書き
+    // されないようにする(issue #197: 以前はそれぞれ独立に`setTimeout(...,0)`で予約されており、
+    // `scrollRestoreTimeout`はこのeffect内で`anchorTimeout`より後に宣言されているため常に後から
+    // 実行されて静かに勝ってしまい、クリックした見出しではなくこのメモが最後にいた場所へスクロール
+    // していた)。トークンの消費は既に上(初期選択範囲の計算)で行っているため、ここではその判定結果を
+    // 再利用するだけで、二重に判定し直すことはしない。
+    const anchorJumpPending = anchorSlugForThisLoad != null;
+    if (anchorSlugForThisLoad != null) {
+      const anchorSlug = anchorSlugForThisLoad;
+      // Split by this memo's own GOVERNED pane-mode (`PLAN.md` §4: `MemoEditorSettings.paneMode ??
+      // AppSettings.editorDefaults.paneMode`) — `edit`/`split` reuse the existing CodeMirror-based
+      // `resolveAndScrollToHeadingAnchor` (§4.1: works for `split` too, since `PreviewPane`'s own
+      // scroll-sync listener follows the CodeMirror `scroll` event this produces as a side effect,
+      // no preview-specific code needed). `preview` acts on the preview DOM directly instead (§4.2:
+      // a zero-height `scrollDOM` can't compute a meaningful scroll offset there) — deferred via
+      // `pendingPreviewAnchorRef` below rather than reading `previewRef.current` here, because it
+      // may not be mounted for this memo yet on this exact render (see that ref's own comment).
+      //
+      // 単純に`resolvedPaneMode`だけでは判定できない — 実際に画面に表示されるモードが、素の
+      // governed値と異なるケースが2つある:
+      // 1. `previewLocked`(`memoEditorOverride?.previewLocked`、GitHub issue #149)は、
+      //    `resolvedPaneMode`が何であれ、表示されるペインを強制的に`"preview"`にする —
+      //    このコンポーネント自身の実効モード変数`paneMode`(先頭で
+      //    `previewLocked ? "preview" : (paneModeOverride ?? resolvedPaneMode)`として計算)は
+      //    既にこれを考慮しているが、`resolvedPaneMode`単体では考慮していない。これを見落として
+      //    いたため、governed値が`"split"`や`"edit"`でもプレビュー固定(previewLocked)されている
+      //    メモは下のCodeMirror側の分岐に入り、`display:none`のコンテナへディスパッチしてしまって
+      //    いた — 実機で再現: 両方のメモをツールバーでプレビュー固定している間、ジャンプが静かに
+      //    何も起こさなかった。
+      // 2. 同じ明示的ナビゲーションのオープンは上で`focusEditorToken`もbumpさせ、この直前の
+      //    ブロックで`revealSplitIfPreviewOnly()`を呼び出す — その中の
+      //    `setPaneModeOverride("split")`は次のレンダーまで反映されない(このeffect内のstate
+      //    セッターは、このレンダーのクロージャが既に取得済みの値を遡って変えられない)。そのため、
+      //    governedが`"preview"`でロックされていないメモが自動的に`"split"`へ復帰(reveal)される
+      //    直前でも、ここではまだ`"preview"`として読まれ、下のプレビューDOM側の分岐に入って
+      //    しまう — 実際には1レンダー後に画面上は`"split"`になり、ジャンプを一度も受け取れない
+      //    生きたCodeMirrorペインが表示されているにもかかわらず。
+      // `revealSplitIfPreviewOnly`と、レンダー時の`paneMode`計算式、両方の判定をここで先読みする
+      // ことで、そのレンダーを待たずに実際の(effect後の)表示モードを予測する。
+      const effectivePaneModeForAnchor = previewLocked ? "preview" : resolvedPaneMode === "preview" ? "split" : resolvedPaneMode;
+      if (effectivePaneModeForAnchor === "preview") {
+        pendingPreviewAnchorRef.current = memoKey ? { memoKey, slug: anchorSlug } : null;
+      } else {
+        // Deferred to a macrotask (GitHub issue #195): `view` was just constructed above in this
+        // same synchronous tick, so CodeMirror hasn't finished its own initial layout/measure pass
+        // yet — an immediate call here dispatches `resolveAndScrollToHeadingAnchor`'s
+        // `EditorView.scrollIntoView` effect before that pass completes, so the selection lands
+        // correctly but the viewport never actually scrolls. `requestAnimationFrame` was tried
+        // first (mirroring the `savedScrollLine` restore's own rAF deferral just below) but proved
+        // unreliable here: verified via live reproduction (CDP-driven) that CodeMirror's own
+        // initial-mount measure/flush cycle is *itself* scheduled through `requestAnimationFrame`,
+        // so an app-level rAF callback races it — sometimes running before that internal cycle has
+        // completed (silently producing a wrong, "stuck" viewport with no further re-measure ever
+        // triggered), and via `view.requestMeasure`'s `write` phase it throws outright ("Calls to
+        // EditorView.update are not allowed while an update is in progress"), since CM disallows a
+        // nested `dispatch()` while its own update is in progress. A macrotask via `setTimeout`
+        // reliably runs only after the browser has fully finished the current animation-frame's
+        // rAF callbacks + style/layout/paint (and thus after CodeMirror's own internal cycle),
+        // confirmed reliable across repeated live reproductions of the exact GitHub issue #195
+        // repro steps.
+        anchorTimeout = window.setTimeout(() => resolveAndScrollToHeadingAnchor(view, anchorSlug), 0);
       }
     }
 
     const savedScrollLine = ed.content.scrollPosition;
     let scrollRestoreTimeout = 0;
-    if (savedScrollLine && resolvedPaneMode === "preview") {
+    if (anchorJumpPending) {
+      // Skip entirely (issue #197) — an explicit cross-tab anchor-link navigation to a specific
+      // heading always wins over restoring this memo's last-viewed scroll position.
+      pendingPreviewScrollRef.current = null;
+    } else if (savedScrollLine && resolvedPaneMode === "preview") {
       // `paneMode === "preview"` (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §3/§4): deferred
       // until `<PreviewPane ref={previewRef}>` actually mounts/renders for this memo -- same timing
       // gap as the `#slug` anchor-jump case above (this effect may run before that reset/reveal has
@@ -798,10 +862,24 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §3/§4) — the view-(re)creation effect above may
   // run before `<PreviewPane ref={previewRef}>` is actually mounted for this memo —
   // `paneModeOverride`'s own reset (also queued in that same effect) hasn't re-rendered yet.
-  // Re-checked on every `paneMode`/`memoKey` change until `previewRef.current` exists AND still
-  // belongs to a pending target memo (a pending entry for an abandoned memo is simply left inert —
-  // a later navigation either overwrites it with its own target before this ever matches, or never
-  // matches at all, matching this app's silent-no-op-on-edge-case convention). `paneMode === "edit"`
+  // `paneMode`/`memoKey`の変化、`previewMountTick`(`setPreviewRef`が`<PreviewPane>`の実際の
+  // マウント時にbumpする — そのセッションでそのタブの`PreviewPane`が初めてマウントされる時に効く。
+  // このeffectが最初に走る時点で既に`paneMode`/`memoKey`は最終値になっているため、`previewMountTick`
+  // がないと`previewRef.current`を見るチャンスが一度しかない)、そして`ed.loadGeneration`の変化、
+  // それぞれで再チェックする。最後の`ed.loadGeneration`こそが、クロスタブジャンプにとって本質的に
+  // 重要なもの: `memoKey`は`focusOnMemo`が遷移先メモを選んだ瞬間(同期的なツリー状態の更新)に変わる
+  // が、実際に`pendingPreviewAnchorRef`をセットする上の`[ed.loadGeneration]`effectは、`editorLoad`の
+  // 非同期IPC呼び出しが解決した後にしか走らない。ここに`ed.loadGeneration`がないと、このeffectの
+  // (`memoKey`変化による)唯一の実行タイミングが早すぎて何もまだ予約されておらず、その後コンテンツが
+  // 読み込み終わって`paneMode`/`memoKey`/`previewMountTick`のどれも変化しないままだと、後から実際に
+  // 入った`pendingPreviewAnchorRef`を読みに行く実行機会がもう残っていない — 実機で再現: 既に
+  // `preview`表示になっているタブ(例えばリンク元メモ自体がgoverned `preview`で、クリック前から
+  // `<PreviewPane>`が既にマウント済みだったケース、つまり`previewMountTick`が対処するマウント
+  // タイミングの隙間ではない場合)へのクロスタブジャンプが、静かに一度もジャンプしなかった。
+  // Runs until `previewRef.current` exists AND still belongs to a pending target memo (a pending
+  // entry for an abandoned memo is simply left inert — a later navigation either overwrites it with
+  // its own target before this ever matches, or never matches at all, matching this app's
+  // silent-no-op-on-edge-case convention). `paneMode === "edit"`
   // means `PreviewPane` never mounts for this memo at all (governed mode was, and stayed, `edit` —
   // should not happen when either deferred entry was set for `resolvedPaneMode === "preview"`, but
   // guarded defensively). The anchor jump wins over a same-open scroll-position restore when both
@@ -834,7 +912,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         if (container) scrollPreviewToLine(container, pendingScroll.line - 1);
       });
     }
-  }, [paneMode, memoKey]);
+  }, [paneMode, memoKey, previewMountTick, ed.loadGeneration]);
 
   // Reconfigure (not recreate) on settings / read-only / whitespace changes.
   useEffect(() => {
@@ -1106,7 +1184,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         />
         {paneMode !== "edit" && (
           <PreviewPane
-            ref={previewRef}
+            ref={setPreviewRef}
             getView={() => viewRef.current}
             renderTick={renderTick}
             debounceMs={appSettings?.preview.debounceMs ?? FALLBACK_PREVIEW_DEBOUNCE_MS}
