@@ -233,7 +233,7 @@ mod tests {
     }
 
     fn tab_entry(id: &str, name: &str, folder: &Path, locked: bool) -> TabSettingsEntry {
-        TabSettingsEntry { id: id.to_string(), name: name.to_string(), folder_path: folder.to_string_lossy().into_owned(), locked: Some(locked) }
+        TabSettingsEntry { id: id.to_string(), name: name.to_string(), folder_path: folder.to_string_lossy().into_owned(), locked: Some(locked), lock_label: None }
     }
 
     fn settings_with(tabs: Vec<TabSettingsEntry>) -> AppSettings {

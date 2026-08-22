@@ -375,6 +375,7 @@ pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Op
         return AppResult::err_code(ErrorCode::TabLocked, "tab is already locked");
     }
     let tab_name = entry.name.clone();
+    let lock_label = entry.lock_label.clone();
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
@@ -485,6 +486,7 @@ pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Op
         id: tab_id,
         name: LOCKED_PLACEHOLDER_NAME.to_string(),
         locked: true,
+        lock_label,
     })
 }
 
@@ -590,6 +592,7 @@ pub async fn tab_unlock(app: AppHandle, tab_id: String, password: String) -> App
     let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
         return AppResult::err_code(ErrorCode::NotFound, "tab not found");
     };
+    let lock_label = entry.lock_label.clone();
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
@@ -642,6 +645,7 @@ pub async fn tab_unlock(app: AppHandle, tab_id: String, password: String) -> App
         id: tab_id,
         name: payload.real_tab_name,
         locked: true,
+        lock_label,
     })
 }
 
@@ -751,6 +755,7 @@ pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Opti
     let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
         return AppResult::err_code(ErrorCode::NotFound, "tab not found");
     };
+    let lock_label = entry.lock_label.clone();
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
@@ -852,6 +857,7 @@ pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Opti
         id: tab_id,
         name: payload.real_tab_name,
         locked: false,
+        lock_label,
     })
 }
 
@@ -946,6 +952,7 @@ pub async fn tab_lock_recovery_finish(app: AppHandle, tab_id: String, password: 
         return AppResult::err_code(ErrorCode::NotFound, "tab not found");
     };
     let tab_name = entry.name.clone();
+    let lock_label = entry.lock_label.clone();
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
@@ -1010,6 +1017,7 @@ pub async fn tab_lock_recovery_finish(app: AppHandle, tab_id: String, password: 
         id: tab_id,
         name: LOCKED_PLACEHOLDER_NAME.to_string(),
         locked: true,
+        lock_label,
     })
 }
 
@@ -1027,6 +1035,7 @@ pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password:
         return AppResult::err_code(ErrorCode::NotFound, "tab not found");
     };
     let tab_name = entry.name.clone();
+    let lock_label = entry.lock_label.clone();
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
@@ -1107,6 +1116,7 @@ pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password:
         id: tab_id,
         name: tab_name,
         locked: false,
+        lock_label,
     })
 }
 
@@ -1215,6 +1225,7 @@ pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String
         return AppResult::err_code(ErrorCode::NotFound, "tab not found");
     };
     let current_name = entry.name.clone();
+    let lock_label = entry.lock_label.clone();
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
@@ -1285,6 +1296,7 @@ pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String
         id: tab_id,
         name: real_tab_name.unwrap_or(current_name),
         locked: false,
+        lock_label,
     })
 }
 
@@ -1305,6 +1317,7 @@ pub async fn tab_permanent_unlock_recovery_restore(app: AppHandle, tab_id: Strin
         return AppResult::err_code(ErrorCode::NotFound, "tab not found");
     };
     let current_name = entry.name.clone();
+    let lock_label = entry.lock_label.clone();
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
@@ -1362,6 +1375,7 @@ pub async fn tab_permanent_unlock_recovery_restore(app: AppHandle, tab_id: Strin
         id: tab_id,
         name: current_name,
         locked: true,
+        lock_label,
     })
 }
 

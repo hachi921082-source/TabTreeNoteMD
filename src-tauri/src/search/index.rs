@@ -442,12 +442,14 @@ mod tests {
             name: "Open".to_string(),
             folder_path: unlocked_dir.to_string_lossy().into_owned(),
             locked: Some(false),
+            lock_label: None,
         });
         settings.tabs.push(crate::model::app_settings::TabSettingsEntry {
             id: "locked-tab".to_string(),
             name: "\u{1F512}".to_string(),
             folder_path: locked_dir.to_string_lossy().into_owned(),
             locked: Some(true),
+            lock_label: None,
         });
 
         let index = SearchIndex::new();
@@ -484,6 +486,7 @@ mod tests {
             name: "Fav".to_string(),
             folder_path: dir.to_string_lossy().into_owned(),
             locked: Some(false),
+            lock_label: None,
         });
 
         let index = SearchIndex::new();

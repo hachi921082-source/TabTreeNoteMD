@@ -314,6 +314,7 @@ mod tests {
             name: name.to_string(),
             folder_path: String::new(),
             locked: Some(locked),
+            lock_label: None,
         });
         settings
     }
@@ -406,7 +407,7 @@ mod tests {
         let entries = vec![entry("tab-2", "Zeta", false), entry("tab-1", "Alpha", false)];
         let settings = {
             let mut s = settings_with_tab("tab-1", "Work1", false);
-            s.tabs.push(crate::model::app_settings::TabSettingsEntry { id: "tab-2".to_string(), name: "Work2".to_string(), folder_path: String::new(), locked: Some(false) });
+            s.tabs.push(crate::model::app_settings::TabSettingsEntry { id: "tab-2".to_string(), name: "Work2".to_string(), folder_path: String::new(), locked: Some(false), lock_label: None });
             s
         };
         let tab_view = TabViewStore::new();
