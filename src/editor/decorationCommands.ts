@@ -185,28 +185,13 @@ export function linkCommand(view: EditorView, defaultLabel: string): boolean {
 // existing span overlapping the selection has `prop` merged into its own `style` instead of being
 // re-wrapped; only text outside every overlapping span gets a fresh `<span>`.
 //
-// Heading-marker exclusion (GitHub issue #204): if a plain (not-yet-wrapped) range being wrapped
-// contains a line's leading ATX `#`..`######` marker (+ the whitespace right after it) at that
-// line's own start, the marker is cut out of the wrapped range and left as raw text instead —
-// otherwise `<span style="...">## Heading</span>` (marker inside the tag) makes `@lezer/markdown`
-// stop parsing the line as `ATXHeadingN` entirely, silently dropping it from the TOC
-// (`tocGenerator.ts`'s `scanHeadings` walks the syntax tree, not a line regex). A range containing
-// such a marker is instead emitted as `<span>...</span>` for the text before the marker (if any,
-// e.g. a preceding line in a multi-line selection), the raw marker itself, then a fresh
-// `<span>...</span>` for the remainder — `## <span style="...">Heading</span>` — which keeps the
-// line parseable. A selection that doesn't include a marker (e.g. one starting after it, or a
-// non-heading line) produces byte-identical output to the pre-fix single-`<span>` wrap.
+// Heading-marker exclusion (issue #204): a wrapped range's leading ATX `#` marker is cut out and left raw, since wrapping it stops `@lezer/markdown` parsing the line as a heading (dropping it from the TOC).
 // ---------------------------------------------------------------------------
 
-/** ATX heading marker (`#` through `######` + the whitespace right after) — same shape
- * `headingCommand` above already matches, kept as its own regex here since this one only ever
- * needs the match length, never the capture group. */
+/** ATX heading marker (`#` through `######` + trailing whitespace) — same shape as `headingCommand` above. */
 const HEADING_MARKER_RE = /^#{1,6}\s+/;
 
-/** Every line-start ATX heading-marker range that falls inside `[from, to)`, clipped to that range
- * so a selection beginning mid-marker only excludes the portion actually selected. Empty if no line
- * in range starts with a marker — the common (non-heading) case, letting callers fast-path back to
- * the plain single-`<span>` wrap with zero behavior change. */
+/** Line-start ATX heading-marker ranges inside `[from, to)`, clipped to that range; empty if no line in range starts with a marker. */
 function headingMarkerExclusions(state: EditorState, from: number, to: number): { from: number; to: number }[] {
   const exclusions: { from: number; to: number }[] = [];
   if (from >= to) return exclusions;
@@ -217,11 +202,7 @@ function headingMarkerExclusions(state: EditorState, from: number, to: number): 
     const match = HEADING_MARKER_RE.exec(line.text);
     if (!match) continue;
     const markerEnd = line.from + match[0].length;
-    // If this heading isn't the first line touched by the wrap, also absorb the newline right
-    // before it into the exclusion — otherwise the preceding plain `<span>`'s closing tag would
-    // land at the very start of this line (right before the marker), which breaks ATX parsing just
-    // as badly as wrapping the marker itself would (a selection spanning a prior line into a
-    // heading line, not just a whole-heading-line selection).
+    // Also absorb the newline before a non-first heading line, or the preceding span's close tag would land right before the marker and break parsing the same way.
     const exFrom = Math.max(line.from > from ? line.from - 1 : line.from, from);
     const exTo = Math.min(markerEnd, to);
     if (exFrom < exTo) exclusions.push({ from: exFrom, to: exTo });
@@ -229,10 +210,7 @@ function headingMarkerExclusions(state: EditorState, from: number, to: number): 
   return exclusions;
 }
 
-/** Wraps `[from, to)` of `state`'s document in `<span style="${styleDecl}">...</span>`, splitting
- * around any `headingMarkerExclusions` so those marker characters land outside every `<span>` tag
- * instead of inside one. Falls back to a single `<span>` covering the whole range verbatim when
- * there's nothing to exclude. */
+/** Wraps `[from, to)` in `<span style="${styleDecl}">...</span>`, splitting around any `headingMarkerExclusions` so markers stay raw. */
 function wrapPlainRange(state: EditorState, from: number, to: number, styleDecl: string): string {
   const exclusions = headingMarkerExclusions(state, from, to);
   if (exclusions.length === 0) {
