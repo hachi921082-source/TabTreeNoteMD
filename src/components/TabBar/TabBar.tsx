@@ -90,6 +90,11 @@ export interface TabBarProps {
 
 type PendingDialog =
   | { kind: "rename"; tab: TabInfo }
+  /** GitHub issue #202 — sets/clears the distinguishing label shown for a locked tab in place of
+   * the bare 🔒 glyph (`docs/spec.v1.2.0.md` §10). Shown unconditionally (not gated on
+   * `tab.locked`) since the underlying `lockLabel` field is harmless to set on an unlocked tab
+   * too, per `docs/detailed-spec.v1.2.0.md` §10.2. */
+  | { kind: "setLockLabel"; tab: TabInfo }
   | { kind: "remove"; tab: TabInfo }
   | { kind: "duplicateName"; path: string; suggestedName: string }
   | { kind: "createNew"; suggestedName?: string }
@@ -134,6 +139,7 @@ export function TabBar({
     createNewTab,
     retryCreateWithName,
     renameTab,
+    setTabLockLabel,
     reorderTabs,
     removeTab,
     openTabLocation,
@@ -350,7 +356,12 @@ export function TabBar({
           // (`docs/DECISIONS.md` "Tab-Lock Placeholder Display Name", `tab-lock/PLAN.md` §3
           // `tab_unlock` step 7).
           const sessionRealName = tabLockState.activeSessionRealNames.get(tab.id);
-          const displayName = sessionRealName ?? tab.name;
+          // GitHub issue #202 — a locked tab with no active session shows its user-set
+          // `lockLabel` (if any) instead of the bare 🔒 glyph cached as `tab.name`, so multiple
+          // locked tabs stay distinguishable without ever revealing the real (encrypted) name.
+          // An unlocked tab, or a locked tab with an active session (`sessionRealName` above),
+          // ignores `lockLabel` entirely.
+          const displayName = sessionRealName ?? (tab.locked && tab.lockLabel ? `🔒 ${tab.lockLabel}` : tab.name);
           return (
             <div
               key={tab.id}
@@ -473,6 +484,7 @@ export function TabBar({
           onClose={() => setContextMenu(null)}
           items={[
             { label: t("common.rename"), disabled: contextTab.locked, onSelect: () => setPendingDialog({ kind: "rename", tab: contextTab }) },
+            { label: t("tabBar.setLockLabel"), onSelect: () => setPendingDialog({ kind: "setLockLabel", tab: contextTab }) },
             { label: t("tabBar.openLocation"), onSelect: () => void openTabLocation(contextTab.id) },
             contextTab.locked
               ? {
@@ -511,6 +523,20 @@ export function TabBar({
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await renameTab(pendingDialog.tab.id, value);
+            if (result.ok) setPendingDialog(null);
+          }}
+        />
+      )}
+
+      {pendingDialog?.kind === "setLockLabel" && (
+        <PromptDialog
+          title={t("tabBar.setLockLabelTitle")}
+          label={t("tabBar.setLockLabelLabel")}
+          initialValue={pendingDialog.tab.lockLabel ?? ""}
+          onCancel={() => setPendingDialog(null)}
+          onSubmit={async (value) => {
+            const trimmed = value.trim();
+            const result = await setTabLockLabel(pendingDialog.tab.id, trimmed === "" ? null : trimmed);
             if (result.ok) setPendingDialog(null);
           }}
         />

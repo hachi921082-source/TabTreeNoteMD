@@ -36,6 +36,9 @@ pub struct TabInfo {
     pub id: String,
     pub name: String,
     pub locked: bool,
+    /// User-set distinguishing label for a locked tab (`docs/spec.v1.2.0.md` §10); `None` when
+    /// unset, in which case the frontend falls back to the bare 🔒 glyph as before.
+    pub lock_label: Option<String>,
 }
 
 impl From<&TabSettingsEntry> for TabInfo {
@@ -44,6 +47,7 @@ impl From<&TabSettingsEntry> for TabInfo {
             id: entry.id.clone(),
             name: entry.name.clone(),
             locked: entry.locked.unwrap_or(false),
+            lock_label: entry.lock_label.clone(),
         }
     }
 }
@@ -253,6 +257,7 @@ fn register_tab_at_path(
             name: final_name,
             folder_path: folder_path.clone(),
             locked: Some(already_locked),
+            lock_label: None,
         });
         Ok(())
     });
@@ -264,7 +269,7 @@ fn register_tab_at_path(
             // rather than threaded out of the closure directly (`AppSettingsStore::modify`'s
             // closure return type is a plain `Result<(), E>`).
             let name = settings.tabs.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or(proposed_name);
-            Ok(TabInfo { id, name, locked: already_locked })
+            Ok(TabInfo { id, name, locked: already_locked, lock_label: None })
         }
         Ok(Err(payload)) => Err(payload),
         Err(io_err) => {
@@ -347,6 +352,45 @@ pub fn tab_rename(
         Err(io_err) => {
             tracing::error!(error = %io_err, "tab_rename: failed to persist rename");
             AppResult::err_code(ErrorCode::Unknown, "failed to rename tab")
+        }
+    }
+}
+
+/// Sets or clears (`label: None`) the distinguishing label shown for a locked tab in place of the
+/// bare 🔒 glyph (`docs/spec.v1.2.0.md` §10, `docs/detailed-spec.v1.2.0.md` §10.2). Unlike
+/// `tab_rename` above, this deliberately does NOT reject on `locked`/session state — `lockLabel`
+/// is a separate plaintext field, readable and writable regardless of whether the tab is
+/// unlocked, locked-with-no-session, or locked-with-an-active-session. `label` is free text and
+/// is intentionally not run through `validate_name` (that guards filesystem-safe names, not
+/// applicable to a display label).
+#[tauri::command]
+pub fn tab_set_lock_label(
+    app: AppHandle,
+    id: String,
+    label: Option<String>,
+    store: State<AppSettingsStore>,
+    registry: State<SelfWriteRegistry>,
+) -> AppResult<TabInfo> {
+    let result = store.modify(&registry, |settings| match settings.tabs.iter_mut().find(|t| t.id == id) {
+        None => Err(AppErrorPayload::new(ErrorCode::NotFound, "tab not found")),
+        Some(entry) => {
+            entry.lock_label = label.clone();
+            Ok(())
+        }
+    });
+
+    match result {
+        Ok(Ok((settings, outcome))) => {
+            emit_settings_recovery_event(&app, outcome);
+            match settings.tabs.iter().find(|t| t.id == id) {
+                Some(entry) => AppResult::ok(TabInfo::from(entry)),
+                None => AppResult::err_code(ErrorCode::NotFound, "tab not found"),
+            }
+        }
+        Ok(Err(payload)) => AppResult::err(payload),
+        Err(io_err) => {
+            tracing::error!(error = %io_err, "tab_set_lock_label: failed to persist lock label");
+            AppResult::err_code(ErrorCode::Unknown, "failed to save the lock label")
         }
     }
 }
@@ -476,6 +520,7 @@ mod tests {
             name: "Shopping list".into(),
             folder_path: "C:/tab".into(),
             locked: None,
+            lock_label: None,
         };
         let info = TabInfo::from(&entry);
         assert!(!info.locked);

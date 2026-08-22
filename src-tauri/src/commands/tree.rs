@@ -1571,6 +1571,7 @@ mod tests {
             name: "Test tab".to_string(),
             folder_path: folder.to_string_lossy().into_owned(),
             locked: Some(false),
+            lock_label: None,
         });
         settings
     }

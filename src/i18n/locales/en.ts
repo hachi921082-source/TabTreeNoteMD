@@ -47,6 +47,9 @@ export const en: Record<keyof typeof ja, string> = {
   "tabBar.removeMessageTemplate": "This removes “{name}” from the tab list. The folder/files are not deleted.",
   "tabBar.renameTitle": "Rename Tab",
   "tabBar.renameLabel": "New name",
+  "tabBar.setLockLabel": "Set Lock Label",
+  "tabBar.setLockLabelTitle": "Set Lock Label",
+  "tabBar.setLockLabelLabel": "Label (leave blank to clear)",
   "tabBar.lockTab": "Lock Tab",
 
   // ---- tabLock.* -------------------------------------------------------------

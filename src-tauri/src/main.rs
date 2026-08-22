@@ -155,6 +155,7 @@ fn main() {
             commands::tab::tab_create_new,
             commands::tab::tab_register_existing,
             commands::tab::tab_rename,
+            commands::tab::tab_set_lock_label,
             commands::tab::tab_reorder,
             commands::tab::tab_remove,
             commands::tab::tab_open_location,

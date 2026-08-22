@@ -63,6 +63,9 @@ export interface TabInfo {
   id: string;
   name: string;
   locked: boolean;
+  /** User-set distinguishing label for a locked tab, shown in place of the bare 🔒 glyph when
+   * non-null/non-empty (`docs/spec.v1.2.0.md` §10). `null` when unset. */
+  lockLabel: string | null;
 }
 
 export interface TabSettingsEntry {
@@ -72,6 +75,9 @@ export interface TabSettingsEntry {
   /** Display cache only; the authoritative lock state lives in the tab's own
    * `.tabtreenote.json` (`docs/detailed-spec.md` §3.2). */
   locked?: boolean;
+  /** User-set distinguishing label for a locked tab (`docs/spec.v1.2.0.md` §10). Independent of
+   * lock/session state. */
+  lockLabel: string | null;
 }
 
 export interface WindowSettings {

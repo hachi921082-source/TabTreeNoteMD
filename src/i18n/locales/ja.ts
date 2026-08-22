@@ -49,6 +49,9 @@ export const ja = {
   "tabBar.removeMessageTemplate": "「{name}」をタブ一覧から削除します。フォルダやファイルは削除されません。",
   "tabBar.renameTitle": "タブの名前を変更",
   "tabBar.renameLabel": "新しい名前",
+  "tabBar.setLockLabel": "ロック済みタブのラベルを設定",
+  "tabBar.setLockLabelTitle": "ロック済みタブのラベルを設定",
+  "tabBar.setLockLabelLabel": "ラベル（空欄で解除）",
   "tabBar.lockTab": "タブをロック",
 
   // ---- tabLock.* (shared between TabBar.tsx and TreeView.tsx) -----------

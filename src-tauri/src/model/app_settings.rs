@@ -77,6 +77,13 @@ pub struct TabSettingsEntry {
     /// `docs/detailed-spec.md` §3.2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
+    /// Optional user-set plaintext label shown in place of the bare 🔒 glyph for a locked tab
+    /// with no active unlock session, so multiple locked tabs remain distinguishable without
+    /// revealing the real (encrypted) name — `docs/spec.v1.2.0.md` §10. Independent of
+    /// lock/session state: readable and writable regardless of whether the tab is unlocked,
+    /// locked-with-no-session, or locked-with-an-active-session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

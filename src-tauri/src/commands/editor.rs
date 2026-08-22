@@ -295,6 +295,7 @@ mod tests {
             name: "Test tab".to_string(),
             folder_path: dir.to_string_lossy().into_owned(),
             locked: Some(false),
+            lock_label: None,
         });
 
         let (folder, _tab_name) = resolve_tab(&settings, "t1").unwrap();
