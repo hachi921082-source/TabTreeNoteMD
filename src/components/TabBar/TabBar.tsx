@@ -391,63 +391,70 @@ export function TabBar({
           ＋
         </button>
 
-        {/* Toolbar group, left-to-right order: pin, search, theme toggle
-            (`docs/plans/tab-management/PLAN.md` §4). The theme-toggle button
-            is added here by `appearance-theme/PLAN.md` when implemented. */}
-        <div className="ttn-tab-bar-toolbar">
-          {/* Cross-Tab Favorites (`docs/plans/v1.1.0/favorites/PLAN.md` §6) — immediately to the
-              left of the pin button, mirroring how the pin button itself sits immediately to the
-              left of the search button (`[spec §2.1]`). Always visible, single click target, no
-              default keyboard shortcut (bindable via Settings → Shortcuts). */}
-          <button type="button" className="ttn-toolbar-btn" title={t("tabBar.favorites")} aria-label={t("tabBar.favorites")} onClick={favorites.open}>
-            ★
-          </button>
-          <button
-            type="button"
-            className={`ttn-toolbar-btn${alwaysOnTop ? " ttn-toolbar-btn-active" : ""}`}
-            title={alwaysOnTop ? t("tabBar.pinOff") : t("tabBar.pinOn")}
-            aria-pressed={alwaysOnTop}
-            onClick={() => void handleToggleAlwaysOnTop()}
-          >
-            📌
-          </button>
-          {/* Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §5) — immediately to
-              the right of the pin button per `[spec §2.1]`'s layout note. */}
-          <button
-            type="button"
-            className="ttn-toolbar-btn"
-            title={t("tabBar.searchTooltipTemplate").replace("{combo}", resolveShortcuts(settings?.shortcuts)["search.quickOpen"])}
-            aria-label={t("common.search")}
-            onClick={crossTabSearch.open}
-          >
-            🔍
-          </button>
-          {/* Flips which side the tree pane renders on (`docs/plans/window-operation/PLAN.md` §2).
-              The hide/show toggle itself lives on the splitter between the two panes, not here. */}
-          <button
-            type="button"
-            className="ttn-toolbar-btn"
-            title={t("tabBar.toggleTreeSide")}
-            aria-label={t("tabBar.toggleTreeSide")}
-            onClick={() => {
-              const next = (settings?.window.treeSide ?? "left") === "left" ? "right" : "left";
-              void patchSettings({ window: { treeSide: next } });
-            }}
-          >
-            {/* Trailing U+FE0E (VS15) forces text presentation, avoiding Windows' color-emoji-font
-                fallback which ignores the CSS `color` property. */}
-            ⇄︎
-          </button>
-          {/* Settings screen shell (`docs/plans/window-operation/PLAN.md` §7). */}
-          <button type="button" className="ttn-toolbar-btn" title={t("tabBar.settings")} aria-label={t("tabBar.settings")} onClick={() => setSettingsOpen(true)}>
-            ⚙︎
-          </button>
-        </div>
+        {/* GitHub issue #198 — toolbar + window controls wrapped together and pinned to the
+            visible right edge via CSS `position: sticky` (see `.ttn-tab-bar-fixed` in
+            `TabBar.css`), so they stay reachable even when tabs overflow `.ttn-tab-bar`'s own
+            horizontal scroll and the row is scrolled left. `.ttn-tab-bar` itself keeps its
+            existing `overflow-x: auto`/drag-region/OS-drop hit-testing setup untouched. */}
+        <div className="ttn-tab-bar-fixed">
+          {/* Toolbar group, left-to-right order: pin, search, theme toggle
+              (`docs/plans/tab-management/PLAN.md` §4). The theme-toggle button
+              is added here by `appearance-theme/PLAN.md` when implemented. */}
+          <div className="ttn-tab-bar-toolbar">
+            {/* Cross-Tab Favorites (`docs/plans/v1.1.0/favorites/PLAN.md` §6) — immediately to the
+                left of the pin button, mirroring how the pin button itself sits immediately to the
+                left of the search button (`[spec §2.1]`). Always visible, single click target, no
+                default keyboard shortcut (bindable via Settings → Shortcuts). */}
+            <button type="button" className="ttn-toolbar-btn" title={t("tabBar.favorites")} aria-label={t("tabBar.favorites")} onClick={favorites.open}>
+              ★
+            </button>
+            <button
+              type="button"
+              className={`ttn-toolbar-btn${alwaysOnTop ? " ttn-toolbar-btn-active" : ""}`}
+              title={alwaysOnTop ? t("tabBar.pinOff") : t("tabBar.pinOn")}
+              aria-pressed={alwaysOnTop}
+              onClick={() => void handleToggleAlwaysOnTop()}
+            >
+              📌
+            </button>
+            {/* Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §5) — immediately to
+                the right of the pin button per `[spec §2.1]`'s layout note. */}
+            <button
+              type="button"
+              className="ttn-toolbar-btn"
+              title={t("tabBar.searchTooltipTemplate").replace("{combo}", resolveShortcuts(settings?.shortcuts)["search.quickOpen"])}
+              aria-label={t("common.search")}
+              onClick={crossTabSearch.open}
+            >
+              🔍
+            </button>
+            {/* Flips which side the tree pane renders on (`docs/plans/window-operation/PLAN.md` §2).
+                The hide/show toggle itself lives on the splitter between the two panes, not here. */}
+            <button
+              type="button"
+              className="ttn-toolbar-btn"
+              title={t("tabBar.toggleTreeSide")}
+              aria-label={t("tabBar.toggleTreeSide")}
+              onClick={() => {
+                const next = (settings?.window.treeSide ?? "left") === "left" ? "right" : "left";
+                void patchSettings({ window: { treeSide: next } });
+              }}
+            >
+              {/* Trailing U+FE0E (VS15) forces text presentation, avoiding Windows' color-emoji-font
+                  fallback which ignores the CSS `color` property. */}
+              ⇄︎
+            </button>
+            {/* Settings screen shell (`docs/plans/window-operation/PLAN.md` §7). */}
+            <button type="button" className="ttn-toolbar-btn" title={t("tabBar.settings")} aria-label={t("tabBar.settings")} onClick={() => setSettingsOpen(true)}>
+              ⚙︎
+            </button>
+          </div>
 
-        {/* Custom minimize/maximize/close controls, replacing the native title bar removed by
-            `decorations: false` (`docs/plans/window-operation/PLAN.md` §1). Always the rightmost
-            group. */}
-        <TitleBarControls />
+          {/* Custom minimize/maximize/close controls, replacing the native title bar removed by
+              `decorations: false` (`docs/plans/window-operation/PLAN.md` §1). Always the rightmost
+              group. */}
+          <TitleBarControls />
+        </div>
       </div>
 
       {lastErrorCode && (
