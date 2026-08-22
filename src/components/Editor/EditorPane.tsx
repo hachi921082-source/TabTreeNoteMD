@@ -748,7 +748,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     }
 
     const savedScrollLine = ed.content.scrollPosition;
-    let raf = 0;
+    let scrollRestoreTimeout = 0;
     if (savedScrollLine && resolvedPaneMode === "preview") {
       // `paneMode === "preview"` (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §3/§4): deferred
       // until `<PreviewPane ref={previewRef}>` actually mounts/renders for this memo -- same timing
@@ -758,7 +758,14 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       // just above for the same reason.
       pendingPreviewScrollRef.current = memoKey ? { memoKey, line: savedScrollLine } : null;
     } else if (savedScrollLine) {
-      raf = requestAnimationFrame(() => scrollToTopVisibleLine(view, savedScrollLine));
+      // Deferred to a macrotask (GitHub issue #196), same fix as `anchorTimeout` just above (GitHub
+      // issue #195): `scrollToTopVisibleLine` also dispatches `EditorView.scrollIntoView` on this
+      // same freshly-constructed `view`, before CodeMirror's own rAF-scheduled initial layout/measure
+      // pass has completed. The `requestAnimationFrame` deferral this line used before proved
+      // unreliable for the exact same reason `anchorTimeout` documents above -- an app-level rAF
+      // callback races CodeMirror's own internal rAF-scheduled measure cycle. `window.setTimeout`
+      // reliably runs after that cycle instead.
+      scrollRestoreTimeout = window.setTimeout(() => scrollToTopVisibleLine(view, savedScrollLine), 0);
     } else {
       pendingPreviewScrollRef.current = null;
     }
@@ -777,7 +784,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
     return () => {
       if (anchorTimeout) window.clearTimeout(anchorTimeout);
-      if (raf) cancelAnimationFrame(raf);
+      if (scrollRestoreTimeout) window.clearTimeout(scrollRestoreTimeout);
       view.scrollDOM.removeEventListener("scroll", scrollHandler);
     };
     // Intentionally keyed only on `loadGeneration`: settings/readOnly/whitespace changes on an
