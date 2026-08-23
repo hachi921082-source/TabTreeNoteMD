@@ -278,7 +278,7 @@ fn register_tab_at_path(
             if !already_locked {
                 let watchers = app.state::<WatcherRegistry>();
                 let self_write_registry = app.state::<Arc<SelfWriteRegistry>>();
-                watchers.start(&id, &path, self_write_registry.inner().clone());
+                watchers.start(app, &id, &path, self_write_registry.inner().clone());
             }
 
             Ok(TabInfo { id, name, locked: already_locked, lock_label: None })

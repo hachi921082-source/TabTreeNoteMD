@@ -3,5 +3,6 @@
 
 pub mod active_memo;
 pub mod conflict;
+pub mod snapshot_tracker;
 pub mod watcher;
 pub mod watcher_registry;

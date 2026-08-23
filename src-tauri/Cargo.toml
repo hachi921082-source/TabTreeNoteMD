@@ -72,3 +72,10 @@ regex = "1.11.3"
 # enabled, rather than the crate's full default feature set, to keep the dependency footprint
 # proportional to what this one command actually needs.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+
+[dev-dependencies]
+# `tauri::test::mock_app`/`MockRuntime` — used by `watch/watcher_registry.rs`'s lifecycle tests,
+# which need a real (test-only) `AppHandle` now that `WatcherRegistry::start` emits events
+# (GitHub issue #211). No effect on release builds; `[dependencies]`'s own plain `tauri` entry
+# (without this feature) is what's actually shipped.
+tauri = { version = "2.11.5", features = ["test"] }

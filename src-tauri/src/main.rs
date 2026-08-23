@@ -14,12 +14,14 @@
 // `commands::autostart`), and the tray icon (§4, built in `.setup()`). The
 // external-change watcher (`watch::watcher`/`watch::watcher_registry`) is now
 // wired up for ordinary, non-locked tabs (startup, new-tab registration, tab
-// removal — `persistence-fs/PLAN.md` §5, GitHub issue #209); locked-tab
-// session-scoped start/stop (issue #210) and the conflict-check/event-
-// emission pipeline that consumes each `ExternalChangeEvent`
-// (`watch::conflict`, issue #211) are still outstanding, which is why
-// `watch::conflict`'s pieces remain otherwise-unreferenced outside its own
-// tests. Remove this allow once those call sites exist too.
+// removal — `persistence-fs/PLAN.md` §5, GitHub issue #209) with its
+// conflict-check + `evt:fs:external-change`/`evt:editor:conflict` emission
+// pipeline (`watch::conflict`, `watch::watcher_registry::route_change`,
+// GitHub issue #211) wired in. Locked-tab session-scoped start/stop (issue
+// #210) is still outstanding. This allow stays regardless — it also covers
+// unrelated pre-existing dead code reserved for not-yet-wired-up future
+// features (e.g. `fs::path_safety::ValidationMode::Lenient`,
+// `model::result::ErrorCode::LongPath`) elsewhere in this crate.
 #![allow(dead_code)]
 
 mod commands;
@@ -130,8 +132,9 @@ fn main() {
                 // issue #209): one `FolderWatcher` per registered, non-locked tab. Locked tabs are
                 // never watched here — session-scoped start/stop for those is issue #210.
                 let watchers = app.state::<WatcherRegistry>();
+                let app_handle = app.handle().clone();
                 for tab in settings.tabs.iter().filter(|t| !t.locked.unwrap_or(false)) {
-                    watchers.start(&tab.id, Path::new(&tab.folder_path), registry.inner().clone());
+                    watchers.start(&app_handle, &tab.id, Path::new(&tab.folder_path), registry.inner().clone());
                 }
             }
 
