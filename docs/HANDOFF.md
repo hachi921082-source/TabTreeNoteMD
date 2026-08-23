@@ -56,7 +56,8 @@ added to `RESOLVED-ISSUES.md`). None were PLAN.md-scale.
   a single unclosed `<span>` leak into that heading's TOC label — cosmetic garbling only (verified via
   a throwaway script: TOC still lists the heading, slug/label just contain leaked tag text; clicking
   it still jumps correctly since the same garbled value is used for both generation and resolution).
-  Not filed as a separate issue yet — ask the user if they want one. PR #224.
+  Recorded here for visibility; **whether to file an issue / fix it is intentionally left
+  undecided** — do not file or fix without asking the user first. PR #224.
 - **#191** (self-referential `memo:...#slug` anchor link, same memo/tab, didn't jump) — root cause:
   the deferred `pendingLinkFocus` → `loadGeneration` pipeline only re-fires on an actual memo
   (re)load, which a same-tab/same-memo click never triggers. Fixed via a new
@@ -75,7 +76,7 @@ this session.
 | 207 | Settings shortcut rebinding doesn't work | Unknown — code reading found no cause; needs live reproduction first |
 | 199 | UI font-size setting doesn't affect tooltips | Large — structural (native `title` attribute outside app CSS reach) |
 | 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §4** |
-| — | (new, optional) TOC label garbling when a heading + trailing non-heading lines are colored together | Small/cosmetic — see #204 residual above; not yet filed as its own issue |
+| — | TOC label garbling when a heading + trailing non-heading lines are colored/selected together | Small/cosmetic — see #204 residual above; **fix/no-fix decision intentionally left open**, not yet filed as its own issue |
 
 A prior session's cross-issue review found only **#189** to be genuinely PLAN.md-scale (already has
 one: `docs/plans/persistence-fs/PLAN.md`); everything else in this table is fix/`<slug>`-branch scale.
