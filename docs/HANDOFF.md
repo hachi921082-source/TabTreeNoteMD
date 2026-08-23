@@ -74,7 +74,7 @@ this session.
 | # | Title (short) | Scale (from prior sessions' estimate, unverified since) |
 |---|---|---|
 | 207 | Settings shortcut rebinding doesn't work | Unknown — code reading found no cause; needs live reproduction first |
-| 199 | UI font-size setting doesn't affect tooltips | Large — structural (native `title` attribute outside app CSS reach) |
+| 199 | UI font-size setting doesn't affect tooltips | Revised this session: scope narrowed to a fixed, slightly-larger readable tooltip font (not tied to the dynamic UI font-size setting) — one new generic tooltip component + mechanical replacement of 62 native `title=` call sites; judged fix/`<slug>` scale, PLAN.md not needed. Not yet started. |
 | 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §4** |
 | — | TOC label garbling when a heading + trailing non-heading lines are colored/selected together | Small/cosmetic — see #204 residual above; **fix/no-fix decision intentionally left open**, not yet filed as its own issue |
 
@@ -86,13 +86,16 @@ one: `docs/plans/persistence-fs/PLAN.md`); everything else in this table is fix/
 `docs/plans/persistence-fs/PLAN.md` §5 already designed this; backend watcher/conflict logic is
 already implemented and unit-tested, just never wired to any lifecycle trigger.
 
-- **#209** — watcher lifecycle for plain (unlocked) tabs. No dependency.
-- **#210** — watcher lifecycle for locked tabs, session-scoped. Depends on #209's mechanism.
-- **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit events.
-  Practically depends on #209.
+- **#209** — watcher lifecycle for plain (unlocked) tabs. No dependency. **Done** — `WatcherRegistry`
+  added, wired at startup/registration/removal; PR #226, merged into `V1.2.0`. `on_external_change`
+  is a logging-only placeholder pending #211.
+- **#210** — watcher lifecycle for locked tabs, session-scoped. Depended on #209's mechanism, which
+  now exists.
+- **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit events. Can
+  now be built and tested end-to-end against #209's running watchers.
 - **#212** — verify/implement the frontend's handling of those events. Depends on #211.
 
-**Recommended order**: #209 → #211 → #212 → #210. **Branching**: each gets its own `fix/<slug>`
+**Recommended order (remaining)**: #211 → #212 → #210. **Branching**: each gets its own `fix/<slug>`
 branch + PR (one issue = one branch = one PR), same as every other issue resolved so far.
 
 ## 5. Process note for next session: live-testing/comment-verbosity discipline
