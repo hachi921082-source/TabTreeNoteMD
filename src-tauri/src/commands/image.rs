@@ -16,6 +16,7 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use image::GenericImageView;
 use rand::RngExt;
@@ -74,7 +75,7 @@ pub fn image_save_pasted(
     bytes: Vec<u8>,
     mime_hint: Option<String>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<SavedImage> {
     let (settings, outcome) = store.get(&registry);
@@ -195,7 +196,7 @@ pub fn image_read_bytes(
     tab_id: String,
     relative_path: String,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> Result<Response, AppErrorPayload> {
     let (settings, outcome) = store.get(&registry);
