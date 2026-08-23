@@ -10,6 +10,7 @@
 // `tree_open` regardless (`docs/shared/models.ts`'s `MemoMoveResult` doc
 // comment).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   memoCreate,
   memoCreateChild,
@@ -285,9 +286,41 @@ export function useTree(tabId: string | null): UseTreeResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
 
-  // If the tree changes underfoot (e.g. a future external-change
-  // reconciliation event) and the open/selected memo no longer exists,
-  // drop it rather than pointing at a stale id.
+  // `evt:fs:external-change` (GitHub issue #212, `docs/plans/persistence-fs/PLAN.md` §5) — an
+  // external tool touched a file under the active tab's folder; `refresh()` below is exactly the
+  // `tree_open`-style reconciliation the design doc calls for, so this listener's only job is to
+  // trigger it for the right tab. Filters on `currentTabIdRef` (same ref `refresh` itself already
+  // uses to detect a stale in-flight response) rather than a second ref. Coalesced with a short
+  // debounce: a burst of several events for the same tab (e.g. an external tool touching multiple
+  // files at once) should re-scan the folder once, not once per file — `treeOpen` re-scans the
+  // whole tab regardless of which single file changed, so per-event firing buys nothing.
+  const externalChangeDebounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void listen<{ tabId: string; memoName: string; kind: "created" | "modified" | "deleted" }>("evt:fs:external-change", (event) => {
+      if (event.payload.tabId !== currentTabIdRef.current) return;
+      if (externalChangeDebounceRef.current !== null) window.clearTimeout(externalChangeDebounceRef.current);
+      externalChangeDebounceRef.current = window.setTimeout(() => {
+        externalChangeDebounceRef.current = null;
+        void refresh();
+      }, 200);
+    }).then((un) => {
+      if (cancelled) un();
+      else unlisten = un;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      if (externalChangeDebounceRef.current !== null) {
+        window.clearTimeout(externalChangeDebounceRef.current);
+        externalChangeDebounceRef.current = null;
+      }
+    };
+  }, [refresh]);
+
+  // If the tree changes underfoot (e.g. the external-change refresh above) and the open/selected
+  // memo no longer exists, drop it rather than pointing at a stale id.
   useEffect(() => {
     if (openMemoName && !flatOrder.includes(openMemoName)) {
       setPerTab((prev) => ({ ...prev, openMemoName: null, selection: clearSelection() }));
