@@ -77,6 +77,14 @@ export function useEditor(
   const debounceTimerRef = useRef<number | null>(null);
   const appSettingsRef = useRef<AppSettings | null>(appSettings);
   appSettingsRef.current = appSettings;
+  // Live mirror of the `memoName` param (GitHub issue #212 follow-up) -- distinct from
+  // `memoNameRef` above, which tracks the memo this hook's internal state/refs are actually
+  // LOADED for and is only updated inside the reload effect below. This one is updated on every
+  // render, unconditionally, so the reload effect's `!memoName` guard (see its own comment) and
+  // `resolveConflictKeepMine`/`resolveConflictReloadFromDisk` can both tell whether the live prop
+  // has since diverged from what they're holding onto.
+  const memoNamePropRef = useRef<string | null>(memoName);
+  memoNamePropRef.current = memoName;
 
   // Kept live rather than only set from `editor_load`'s load-time snapshot (GitHub issue #110) —
   // see the constructor param's own doc comment above for the staleness bug this replaces.
@@ -144,8 +152,38 @@ export function useEditor(
   // before the next effect body, which gives us "flush old, then load new" for free.
   useEffect(() => {
     clearDebounce();
+
+    // GitHub issue #212 follow-up (live-CDP-verified): an external delete of the currently-open
+    // memo fires BOTH `evt:fs:external-change` (drives `useTree.ts`'s tree refresh, which then
+    // force-clears its `openMemoName` -- see that file's "open memo no longer exists" cleanup
+    // effect) and `evt:editor:conflict` (sets `conflict` below) for the same event. Without this
+    // guard, `memoName` going `null` for that reason re-runs this effect and the unconditional
+    // `setConflict(null)` a few lines down wipes the just-raised conflict before the user ever
+    // sees a chance to click a resolution button -- confirmed by live reproduction: with only
+    // `EditorPane.tsx`'s render-gating fixed (keeping `ConflictDialog` mounted while
+    // `conflict !== null`), the dialog still vanished in the same frame `memoName` went `null`,
+    // because THIS effect cleared `conflict` in that very same render pass before the browser
+    // ever painted the intermediate state. Only skips for the EXACT tab/memo the active conflict
+    // is for (`tabId === tabIdRef.current`) -- an actual tab switch or a genuinely different
+    // memo still falls through to the normal reset below. `resolveConflictKeepMine`/
+    // `resolveConflictReloadFromDisk` below already read `tabIdRef.current`/`memoNameRef.current`
+    // (not the live params), so they keep working correctly while this guard holds those refs in
+    // place, and each finishes the deferred reset once the user actually resolves the conflict.
+    if (conflictOpenRef.current && !memoName && tabId === tabIdRef.current) {
+      return;
+    }
+
     setConflict(null);
     conflictOpenRef.current = false;
+    // GitHub issue #212 follow-up: a resolve-while-`memoName`-is-null failure (deleted-file
+    // conflict resolution hitting a NOT_FOUND) sets `lastErrorCode` while `tabId`/`memoName` are
+    // unchanged from this effect's point of view (still `T`/`null`), so this effect does NOT
+    // re-run at that moment -- the banner set by the resolve handler survives untouched, giving
+    // the user a chance to actually see it (`EditorPane.tsx`'s `!memoName` branches now render
+    // it). Only once the user genuinely moves on -- a real tab switch or opening a different memo,
+    // either of which changes `tabId`/`memoName` and re-runs this effect past the guard above --
+    // does this line clear the stale code, before it can leak onto that new, unrelated memo/tab.
+    setLastErrorCode(null);
 
     if (!tabId || !memoName) {
       tabIdRef.current = null;
@@ -245,9 +283,8 @@ export function useEditor(
     };
   }, [flushSaveNow]);
 
-  // `evt:editor:conflict` (`docs/plans/editor-save/PLAN.md` §3) — not yet emitted by anything
-  // until `persistence-fs/PLAN.md`'s folder watcher is actually wired up to a running tab
-  // folder; this listener is a forward seam, harmless while nothing fires the event.
+  // `evt:editor:conflict` (`docs/plans/editor-save/PLAN.md` §3), emitted by the folder watcher
+  // (GitHub issue #211) whenever the currently-open memo changes on disk out from under this tab.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
@@ -290,6 +327,14 @@ export function useEditor(
     }
     conflictOpenRef.current = false;
     setConflict(null);
+    // GitHub issue #212 follow-up: the reload effect's guard above may have deferred resetting
+    // `tabIdRef`/`memoNameRef` (external delete raced the tree's own cleanup) -- finish that reset
+    // now if the live `memoName` prop has since moved on, so a later, unrelated memo open doesn't
+    // inherit this dead memo's identity.
+    if (memoNamePropRef.current !== name) {
+      tabIdRef.current = null;
+      memoNameRef.current = null;
+    }
   }, []);
 
   const resolveConflictReloadFromDisk = useCallback(async () => {
@@ -312,6 +357,11 @@ export function useEditor(
     }
     conflictOpenRef.current = false;
     setConflict(null);
+    // GitHub issue #212 follow-up: same deferred-reset finish as `resolveConflictKeepMine` above.
+    if (memoNamePropRef.current !== name) {
+      tabIdRef.current = null;
+      memoNameRef.current = null;
+    }
   }, []);
 
   return {
