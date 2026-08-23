@@ -480,8 +480,8 @@ pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Op
     // not a persisted invariant).
     app.state::<SearchIndex>().purge_tab(&tab_id);
 
-    // Step 12: stop this tab's file watcher — no-op today, since no per-tab watcher is wired up
-    // anywhere yet in this codebase (`persistence-fs/PLAN.md` §5, see `main.rs`'s own note).
+    // Step 12: no watcher to stop — this tab was never watched while locked (see `tab_unlock`'s
+    // Step 6 comment; GitHub issue #210).
 
     AppResult::ok(TabInfo {
         id: tab_id,
@@ -640,7 +640,11 @@ pub async fn tab_unlock(app: AppHandle, tab_id: String, password: String) -> App
     // Step 5: `AppSettings.tabs[i].name` intentionally NOT rewritten to the real name while a
     // session is active (`PLAN.md` §3 step 5's "safer default").
 
-    // Step 6: (re)start this tab's file watcher — no-op today, same note as `tab_lock` step 12.
+    // Step 6: deliberately does NOT start a file watcher for this tab's session — GitHub issue
+    // #210 investigated this and closed it as won't-fix: a locked tab's files during a session are
+    // still obfuscated (not `.md`), the watcher pipeline's `is_md_file` filter (`watch/watcher_registry.rs`)
+    // would silently ignore every event for them regardless, and the app is the only writer to
+    // them anyway (`persistence-fs/PLAN.md` §5's own stated rationale, confirmed still correct).
 
     AppResult::ok(TabInfo {
         id: tab_id,
