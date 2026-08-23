@@ -206,6 +206,9 @@ function headingMarkerExclusions(state: EditorState, from: number, to: number): 
     const exFrom = Math.max(line.from > from ? line.from - 1 : line.from, from);
     const exTo = Math.min(markerEnd, to);
     if (exFrom < exTo) exclusions.push({ from: exFrom, to: exTo });
+    // If range content follows this heading line, exclude the newline right after it too, so a
+    // reopened span never lands before the line break (GitHub issue #204 residual).
+    if (line.to < to) exclusions.push({ from: line.to, to: Math.min(line.to + 1, to) });
   }
   return exclusions;
 }
