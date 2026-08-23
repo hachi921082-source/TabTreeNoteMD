@@ -83,7 +83,7 @@ export function QuickOpenDialog({ quickOpen, onClose, onOpenHit }: QuickOpenDial
 
   // Distinct click target from the row body (`docs/plans/v1.1.0/quick-open/PLAN.md` §3, Q4-3) —
   // must not also select/navigate, so every event handler here stops propagation before acting.
-  // Not used in "favorites" mode (star is read-only there, rendered as a plain `<span>` below).
+  // Used in both modes (GitHub issue #233 added the "favorites" case).
   const handleStarClick = (hit: QuickOpenHit) => {
     void quickOpen.toggleFavorite(hit);
   };
@@ -107,8 +107,8 @@ export function QuickOpenDialog({ quickOpen, onClose, onOpenHit }: QuickOpenDial
           <p className="ttn-quick-open-status">{isFavorites ? t("quickOpen.noFavorites") : t("search.noResults")}</p>
         )}
         {quickOpen.hits.map((hit, index) => (
-          // A `<div>` row (not `<button>`) since it hosts the star as its own nested `<button>` in
-          // "quickOpen" mode — interactive elements must not nest inside a `<button>`.
+          // A `<div>` row (not `<button>`) since it hosts the star as its own nested `<button>` —
+          // interactive elements must not nest inside a `<button>`.
           <div
             key={hitKey(hit)}
             className={`ttn-quick-open-row${index === quickOpen.highlightedIndex ? " ttn-quick-open-row-highlighted" : ""}`}
@@ -116,26 +116,21 @@ export function QuickOpenDialog({ quickOpen, onClose, onOpenHit }: QuickOpenDial
           >
             <span className="ttn-quick-open-row-memo">{hit.memoName}</span>
             <span className="ttn-quick-open-row-tab">{hit.tabName}</span>
-            {isFavorites ? (
-              // Read-only indicator (`docs/plans/v1.1.0/favorites/PLAN.md` §5) — not a click
-              // target; removing a favorite is only available via the tree's right-click menu.
-              <span className="ttn-quick-open-star ttn-quick-open-star-active" aria-hidden="true">
-                ★
-              </span>
-            ) : (
-              <button
-                type="button"
-                className={`ttn-quick-open-star${hit.isFavorite ? " ttn-quick-open-star-active" : ""}`}
-                title={hit.isFavorite ? t("quickOpen.removeFavorite") : t("tree.favoriteAdd")}
-                aria-label={hit.isFavorite ? t("quickOpen.removeFavorite") : t("tree.favoriteAdd")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleStarClick(hit);
-                }}
-              >
-                {hit.isFavorite ? "★" : "☆"}
-              </button>
-            )}
+            {/* GitHub issue #233: clickable in both modes now — in "favorites" mode every hit's
+                `isFavorite` is already true, so this always shows a filled star with the "remove"
+                tooltip, and clicking it unfavorites + drops the row (`useQuickOpen.ts`). */}
+            <button
+              type="button"
+              className={`ttn-quick-open-star${hit.isFavorite ? " ttn-quick-open-star-active" : ""}`}
+              title={hit.isFavorite ? t("quickOpen.removeFavorite") : t("tree.favoriteAdd")}
+              aria-label={hit.isFavorite ? t("quickOpen.removeFavorite") : t("tree.favoriteAdd")}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleStarClick(hit);
+              }}
+            >
+              {hit.isFavorite ? "★" : "☆"}
+            </button>
           </div>
         ))}
       </div>
