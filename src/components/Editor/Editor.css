@@ -145,6 +145,17 @@
   overflow-x: auto;
 }
 
+/* GitHub issue #229: `.ttn-editor-preview-pane-content-page` (issue #115) narrows the column to
+   approximate PDF export's page width, but `pre` above only had `overflow-x: auto` with no
+   `white-space`/`word-break` override, so code blocks scrolled instead of wrapping — unlike
+   `pdfExport.ts`'s `PRINT_STYLESHEET` `pre` rule, which this page-width mode is meant to
+   approximate. Scoped to `-content-page` only: split mode's `pre` never claimed to mirror PDF
+   output (issue #115's own scope note), so it keeps its original horizontal-scroll behavior. */
+.ttn-editor-preview-pane-content-page pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .ttn-editor-preview-pane code {
   background: var(--ttn-bg-code);
   border-radius: 3px;
