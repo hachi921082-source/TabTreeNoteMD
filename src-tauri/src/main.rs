@@ -11,12 +11,15 @@
 // commands), and window-operation/PLAN.md's app-shell integrations:
 // second-instance prevention (§5, `tauri_plugin_single_instance`, registered
 // first), auto-launch-to-tray (§4, `tauri_plugin_autostart` +
-// `commands::autostart`), and the tray icon (§4, built in `.setup()`). One
-// foundational primitive built here for a future feature to call — the
-// folder watcher itself (`watch::watcher`/`watch::conflict`, not yet
-// instantiated for any tab folder) — is intentionally not yet referenced; it
-// is consumed once the watcher is actually wired up (`persistence-fs/PLAN.md`
-// §5, still outstanding). Remove this allow once that call site exists.
+// `commands::autostart`), and the tray icon (§4, built in `.setup()`). The
+// external-change watcher (`watch::watcher`/`watch::watcher_registry`) is now
+// wired up for ordinary, non-locked tabs (startup, new-tab registration, tab
+// removal — `persistence-fs/PLAN.md` §5, GitHub issue #209); locked-tab
+// session-scoped start/stop (issue #210) and the conflict-check/event-
+// emission pipeline that consumes each `ExternalChangeEvent`
+// (`watch::conflict`, issue #211) are still outstanding, which is why
+// `watch::conflict`'s pieces remain otherwise-unreferenced outside its own
+// tests. Remove this allow once those call sites exist too.
 #![allow(dead_code)]
 
 mod commands;
@@ -29,6 +32,9 @@ mod store;
 mod util;
 mod watch;
 
+use std::path::Path;
+use std::sync::Arc;
+
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
@@ -39,6 +45,7 @@ use settings::app_settings_store::AppSettingsStore;
 use store::lock_session_store::LockSessionStore;
 use store::tab_store::TabViewStore;
 use watch::active_memo::ActiveMemoTracker;
+use watch::watcher_registry::WatcherRegistry;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -62,12 +69,13 @@ fn main() {
         // is the argument the OS-relaunched process receives; `commands::window::window_is_tray_launch`
         // reads it back to decide whether to reveal the main window at startup.
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--tray"])))
-        .manage(SelfWriteRegistry::new())
+        .manage(Arc::new(SelfWriteRegistry::new()))
         .manage(AppSettingsStore::new())
         .manage(ActiveMemoTracker::new())
         .manage(LockSessionStore::new())
         .manage(SearchIndex::new())
         .manage(TabViewStore::new())
+        .manage(WatcherRegistry::new())
         .setup(|app| {
             // Main window: created here programmatically rather than via `tauri.conf.json`'s
             // declarative `app.windows` array (which sets `"create": false` on the "main" entry
@@ -113,10 +121,18 @@ fn main() {
             // exclusion rule here beyond the plain `locked` check `rebuild_all` already applies.
             {
                 let store = app.state::<AppSettingsStore>();
-                let registry = app.state::<SelfWriteRegistry>();
+                let registry = app.state::<Arc<SelfWriteRegistry>>();
                 let index = app.state::<SearchIndex>();
                 let (settings, _outcome) = store.get(&registry);
                 index.rebuild_all(&settings);
+
+                // External-change watcher startup (`docs/plans/persistence-fs/PLAN.md` §5; GitHub
+                // issue #209): one `FolderWatcher` per registered, non-locked tab. Locked tabs are
+                // never watched here — session-scoped start/stop for those is issue #210.
+                let watchers = app.state::<WatcherRegistry>();
+                for tab in settings.tabs.iter().filter(|t| !t.locked.unwrap_or(false)) {
+                    watchers.start(&tab.id, Path::new(&tab.folder_path), registry.inner().clone());
+                }
             }
 
             // Tray icon: left-/double-click restores the window
