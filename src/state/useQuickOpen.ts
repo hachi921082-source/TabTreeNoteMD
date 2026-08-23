@@ -8,8 +8,8 @@
 // `mode: "favorites"` — reused rather than split into a separate hook, per that plan's own chosen
 // approach. In this mode: no query text (the `query`/`setQuery` fields are unused by the "favorites"
 // UI, which hides its input entirely), the data source is `search_get_favorites()` (called once on
-// `open()`, never re-queried per keystroke), and `toggleFavorite` is a no-op (read-only star in this
-// mode — removal only via the tree's right-click menu, `favorites/PLAN.md` §5).
+// `open()`, never re-queried per keystroke), and `toggleFavorite` always unfavorites and drops the
+// row from the list rather than flipping the star in place (GitHub issue #233).
 import { useCallback, useRef, useState } from "react";
 import { searchGetFavorites, searchQuickOpen } from "../ipc/search";
 import { memoSetFavorite } from "../ipc/tree";
@@ -44,10 +44,10 @@ export interface UseQuickOpenResult {
   resolveSelected: () => QuickOpenHit | null;
   /** Star click (`docs/plans/v1.1.0/quick-open/PLAN.md` §3, Q4-3) — calls `memo_set_favorite`
    * directly for this specific row (identified by its own `tabId`/`memoName`, independent of
-   * whichever tab is currently active), then updates `hits` in place. Does not select/navigate,
-   * and never re-sorts (ordering never depends on `favorite`). No-op in "favorites" mode — the star
-   * is read-only there (`docs/plans/v1.1.0/favorites/PLAN.md` §5); its UI never calls this either,
-   * this guard is defense in depth. */
+   * whichever tab is currently active). In "quickOpen" mode, updates `hits` in place (does not
+   * select/navigate, never re-sorts — ordering never depends on `favorite`). In "favorites" mode
+   * (GitHub issue #233), always unfavorites and removes the row from `hits` instead — a favorites-
+   * only list showing an unfilled star would be confusing. */
   toggleFavorite: (hit: QuickOpenHit) => Promise<void>;
 }
 
@@ -121,15 +121,23 @@ export function useQuickOpen(mode: QuickOpenMode = "quickOpen"): UseQuickOpenRes
 
   const toggleFavorite = useCallback(
     async (hit: QuickOpenHit) => {
-      if (mode === "favorites") return; // read-only star in this mode (`favorites/PLAN.md` §5)
-      const nextFavorite = !hit.isFavorite;
+      const nextFavorite = mode === "favorites" ? false : !hit.isFavorite;
       const result = await memoSetFavorite(hit.tabId, hit.memoName, nextFavorite);
-      if (result.ok) {
+      if (!result.ok) {
+        // A failed toggle simply leaves the star as-is; not surfaced via `lastErrorCode` (reserved
+        // for the query itself) — rare (backend I/O failure only), and the row stays actionable to
+        // retry.
+        return;
+      }
+      if (mode === "favorites") {
+        // Unlike "quickOpen" mode's in-place flip, this list only ever shows favorites, so the row
+        // is removed outright — and the highlight is reset since its index may now point past the
+        // shrunk list's end (GitHub issue #233).
+        setHits((current) => current.filter((h) => !(h.tabId === hit.tabId && h.memoName === hit.memoName)));
+        setHighlightedIndex(null);
+      } else {
         setHits((current) => current.map((h) => (h.tabId === hit.tabId && h.memoName === hit.memoName ? { ...h, isFavorite: nextFavorite } : h)));
       }
-      // A failed toggle simply leaves the star as-is; not surfaced via `lastErrorCode` (reserved
-      // for the query itself) — rare (backend I/O failure only), and the row stays actionable to
-      // retry.
     },
     [mode],
   );
