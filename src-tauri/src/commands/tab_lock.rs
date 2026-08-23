@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -362,7 +363,7 @@ pub(crate) fn resolve_tab_access(settings: &AppSettings, sessions: &LockSessionS
 #[tauri::command]
 pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Option<String>) -> AppResult<TabInfo> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     let active_memo = app.state::<ActiveMemoTracker>();
 
     let (settings, outcome) = store.get(&registry);
@@ -584,7 +585,7 @@ fn rename_and_encrypt_entry(folder: &Path, entry: &FileMapEntry, key: &LockKey, 
 #[tauri::command]
 pub async fn tab_unlock(app: AppHandle, tab_id: String, password: String) -> AppResult<TabInfo> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     let sessions = app.state::<LockSessionStore>();
 
     let (settings, outcome) = store.get(&registry);
@@ -746,7 +747,7 @@ fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, key: 
 #[tauri::command]
 pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     let sessions = app.state::<LockSessionStore>();
     let active_memo = app.state::<ActiveMemoTracker>();
 
@@ -892,7 +893,7 @@ pub struct RecoveryStatus {
 #[tauri::command]
 pub fn tab_lock_recovery_status(app: AppHandle, tab_id: String) -> AppResult<RecoveryStatus> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
     let Some(entry) = settings.tabs.iter().find(|t| t.id == tab_id) else {
@@ -944,7 +945,7 @@ async fn derive_and_verify_recovery_key(folder: &Path, marker: &LockInProgressMa
 #[tauri::command]
 pub async fn tab_lock_recovery_finish(app: AppHandle, tab_id: String, password: String) -> AppResult<TabInfo> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
 
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -1027,7 +1028,7 @@ pub async fn tab_lock_recovery_finish(app: AppHandle, tab_id: String, password: 
 #[tauri::command]
 pub async fn tab_lock_recovery_restore(app: AppHandle, tab_id: String, password: String) -> AppResult<TabInfo> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
 
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
@@ -1166,7 +1167,7 @@ pub enum PermanentUnlockRecoveryStatus {
 #[tauri::command]
 pub async fn tab_permanent_unlock_recovery_status(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<PermanentUnlockRecoveryStatus> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     let sessions = app.state::<LockSessionStore>();
 
     let (settings, outcome) = store.get(&registry);
@@ -1216,7 +1217,7 @@ pub async fn tab_permanent_unlock_recovery_status(app: AppHandle, tab_id: String
 #[tauri::command]
 pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     let sessions = app.state::<LockSessionStore>();
 
     let (settings, outcome) = store.get(&registry);
@@ -1308,7 +1309,7 @@ pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String
 #[tauri::command]
 pub async fn tab_permanent_unlock_recovery_restore(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     let sessions = app.state::<LockSessionStore>();
 
     let (settings, outcome) = store.get(&registry);

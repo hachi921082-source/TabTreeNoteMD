@@ -13,6 +13,7 @@
 //! pure "open now" action.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -56,7 +57,7 @@ pub enum ResolvedLink {
 /// - Anything else that doesn't exist (tab or memo) is `Unresolved` — no-op, no error dialog
 ///   (`[spec §2.8]`: "unresolved links do nothing").
 #[tauri::command]
-pub fn link_resolve(current_tab_id: String, target: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>, sessions: State<LockSessionStore>) -> AppResult<ResolvedLink> {
+pub fn link_resolve(current_tab_id: String, target: String, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>, sessions: State<LockSessionStore>) -> AppResult<ResolvedLink> {
     let (settings, _outcome) = store.get(&registry);
 
     let (tab_name, memo_name) = match target.split_once('/') {
@@ -150,7 +151,7 @@ pub enum ExternalLinkKind {
 ///   already guards against for `<img src>` (`docs/DECISIONS.md`: "Image `src` Allowlist: Reject
 ///   `..` Path-Traversal Segments").
 #[tauri::command]
-pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<()> {
+pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
     let opener = app.opener();
     let result = match kind {
         ExternalLinkKind::Url => opener.open_url(normalize_url(&value), None::<String>),

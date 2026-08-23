@@ -4,3 +4,4 @@
 pub mod active_memo;
 pub mod conflict;
 pub mod watcher;
+pub mod watcher_registry;
