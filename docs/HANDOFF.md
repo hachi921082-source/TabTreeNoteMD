@@ -91,12 +91,19 @@ already implemented and unit-tested, just never wired to any lifecycle trigger.
   is a logging-only placeholder pending #211.
 - **#210** — watcher lifecycle for locked tabs, session-scoped. Depended on #209's mechanism, which
   now exists.
-- **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit events. Can
-  now be built and tested end-to-end against #209's running watchers.
-- **#212** — verify/implement the frontend's handling of those events. Depends on #211.
+- **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit events.
+  **Done** — `route_change()` pipeline added, `evt:fs:external-change`/`evt:editor:conflict` wired,
+  `SearchIndex` patched too; PR #227, merged into `V1.2.0`. A real self-write/stale-baseline bug was
+  found and fixed mid-review (see `RESOLVED-ISSUES.md`'s #211 entry). `evt:fs:external-change` has
+  no frontend listener yet — that's #212.
+- **#212** — verify/implement the frontend's handling of those events. Can now be built and tested
+  end-to-end against #211's real emissions. Note: `evt:editor:conflict`'s resolve-from-disk path
+  (`useEditor.ts`'s `resolveConflictReloadFromDisk` → `editorLoad`) needs to explicitly handle the
+  case where the conflict was a `Deleted` event — the file is gone, so a reload would fail; #211
+  intentionally gates the conflict event on any kind including `Deleted`, so this case is reachable.
 
-**Recommended order (remaining)**: #211 → #212 → #210. **Branching**: each gets its own `fix/<slug>`
-branch + PR (one issue = one branch = one PR), same as every other issue resolved so far.
+**Recommended order (remaining)**: #212 → #210. **Branching**: each gets its own `fix/<slug>` branch
++ PR (one issue = one branch = one PR), same as every other issue resolved so far.
 
 ## 5. Process note for next session: live-testing/comment-verbosity discipline
 
