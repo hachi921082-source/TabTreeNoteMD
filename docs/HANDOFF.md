@@ -89,8 +89,10 @@ already implemented and unit-tested, just never wired to any lifecycle trigger.
 - **#209** — watcher lifecycle for plain (unlocked) tabs. No dependency. **Done** — `WatcherRegistry`
   added, wired at startup/registration/removal; PR #226, merged into `V1.2.0`. `on_external_change`
   is a logging-only placeholder pending #211.
-- **#210** — watcher lifecycle for locked tabs, session-scoped. Depended on #209's mechanism, which
-  now exists.
+- **#210** — watcher lifecycle for locked tabs, session-scoped. **Closed as won't-fix** — investigated
+  and found to be a functional no-op against #211's actual `.md`-only pipeline (a locked tab's files
+  are never `.md` on disk, obfuscated instead); `persistence-fs/PLAN.md` §5 already argued this
+  wasn't needed and turned out correct. See `RESOLVED-ISSUES.md`'s #210 entry.
 - **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit events.
   **Done** — `route_change()` pipeline added, `evt:fs:external-change`/`evt:editor:conflict` wired,
   `SearchIndex` patched too; PR #227, merged into `V1.2.0`. A real self-write/stale-baseline bug was
@@ -102,8 +104,8 @@ already implemented and unit-tested, just never wired to any lifecycle trigger.
   error on resolve failure) found via reviewer-lite live-testing and fixed; PR #228, merged into
   `V1.2.0`. See `RESOLVED-ISSUES.md`'s #212 entry for detail.
 
-**Recommended order (remaining)**: #210 only — the last piece of the #189 split (locked-tab
-session-scoped watcher lifecycle). **Branching**: `fix/<slug>` branch + PR, same as the others.
+**All four sub-issues resolved (#209/#211/#212 implemented, #210 closed as won't-fix) — #189 (the
+umbrella) is closed too. Nothing remains from this split.**
 
 ## 5. Process note for next session: live-testing/comment-verbosity discipline
 
