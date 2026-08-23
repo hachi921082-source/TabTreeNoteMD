@@ -96,14 +96,14 @@ already implemented and unit-tested, just never wired to any lifecycle trigger.
   `SearchIndex` patched too; PR #227, merged into `V1.2.0`. A real self-write/stale-baseline bug was
   found and fixed mid-review (see `RESOLVED-ISSUES.md`'s #211 entry). `evt:fs:external-change` has
   no frontend listener yet — that's #212.
-- **#212** — verify/implement the frontend's handling of those events. Can now be built and tested
-  end-to-end against #211's real emissions. Note: `evt:editor:conflict`'s resolve-from-disk path
-  (`useEditor.ts`'s `resolveConflictReloadFromDisk` → `editorLoad`) needs to explicitly handle the
-  case where the conflict was a `Deleted` event — the file is gone, so a reload would fail; #211
-  intentionally gates the conflict event on any kind including `Deleted`, so this case is reachable.
+- **#212** — verify/implement the frontend's handling of those events. **Done** — `evt:editor:conflict`
+  was already complete; added the missing `evt:fs:external-change` listener; two real regressions in
+  the `Deleted`-kind conflict path (dialog torn down before the user could act, then a silent/leaking
+  error on resolve failure) found via reviewer-lite live-testing and fixed; PR #228, merged into
+  `V1.2.0`. See `RESOLVED-ISSUES.md`'s #212 entry for detail.
 
-**Recommended order (remaining)**: #212 → #210. **Branching**: each gets its own `fix/<slug>` branch
-+ PR (one issue = one branch = one PR), same as every other issue resolved so far.
+**Recommended order (remaining)**: #210 only — the last piece of the #189 split (locked-tab
+session-scoped watcher lifecycle). **Branching**: `fix/<slug>` branch + PR, same as the others.
 
 ## 5. Process note for next session: live-testing/comment-verbosity discipline
 
