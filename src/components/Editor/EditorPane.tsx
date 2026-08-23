@@ -1229,8 +1229,61 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     },
   ];
 
-  if (!memoName) {
-    return <div className="ttn-editor-pane ttn-editor-empty">{t("editor.selectMemo")}</div>;
+  if (!memoName && ed.conflict === null) {
+    return (
+      <div className="ttn-editor-pane ttn-editor-empty">
+        {t("editor.selectMemo")}
+        {/* GitHub issue #212 follow-up: a resolve-while-`memoName`-is-null failure (deleted-file
+            conflict resolution hitting a NOT_FOUND, see below) sets `ed.lastErrorCode` while this
+            exact branch is on screen -- without rendering it here too, the error was silently
+            swallowed (the main render body's copy of this banner, further down, is never reached
+            once `memoName` is null). */}
+        {ed.lastErrorCode && (
+          <div className="ttn-editor-error" role="alert">
+            <span>{errorMessageFor(ed.lastErrorCode, t)}</span>
+            <button type="button" onClick={ed.clearLastError}>
+              ×
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // GitHub issue #212 follow-up: `memoName` can go `null` out from under an ACTIVE conflict
+  // dialog -- an external delete fires both `evt:editor:conflict` (sets `ed.conflict`) and
+  // `evt:fs:external-change` (drives `useTree.ts`'s tree refresh) for the same event; once the
+  // refreshed tree no longer contains the deleted memo, `useTree.ts`'s pre-existing "open memo no
+  // longer exists, drop it" cleanup effect force-clears `openMemoName` regardless of whether a
+  // conflict dialog is currently up for that exact memo. Render just the dialog here rather than
+  // falling through to the full editor UI below -- `memoName`/`tabId`/`ed.content` no longer
+  // identify a real, still-existing memo at this point, so mounting CodeMirror/the toolbar/the
+  // preview pane against them would be meaningless (nothing to bind to) or crash outright. Once
+  // the user picks either button, `useEditor.ts` sets `ed.conflict` back to `null`, and this
+  // component falls through to the ordinary `!memoName` placeholder above on the next render.
+  if (!memoName && ed.conflict) {
+    const conflictKind = ed.conflict;
+    return (
+      <div className="ttn-editor-pane ttn-editor-empty">
+        {t("editor.selectMemo")}
+        <ConflictDialog kind={conflictKind} onKeepMine={() => void ed.resolveConflictKeepMine()} onReloadFromDisk={() => void ed.resolveConflictReloadFromDisk()} />
+        {/* Defensive duplicate of the banner in the `!memoName && ed.conflict === null` branch
+            above. In practice `resolveConflictKeepMine`/`resolveConflictReloadFromDisk` call
+            `setLastErrorCode` and `setConflict(null)` synchronously back-to-back (same batch), so
+            React re-renders with both updates applied at once and this component actually falls
+            through to the OTHER branch, not this one -- but don't rely on that ordering never
+            changing; keep this copy so the banner still shows even if a future edit sets
+            `lastErrorCode` before `conflict` is cleared. */}
+        {ed.lastErrorCode && (
+          <div className="ttn-editor-error" role="alert">
+            <span>{errorMessageFor(ed.lastErrorCode, t)}</span>
+            <button type="button" onClick={ed.clearLastError}>
+              ×
+            </button>
+          </div>
+        )}
+      </div>
+    );
   }
 
   const status = viewRef.current ? getEditorStatus(viewRef.current.state) : null;
