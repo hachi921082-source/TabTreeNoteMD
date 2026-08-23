@@ -8,6 +8,7 @@
 //! (`docs/plans/tab-management/PLAN.md`).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -25,6 +26,7 @@ use crate::model::tab_meta::TabMetaFile;
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::LockSessionStore;
 use crate::util::unique_name::resolve_unique_name;
+use crate::watch::watcher_registry::WatcherRegistry;
 
 /// Tab-bar list entry (`docs/plans/tab-management/PLAN.md` §2 `tab_list`).
 /// For a locked tab, `name` is already the 🔒-placeholder stored in
@@ -53,7 +55,7 @@ impl From<&TabSettingsEntry> for TabInfo {
 }
 
 #[tauri::command]
-pub fn tab_list(app: AppHandle, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<Vec<TabInfo>> {
+pub fn tab_list(app: AppHandle, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<Vec<TabInfo>> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
     AppResult::ok(settings.tabs.iter().map(TabInfo::from).collect())
@@ -113,7 +115,7 @@ pub async fn tab_create(app: AppHandle, initial_path: Option<String>, name: Opti
     };
 
     let store = app.state::<AppSettingsStore>();
-    let registry = app.state::<SelfWriteRegistry>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
     match register_tab_at_path(&app, path, name, &store, &registry) {
         Ok(info) => AppResult::ok(Some(info)),
         Err(payload) => AppResult::err(payload),
@@ -133,7 +135,7 @@ pub fn tab_register_existing(
     path: String,
     name: Option<String>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
 ) -> AppResult<TabInfo> {
     match register_tab_at_path(&app, PathBuf::from(path), name, &store, &registry) {
         Ok(info) => AppResult::ok(info),
@@ -148,7 +150,7 @@ pub fn tab_register_existing(
 /// (`register_tab_at_path`'s `path.is_dir()` check); this command is the one path that actually
 /// creates new on-disk content.
 #[tauri::command]
-pub fn tab_create_new(app: AppHandle, name: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<TabInfo> {
+pub fn tab_create_new(app: AppHandle, name: String, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<TabInfo> {
     let trimmed = name.trim().to_string();
     if let Err(code) = validate_name(&trimmed, ValidationMode::Strict) {
         return AppResult::err_code(code, "invalid tab name");
@@ -269,6 +271,16 @@ fn register_tab_at_path(
             // rather than threaded out of the closure directly (`AppSettingsStore::modify`'s
             // closure return type is a plain `Result<(), E>`).
             let name = settings.tabs.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or(proposed_name);
+
+            // External-change watcher start on new tab registration (`docs/plans/persistence-fs/PLAN.md`
+            // §5; GitHub issue #209). Locked tabs are never watched here — their session-scoped
+            // start/stop is issue #210's job.
+            if !already_locked {
+                let watchers = app.state::<WatcherRegistry>();
+                let self_write_registry = app.state::<Arc<SelfWriteRegistry>>();
+                watchers.start(&id, &path, self_write_registry.inner().clone());
+            }
+
             Ok(TabInfo { id, name, locked: already_locked, lock_label: None })
         }
         Ok(Err(payload)) => Err(payload),
@@ -311,7 +323,7 @@ pub fn tab_rename(
     id: String,
     new_name: String,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
 ) -> AppResult<TabInfo> {
     let trimmed = new_name.trim().to_string();
     if let Err(code) = validate_name(&trimmed, ValidationMode::Strict) {
@@ -369,7 +381,7 @@ pub fn tab_set_lock_label(
     id: String,
     label: Option<String>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
 ) -> AppResult<TabInfo> {
     let result = store.modify(&registry, |settings| match settings.tabs.iter_mut().find(|t| t.id == id) {
         None => Err(AppErrorPayload::new(ErrorCode::NotFound, "tab not found")),
@@ -396,7 +408,7 @@ pub fn tab_set_lock_label(
 }
 
 #[tauri::command]
-pub fn tab_reorder(app: AppHandle, order: Vec<String>, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<()> {
+pub fn tab_reorder(app: AppHandle, order: Vec<String>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
     let result = store.modify(&registry, |settings| {
         let mut current_ids: Vec<&str> = settings.tabs.iter().map(|t| t.id.as_str()).collect();
         let mut requested_ids: Vec<&str> = order.iter().map(|s| s.as_str()).collect();
@@ -430,7 +442,14 @@ pub fn tab_reorder(app: AppHandle, order: Vec<String>, store: State<AppSettingsS
 }
 
 #[tauri::command]
-pub fn tab_remove(app: AppHandle, id: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>, sessions: State<LockSessionStore>) -> AppResult<()> {
+pub fn tab_remove(
+    app: AppHandle,
+    id: String,
+    store: State<AppSettingsStore>,
+    registry: State<Arc<SelfWriteRegistry>>,
+    sessions: State<LockSessionStore>,
+    watchers: State<WatcherRegistry>,
+) -> AppResult<()> {
     // `tab-lock/PLAN.md` §4: locked-with-no-active-session rejects; locked-with-an-active-session
     // behaves like removing any other tab (the still-encrypted files on disk are untouched
     // either way, same "unregister only" rule).
@@ -461,6 +480,11 @@ pub fn tab_remove(app: AppHandle, id: String, store: State<AppSettingsStore>, re
             // Nothing left to reference this session's in-memory plaintext once the tab is
             // unregistered.
             sessions.end(&id);
+            // External-change watcher stop on tab deletion (`docs/plans/persistence-fs/PLAN.md`
+            // §5; GitHub issue #209) — only once removal is confirmed, never for a rejected
+            // (e.g. `TabLocked`) removal attempt. A no-op if this tab was never watched (locked
+            // tabs never have an entry here in the first place).
+            watchers.stop(&id);
             AppResult::ok(())
         }
         Ok(Err(payload)) => AppResult::err(payload),
@@ -477,7 +501,7 @@ pub fn tab_remove(app: AppHandle, id: String, store: State<AppSettingsStore>, re
 /// concatenation (`[spec §2.8]`). Works for both locked and unlocked tabs —
 /// revealing the folder doesn't reveal memo content.
 #[tauri::command]
-pub fn tab_open_location(app: AppHandle, id: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<()> {
+pub fn tab_open_location(app: AppHandle, id: String, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
 

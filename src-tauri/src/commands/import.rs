@@ -7,6 +7,8 @@
 //! dropped file (`PLAN.md` §2's "client-orchestrated collision loop, backend executes one resolved
 //! item at a time" design).
 
+use std::sync::Arc;
+
 use tauri::{AppHandle, State};
 
 use crate::commands::emit_settings_recovery_event;
@@ -37,7 +39,7 @@ pub fn import_file(
     target_name: String,
     overwrite: bool,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {

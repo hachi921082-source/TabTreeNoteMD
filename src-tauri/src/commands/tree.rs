@@ -14,6 +14,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -129,7 +130,7 @@ pub fn tree_open(
     app: AppHandle,
     tab_id: String,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
     view_store: State<TabViewStore>,
@@ -274,7 +275,7 @@ pub fn memo_create(
     name: String,
     parent: Option<NodePath>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
@@ -290,7 +291,7 @@ pub fn memo_create_child(
     name: String,
     parent: NodePath,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
@@ -378,7 +379,7 @@ pub fn memo_rename(
     path: NodePath,
     new_name: String,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
@@ -475,7 +476,7 @@ pub fn memo_delete(
     paths: Vec<NodePath>,
     force_direct: bool,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
@@ -579,7 +580,7 @@ pub fn memo_move(
     paths: Vec<NodePath>,
     target: MoveTarget,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<MemoMoveResult> {
@@ -830,7 +831,7 @@ pub fn memo_set_expanded(
     path: NodePath,
     expanded: bool,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
     mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
@@ -849,7 +850,7 @@ pub fn memo_set_label(
     path: NodePath,
     color: Option<LabelColor>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
     mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
@@ -878,7 +879,7 @@ pub fn memo_set_editor_override(
     path: NodePath,
     editor: Option<MemoEditorSettings>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
     mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
@@ -902,7 +903,7 @@ pub fn memo_set_edit_lock(
     path: NodePath,
     locked: bool,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<TreeSnapshot> {
     mutate_node_field(&app, &tab_id, &path, &store, &registry, &sessions, |node| {
@@ -925,7 +926,7 @@ pub fn memo_set_favorite(
     path: NodePath,
     favorite: bool,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<TreeSnapshot> {
@@ -956,7 +957,7 @@ pub fn tree_set_last_viewed(
     tab_id: String,
     memo_name: Option<String>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     view_store: State<TabViewStore>,
 ) -> AppResult<()> {
@@ -1062,7 +1063,7 @@ pub fn memo_get_properties(
     tab_id: String,
     path: NodePath,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<MemoProperties> {
     let (settings, outcome) = store.get(&registry);
@@ -1125,7 +1126,7 @@ pub fn memo_open_location(
     tab_id: String,
     path: NodePath,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<()> {
     let (settings, outcome) = store.get(&registry);

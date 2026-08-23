@@ -4,6 +4,8 @@
 //! frontend/CodeMirror concern with no backend command of its own) — this is the top-bar-button-
 //! triggered search across every unlocked tab's indexed memos (`search-index/PLAN.md` §5).
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -55,7 +57,7 @@ pub struct SearchHit {
 /// only ever calls this with a non-empty query in practice, but this keeps the command's own
 /// contract well-defined regardless of caller behavior.
 #[tauri::command]
-pub fn search_query(query: String, options: SearchOptions, index: State<SearchIndex>, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<Vec<SearchHit>> {
+pub fn search_query(query: String, options: SearchOptions, index: State<SearchIndex>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<Vec<SearchHit>> {
     if query.is_empty() {
         return AppResult::ok(Vec::new());
     }
@@ -138,7 +140,7 @@ pub fn search_quick_open(
     query: String,
     index: State<SearchIndex>,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     tab_view: State<TabViewStore>,
 ) -> AppResult<Vec<QuickOpenHit>> {
     let (settings, _outcome) = store.get(&registry);
@@ -205,7 +207,7 @@ fn sort_quick_open_hits(hits: &mut [QuickOpenHit]) {
 /// always `true` for every row here, kept in the shape for row-rendering consistency with Quick
 /// Open, since every entry returned already passed the `favorite == true` filter below.
 #[tauri::command]
-pub fn search_get_favorites(index: State<SearchIndex>, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>, tab_view: State<TabViewStore>) -> AppResult<Vec<QuickOpenHit>> {
+pub fn search_get_favorites(index: State<SearchIndex>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>, tab_view: State<TabViewStore>) -> AppResult<Vec<QuickOpenHit>> {
     let (settings, _outcome) = store.get(&registry);
     let entries = index.snapshot();
     AppResult::ok(search_get_favorites_impl(&entries, &settings, &tab_view))
