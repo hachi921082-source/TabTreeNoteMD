@@ -17,8 +17,12 @@
 // removal — `persistence-fs/PLAN.md` §5, GitHub issue #209) with its
 // conflict-check + `evt:fs:external-change`/`evt:editor:conflict` emission
 // pipeline (`watch::conflict`, `watch::watcher_registry::route_change`,
-// GitHub issue #211) wired in. Locked-tab session-scoped start/stop (issue
-// #210) is still outstanding. This allow stays regardless — it also covers
+// GitHub issue #211) wired in, plus frontend handling of both events (issue
+// #212). Locked tabs are deliberately never watched, including while a
+// session is active (issue #210, closed as won't-fix: the pipeline's
+// `is_md_file` filter would silently ignore every event for a locked tab's
+// obfuscated files regardless, and the app is the only writer to them
+// anyway). This allow stays regardless — it also covers
 // unrelated pre-existing dead code reserved for not-yet-wired-up future
 // features (e.g. `fs::path_safety::ValidationMode::Lenient`,
 // `model::result::ErrorCode::LongPath`) elsewhere in this crate.
