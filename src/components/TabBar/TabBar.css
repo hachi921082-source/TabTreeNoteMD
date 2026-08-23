@@ -200,13 +200,13 @@
   z-index: 2;
   background: var(--ttn-bg-chrome);
   display: flex;
-  align-items: center;
+  align-items: stretch;
   margin-left: auto;
 }
 
 .ttn-tab-bar-toolbar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   flex: none;
 }
 
