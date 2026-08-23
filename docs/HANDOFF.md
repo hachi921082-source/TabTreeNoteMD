@@ -14,119 +14,136 @@
 ## Index
 
 1. Where the project stands
-2. This session's work: issues #190, #204, #191 resolved
-3. Open issues: full list, recommended order
-4. Issue #189: split into #209–212, branching/order decision (unchanged from prior sessions)
-5. Process note for next session: live-testing/comment-verbosity discipline
+2. This session's work, issue by issue
+3. Open issues: none
+4. Build verification this session (and a corrected claim)
+5. Process notes for next session
 
 ## 1. Where the project stands
 
-- `V1.2.0` is at `400e88b`, in sync with `origin/V1.2.0` (pushed). All three fix branches from this
-  session (`fix/toc-inline-markup-strip`, `fix/heading-color-wrap-exclude-marker`,
-  `fix/self-referential-anchor-jump`) were merged via PR (#223/#224/#225) and deleted both remotely
-  and locally — none remain.
-- GitHub auto-close via "Closes #N" in the PR body does **not** fire when merging into `V1.2.0`,
-  since the repo's actual default branch is `V1.0.0` — issues #190/#204/#191 were closed manually
-  with `gh issue close` after each merge. Keep this in mind for future issue-branch merges into
-  `V1.2.0`: always close the issue as an explicit step, don't assume the PR merge did it.
-- `"CLAUDE - コピー.md"` (untracked, confirmed-stale backup) still sitting in the repo root, still
-  unaddressed across multiple sessions now. Ask the user before touching it.
-- No dev server / app instance was left running at the end of this session (each reviewer-lite pass
-  killed its own `tauri dev`/CDP session before finishing; verified no lingering `tabtreenotemd.exe`/
-  `cargo.exe` processes after the last one).
+- `V1.2.0` is at `2c3cedd`, in sync with `origin/V1.2.0` (pushed). No local uncommitted changes of
+  substance — `git status` shows only a harmless `src-tauri/Cargo.toml` CRLF-line-ending diff (no
+  actual content change, don't bother touching it) and the long-standing untracked
+  `"CLAUDE - コピー.md"` (confirmed-stale backup, unaddressed across many sessions — ask the user
+  before touching it).
+- All fix branches created this session were merged via PR and deleted both remotely and locally —
+  none remain. Many OTHER stale local branches exist in this repo (`fix/tab-bar-brand-casing`,
+  `feature/preview-lock`, `tab-lock`, a `worktree-agent-*` branch, etc.) — these predate this session,
+  are unrelated to anything done here, and were not investigated or touched. Leave them alone unless
+  the user asks about them specifically.
+- **GitHub issue list is empty** — `gh issue list --repo hachi921082-source/TabTreeNoteMD --state open`
+  returns nothing. Nothing is queued for a next session from the issue tracker.
+- GitHub auto-close via "Closes #N" in a PR body does **not** fire when merging into `V1.2.0`, since
+  the repo's actual default branch is `V1.0.0` — every issue closed this session was closed manually
+  with `gh issue close` after its merge. Keep doing this explicitly for any future issue-branch merge
+  into `V1.2.0`.
+- No dev server / app instance was left running at the end of this session (verified via
+  `Get-Process tabtreenotemd` — none found after cleanup).
 
-## 2. This session's work: issues #190, #204, #191 resolved
+## 2. This session's work, issue by issue
 
-All three ran through this repo's standard GitHub Issue Workflow (`fix/<slug>` branch →
-developer-lite → reviewer-lite live-test/approve → PR → merge into `V1.2.0` → issue closed → entry
-added to `RESOLVED-ISSUES.md`). None were PLAN.md-scale.
+16 PRs merged into `V1.2.0` this session (`#213`–`#228`), plus 3 issues closed without a PR. Full
+detail for each is in `RESOLVED-ISSUES.md`; this is the short version.
 
-- **#190** (color/font-size `<span>`- or `<mark>`-tagged heading text leaked raw markup into the
-  generated TOC label/slug) — `scanHeadings()` (`tocGenerator.ts`) now strips both via the existing
-  `unwrapColorSpans` and a new `unwrapMarkSpans` (`decorationCommands.ts`). The `<span>` half turned
-  out already fixed by an earlier commit on `V1.2.0`; this pass added the `<mark>` half. The issue's
-  suspected live-view click-jump breakage (from a decoration-overlap theory) did not reproduce under
-  live CDP testing — no change needed in `markdownDecorations.ts`. PR #223.
-- **#204** (coloring/font-sizing an entire heading line including its `#` marker made
-  `@lezer/markdown` stop parsing it as a heading, dropping it from the TOC entirely) — user chose the
-  "prevent the wrap" fix direction over "detect after the fact" when asked. `wrapSelectionInSpan`
-  (`decorationCommands.ts`) now excludes a line's leading ATX marker (+ preceding newline, when the
-  heading isn't the wrap's first line) from the `<span>` wrap, keeping the line parseable. **Known
-  residual, not fixed**: selecting a heading line plus trailing non-heading lines together still lets
-  a single unclosed `<span>` leak into that heading's TOC label — cosmetic garbling only (verified via
-  a throwaway script: TOC still lists the heading, slug/label just contain leaked tag text; clicking
-  it still jumps correctly since the same garbled value is used for both generation and resolution).
-  Recorded here for visibility; **whether to file an issue / fix it is intentionally left
-  undecided** — do not file or fix without asking the user first. PR #224.
-- **#191** (self-referential `memo:...#slug` anchor link, same memo/tab, didn't jump) — root cause:
-  the deferred `pendingLinkFocus` → `loadGeneration` pipeline only re-fires on an actual memo
-  (re)load, which a same-tab/same-memo click never triggers. Fixed via a new
-  `EditorPaneHandle.jumpToAnchor(slug)`, called directly from `App.tsx`'s `openLinkTarget` for this
-  case only (bypasses the deferred pipeline entirely); every other case (cross-tab, cross-memo)
-  untouched. PR #225.
-
-## 3. Open issues: full list, recommended order
-
-Same list as the prior session's HANDOFF minus #190/#204/#191 (all closed above). Re-verify scale
-estimates against current code before starting any of these — no new investigation was done on them
-this session.
-
-| # | Title (short) | Scale (from prior sessions' estimate, unverified since) |
+| # | What | PR |
 |---|---|---|
-| 207 | Settings shortcut rebinding doesn't work | Unknown — code reading found no cause; needs live reproduction first |
-| 199 | UI font-size setting doesn't affect tooltips | Revised this session: scope narrowed to a fixed, slightly-larger readable tooltip font (not tied to the dynamic UI font-size setting) — one new generic tooltip component + mechanical replacement of 62 native `title=` call sites; judged fix/`<slug>` scale, PLAN.md not needed. Not yet started. |
-| 189 | External-change watcher wiring (umbrella) | Large — **split into #209–212, see §4** |
-| — | TOC label garbling when a heading + trailing non-heading lines are colored/selected together | Small/cosmetic — see #204 residual above; **fix/no-fix decision intentionally left open**, not yet filed as its own issue |
+| 197 | Tab bar's 📂 button vertical misalignment | #213 |
+| 201 | Preview zoom +/- button position shift | #214 |
+| 205 | Font-size toolbar preset steps widened | #215 |
+| 200 | Delete-confirm dialog button order → Windows convention | #216 |
+| 206 | Enter key didn't confirm the delete dialog | #217 |
+| 200 (follow-up) | Delete-confirm dialog button *text* → はい/いいえ | #218 |
+| 198 | Toolbar/window-controls fixed display on tab-bar overflow | #219 |
+| 202 | Per-tab lock label for locked tabs | #220 |
+| 203 | Right-click paste now handles clipboard images | #221 |
+| 208 | Preview-only double-click jump-to-start fix | #222 |
+| 190 | TOC label span/mark tag leakage fix | #223 |
+| 204 | Heading-line-wide color/font-size decoration broke TOC parsing | #224 |
+| 191 | Self-referential anchor link click-jump fix | #225 |
+| 209 | External-change watcher: lifecycle for non-locked tabs | #226 |
+| 211 | External-change watcher: conflict-check + event emission | #227 |
+| 212 | External-change watcher: frontend event handling | #228 |
+| 210 | External-change watcher: locked-tab session lifecycle | **closed as won't-fix**, no PR |
+| 189 | (umbrella) External-change watcher wiring | **closed**, all 4 sub-issues resolved, no PR |
+| 199 | UI font-size doesn't affect tooltips | **deleted** (not closed) per explicit user instruction |
+| 207 | Shortcut rebinding doesn't work | **deleted** (not closed) per explicit user instruction |
 
-A prior session's cross-issue review found only **#189** to be genuinely PLAN.md-scale (already has
-one: `docs/plans/persistence-fs/PLAN.md`); everything else in this table is fix/`<slug>`-branch scale.
+Notable detail worth knowing before touching this area again:
 
-## 4. Issue #189: split into #209–212, branching/order decision (unchanged from prior sessions)
+- **#209/#211/#212 (the external-change watcher, `docs/plans/persistence-fs/PLAN.md` §5)**: three real
+  bugs were found and fixed via reviewer-lite live-testing during this work, not just the headline
+  feature — a stale conflict-check baseline after a self-write (`watch/watcher.rs`'s new
+  `on_self_write` callback), a conflict dialog torn down by the watcher's own tree-refresh before the
+  user could click a button (`EditorPane.tsx`/`useEditor.ts`), and a silently-swallowed, later
+  mislabeled error on a failed conflict resolution. All three fixed and live-reconfirmed. See
+  `RESOLVED-ISSUES.md`'s #211/#212 entries for the mechanism if this area regresses.
+- **#210 investigation finding**: a locked tab's files are never named `.md` on disk while locked
+  (obfuscated tokens instead), so the watcher pipeline's `is_md_file` filter silently ignores them —
+  wiring up watcher start/stop for a locked-with-session tab would be a functional no-op. Don't
+  re-open this without a genuinely new design (not just reusing the existing `.md`-only pipeline).
+- **#204 residual (fixed this session, no issue number, direct commit `2c3cedd` on `V1.2.0`, no PR)**:
+  selecting a heading line plus trailing non-heading lines and applying color/font-size decoration
+  left a `<span>` unclosed on the heading's own line, garbling its TOC label. Root cause:
+  `wrapPlainRange`'s marker-exclusion splitting (`src/editor/decorationCommands.ts`) reopened a
+  fresh `<span>` immediately before the line's trailing newline instead of after it, so the reopened
+  tag's own text still landed on the heading's line. Fixed by also excluding that newline character
+  from wrapping. Verified via a throwaway Node script driving the real `@codemirror/state` package
+  (4 cases: single heading, heading+1 trailing line, heading+2 trailing lines, two headings+trailing —
+  all balanced), plus `tsc --noEmit`. **Not reviewer-lite-verified live in the running app** — if this
+  area causes trouble again, that's the gap to close first.
 
-`docs/plans/persistence-fs/PLAN.md` §5 already designed this; backend watcher/conflict logic is
-already implemented and unit-tested, just never wired to any lifecycle trigger.
+## 3. Open issues: none
 
-- **#209** — watcher lifecycle for plain (unlocked) tabs. No dependency. **Done** — `WatcherRegistry`
-  added, wired at startup/registration/removal; PR #226, merged into `V1.2.0`. `on_external_change`
-  is a logging-only placeholder pending #211.
-- **#210** — watcher lifecycle for locked tabs, session-scoped. **Closed as won't-fix** — investigated
-  and found to be a functional no-op against #211's actual `.md`-only pipeline (a locked tab's files
-  are never `.md` on disk, obfuscated instead); `persistence-fs/PLAN.md` §5 already argued this
-  wasn't needed and turned out correct. See `RESOLVED-ISSUES.md`'s #210 entry.
-- **#211** — pipe detected changes through `watch/conflict.rs`'s composite check, emit events.
-  **Done** — `route_change()` pipeline added, `evt:fs:external-change`/`evt:editor:conflict` wired,
-  `SearchIndex` patched too; PR #227, merged into `V1.2.0`. A real self-write/stale-baseline bug was
-  found and fixed mid-review (see `RESOLVED-ISSUES.md`'s #211 entry). `evt:fs:external-change` has
-  no frontend listener yet — that's #212.
-- **#212** — verify/implement the frontend's handling of those events. **Done** — `evt:editor:conflict`
-  was already complete; added the missing `evt:fs:external-change` listener; two real regressions in
-  the `Deleted`-kind conflict path (dialog torn down before the user could act, then a silent/leaking
-  error on resolve failure) found via reviewer-lite live-testing and fixed; PR #228, merged into
-  `V1.2.0`. See `RESOLVED-ISSUES.md`'s #212 entry for detail.
+GitHub issue list is empty. Nothing queued. If the next session starts and the user hasn't given a
+new task, there is no backlog item to reach for — ask what they want, don't invent work.
 
-**All four sub-issues resolved (#209/#211/#212 implemented, #210 closed as won't-fix) — #189 (the
-umbrella) is closed too. Nothing remains from this split.**
+## 4. Build verification this session (and a corrected claim)
 
-## 5. Process note for next session: live-testing/comment-verbosity discipline
+- Both `npm run build` (frontend, `tsc` + vite) and `cargo build`/`cargo check` (backend) verified
+  clean at the end of this session, after all commits above.
+- A **debug** build (`cargo build`, `src-tauri/target/debug/tabtreenotemd.exe`) **cannot run
+  standalone** — it's compiled with `devUrl: http://localhost:1420` baked in and will only load
+  content while `npm run tauri dev`'s vite dev server is also running. Running the debug exe directly
+  produces a process that starts but never shows a window (the frontend never loads, so the JS that
+  calls `appWindow.show()` — `src/state/useWindowGeometry.ts` — never runs). This caused real
+  confusion this session before the cause was found; don't re-diagnose it from scratch next time.
+- A full **release** build (`npm run tauri build`) was also produced and verified this session:
+  `src-tauri/target/release/tabtreenotemd.exe` (portable, no dev-server dependency — copied to an
+  unrelated folder and launched standalone successfully) plus installers at
+  `src-tauri/target/release/bundle/msi/TabTreeNoteMD_1.0.0_x64_en-US.msi` and
+  `.../bundle/nsis/TabTreeNoteMD_1.0.0_x64-setup.exe`. These build artifacts were NOT committed and
+  are almost certainly stale by the time a future session reads this — rebuild if needed rather than
+  trusting these paths still hold current binaries.
+- **Confirmed from `src-tauri/src/fs/app_data_root.rs`**: this app is deliberately portable — its data
+  (`settings.json`, tab folders) lives in `<exe_dir>/data/`, not `%APPDATA%`. Copying the release exe
+  to hand to someone else is a supported, designed-for use case. The one real caveat: don't put a
+  single shared exe copy on a network location for multiple people to run *simultaneously* — they'd
+  share the same adjacent `data/` folder and race on `settings.json`. One copy per person (or
+  per-machine) is the correct portable-deployment pattern.
+- **A caution stated earlier in this session turned out wrong and was corrected**: "don't hand out the
+  bare exe, only the installer" was an unverified guess, not a checked fact — corrected after actually
+  testing. If asked about distribution again, the accurate answer is above, not that earlier guess.
 
-Two efficiency lessons surfaced hard this session, both now in persistent memory
-(`feedback_live_testing_scope_discipline`) — re-read that memory before writing any
-`developer-lite`/`reviewer-lite` prompt that involves live/CDP testing:
+## 5. Process notes for next session
 
-1. **Don't over-provision verification.** Early passes this session wrote 7-8-scenario live-CDP test
-   prompts for small, isolated bugfixes (90-129 tool calls, 10-20 real minutes each). Only the one
-   reported-broken behavior needs live verification; at most one adjacent regression check if the
-   diff plausibly touches it, not every path the diff's code happens to pass through. The
-   course-corrected #191 pass ran the same kind of review in 67 tool calls.
-2. **Scroll/jump verification: shrink the viewport, don't pad the test document.** To make a scroll
-   delta measurable, shrink the actual `tauri dev` window (CDP `Browser.setWindowBounds` — note
-   `Emulation.setDeviceMetricsOverride` did not reliably stick on this WebView2 build) instead of
-   writing a long test document to force scroll distance. A short 2-heading memo in a small window
-   already overflows and produces a real, measurable `scrollTop` change.
-
-Also flagged and fixed mid-session (not memory-worthy, just a one-time cleanup): several multi-line
-JSDoc/comment blocks added by `developer-lite` across all three fixes violated CLAUDE.md's
-"no multi-paragraph docstrings/multi-line comment blocks — one short line max" rule. Trimmed to one
-line each before merge (see the "冗長な複数行コメントを1行に整理" commits on each branch's history,
-now folded into `V1.2.0`). Worth double-checking future `developer-lite` output against this rule
-before it reaches review, rather than catching it after PRs are already open.
+- **"Build it" (`Buildして`) means the production release build** (`npm run tauri build`) by default,
+  not a debug compile-check — confirmed the hard way this session (a debug build was made first
+  without asking, leading to a misdiagnosed "won't launch" detour). If only a quick compile-check is
+  wanted, the user will say so explicitly.
+- **User-facing text is Japanese, always** — even mid-`work-in-english`, even a one-line confirmation
+  question. Slipped into English once this session for a short confirmation; corrected. The boundary
+  is "is this going TO the user," not "what language was the preceding internal work in."
+  Code/comments/tool-call args/internal reasoning stay English per the global policy; nothing else
+  the user reads does.
+- **Standing rule, reinforced hard this session, multiple times, in increasingly direct language**: do
+  not make an unauthorized/arbitrary interpretation call — including picking the narrower/lighter/
+  faster reading of an ambiguous instruction — without asking first. This is not a new rule; it's the
+  same one in `feedback_no_unilateral_decisions_ask_when_unsure` (global memory), now with a third
+  confirmed instance and the user's own canonical phrasing recorded there: "お前の判断はいらない、
+  言われたことだけしろ." Read that memory file before making ANY judgment call this project doesn't
+  explicitly authorize — scope, build type, whether to add a caveat, anything.
+- Two efficiency lessons from a prior session remain in `feedback_live_testing_scope_discipline`
+  (global memory) — re-read before writing any `developer-lite`/`reviewer-lite` prompt involving
+  live/CDP testing: don't over-provision verification (one reported-broken behavior needs live
+  checking, not every adjacent path), and shrink the viewport rather than padding test documents to
+  make scroll deltas measurable.
