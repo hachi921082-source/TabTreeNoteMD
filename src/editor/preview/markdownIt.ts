@@ -137,6 +137,15 @@ const renderImageWithDeferredSrc: RendererRule = (tokens, idx, options, env, sel
  * token shapes `@lezer/markdown`'s GFM extension does NOT recognize (`links.ts`'s own header
  * comment) — `memo:...` and bare file paths.
  *
+ * `extendedSearchTextAttr` (issue #235, file-path matches only — `bareLinkCoreRule` passes `true`
+ * only for its `FILE_PATH_RE` call): also sets `data-extended-search-text` to the rest of `tok.
+ * content` from the match's start onward. markdown-it splits a multi-line paragraph's inline
+ * content into one "text" token per source line (a "softbreak" token sits between them), so this
+ * is exactly "rest of the source line, from the match's start to end-of-line" — no separate line
+ * lookup needed. `previewInteractions.ts`'s click handler reads it back to widen the file-open
+ * search past the regex match's own truncated extent, the same way `links.ts`'s live-view
+ * click handler does from `EditorView.state.doc`.
+ *
  * Implemented as a `core.ruler` post-processing pass over already-tokenized "text" tokens
  * (mirroring markdown-it's own built-in `linkify` core rule — see `lib/rules_core/linkify.js`),
  * NOT as an `inline.ruler.push`/`inline.ruler.before("text", ...)` character-position rule as
@@ -150,7 +159,7 @@ const renderImageWithDeferredSrc: RendererRule = (tokens, idx, options, env, sel
  * "see memo:Foo" — `text` claims "see memo" as one run before any bare-token rule ever gets a
  * chance at the "memo:" starting position). This is exactly the same reason markdown-it's own
  * bare-URL autolinking (`linkify: true`) is *not* implemented as an inline-position rule either. */
-function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCtor: TokenConstructor): Token[] {
+function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCtor: TokenConstructor, extendedSearchTextAttr: boolean): Token[] {
   let sawMatch = false;
   const out: Token[] = [];
   let linkDepth = 0;
@@ -176,6 +185,7 @@ function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCto
       }
       const open = new TokenCtor("link_open", "a", 1);
       open.attrSet("href", m[0]);
+      if (extendedSearchTextAttr) open.attrSet("data-extended-search-text", tok.content.slice(m.index));
       pieces.push(open);
       const inner = new TokenCtor("text", "", 0);
       inner.content = m[0];
@@ -201,8 +211,8 @@ function bareLinkCoreRule(state: StateCore): void {
   for (const blockToken of state.tokens) {
     if (blockToken.type !== "inline" || !blockToken.children) continue;
     let children = blockToken.children;
-    children = splitTextTokensByBareTokenRegex(children, BARE_MEMO_RE, state.Token);
-    children = splitTextTokensByBareTokenRegex(children, FILE_PATH_RE, state.Token);
+    children = splitTextTokensByBareTokenRegex(children, BARE_MEMO_RE, state.Token, false);
+    children = splitTextTokensByBareTokenRegex(children, FILE_PATH_RE, state.Token, true);
     blockToken.children = children;
   }
 }

@@ -151,14 +151,14 @@ pub enum ExternalLinkKind {
 ///   already guards against for `<img src>` (`docs/DECISIONS.md`: "Image `src` Allowlist: Reject
 ///   `..` Path-Traversal Segments").
 #[tauri::command]
-pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
+pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, extended_search_text: Option<String>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
     let opener = app.opener();
     let result = match kind {
         ExternalLinkKind::Url => opener.open_url(normalize_url(&value), None::<String>),
         ExternalLinkKind::Email => opener.open_url(normalize_mailto(&value), None::<String>),
         ExternalLinkKind::FilePath => {
             let (settings, _outcome) = store.get(&registry);
-            let resolved = match resolve_file_path(&value, current_tab_id.as_deref(), &settings) {
+            let resolved = match resolve_file_path_widened(&value, extended_search_text.as_deref(), current_tab_id.as_deref(), &settings) {
                 Ok(resolved) => resolved,
                 Err(err) => {
                     tracing::warn!(value, "link_open_external: rejected a file path as a path-traversal attempt ('..' segment or a rooted-but-not-absolute path)");
@@ -218,6 +218,57 @@ fn resolve_file_path(value: &str, current_tab_id: Option<&str>, settings: &AppSe
     crate::fs::path_safety::resolve_relative_within_base(value, base.as_deref(), crate::fs::path_safety::AbsolutePathPolicy::AllowPassthrough)
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|code| AppErrorPayload::new(code, "file path is invalid"))
+}
+
+/// Whitespace-delimited word-boundary end offsets of `s`, longest-prefix-first (issue #235). E.g.
+/// `"C:\Program Files (x86)\Steam"` yields offsets for `"C:\Program Files (x86)\Steam"`, then
+/// `"C:\Program Files (x86)"`, then `"C:\Program Files"`, then `"C:\Program"` — the widened
+/// candidate trimmed one trailing word at a time, never splitting mid-word. Trailing whitespace is
+/// never included in a returned prefix.
+fn candidate_prefixes(s: &str) -> Vec<&str> {
+    let mut word_ends = Vec::new();
+    let mut in_word = false;
+    for (i, c) in s.char_indices() {
+        if c.is_whitespace() {
+            if in_word {
+                word_ends.push(i);
+                in_word = false;
+            }
+        } else {
+            in_word = true;
+        }
+    }
+    if in_word {
+        word_ends.push(s.len());
+    }
+    word_ends.iter().rev().map(|&end| &s[..end]).collect()
+}
+
+/// Issue #235: `FILE_PATH_RE` (`links.ts`) deliberately stops at the first space/bracket so its
+/// decoration doesn't swallow trailing prose — but that truncates a real path that itself contains
+/// a space or `(`/`)` (e.g. `C:\Program Files (x86)\Steam\userdata`), which then fails to open
+/// since the truncated prefix doesn't exist on disk. This widens the search at CLICK time only
+/// (never at decoration/render time — a `metadata()` filesystem probe on every keystroke would be
+/// a real perf concern): given `extended_search_text` (the rest of the source line from the
+/// regex match's start to end-of-line, supplied by the frontend), tries progressively shorter
+/// whitespace-trimmed prefixes of it (longest first, via `candidate_prefixes`), resolving each
+/// through the same `resolve_file_path` traversal-safety check a plain `value` would get, and
+/// returns the resolved string of the longest one that both resolves AND exists on disk
+/// (`std::fs::metadata`). Falls back to resolving `value` (the original short regex match) as-is,
+/// existence unchecked, if no wider prefix panned out — preserving today's behavior (and its
+/// "file not found" opener failure) for a path that plain doesn't exist, or for the "prose after a
+/// short real path" case where the short match itself is what's real.
+fn resolve_file_path_widened(value: &str, extended_search_text: Option<&str>, current_tab_id: Option<&str>, settings: &AppSettings) -> Result<String, AppErrorPayload> {
+    if let Some(extended) = extended_search_text {
+        for prefix in candidate_prefixes(extended) {
+            if let Ok(resolved) = resolve_file_path(prefix, current_tab_id, settings) {
+                if Path::new(&resolved).metadata().is_ok() {
+                    return Ok(resolved);
+                }
+            }
+        }
+    }
+    resolve_file_path(value, current_tab_id, settings)
 }
 
 #[cfg(test)]
@@ -404,6 +455,72 @@ mod tests {
         let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
         let resolved = resolve_file_path("sub\\notes.txt", Some("t1"), &settings).unwrap();
         assert_eq!(resolved, dir.join("sub").join("notes.txt").to_string_lossy().into_owned());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn candidate_prefixes_trims_one_trailing_word_at_a_time_longest_first() {
+        // No space between `(x86)` and `\Steam` — they're one whitespace-delimited word, so no
+        // prefix boundary falls between them (matches the real `C:\Program Files (x86)\Steam`
+        // path, which has no space there either).
+        let prefixes = candidate_prefixes("C:\\Program Files (x86)\\Steam and more prose");
+        assert_eq!(prefixes, vec![
+            "C:\\Program Files (x86)\\Steam and more prose",
+            "C:\\Program Files (x86)\\Steam and more",
+            "C:\\Program Files (x86)\\Steam and",
+            "C:\\Program Files (x86)\\Steam",
+            "C:\\Program Files",
+            "C:\\Program",
+        ]);
+    }
+
+    #[test]
+    fn candidate_prefixes_of_a_single_word_is_just_that_word() {
+        assert_eq!(candidate_prefixes("C:\\Program"), vec!["C:\\Program"]);
+    }
+
+    #[test]
+    fn resolve_file_path_widened_finds_the_longest_prefix_that_exists_on_disk() {
+        let dir = tempdir();
+        // A real directory whose name itself contains a space and parens — GitHub issue #235's
+        // exact repro shape (`C:\Program Files (x86)\...`).
+        let real_dir = dir.join("Program Files (x86)");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+
+        // `value` is the short, regex-truncated match (stops at the first space); `extended` is the
+        // rest-of-line the frontend would send — extends past the real directory into trailing prose
+        // that does not itself exist on disk.
+        let value = "Program";
+        let extended = "Program Files (x86) plus some trailing prose";
+        let resolved = resolve_file_path_widened(value, Some(extended), Some("t1"), &settings).unwrap();
+        assert_eq!(resolved, real_dir.to_string_lossy().into_owned());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_file_path_widened_falls_back_to_the_short_match_when_nothing_wider_exists() {
+        let dir = tempdir();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+
+        let value = "Missing";
+        let extended = "Missing Path That Does Not Exist Anywhere";
+        // No prefix of `extended` exists on disk — falls back to resolving `value` as-is (today's
+        // pre-issue-#235 behavior), existence unchecked.
+        let resolved = resolve_file_path_widened(value, Some(extended), Some("t1"), &settings).unwrap();
+        assert_eq!(resolved, dir.join("Missing").to_string_lossy().into_owned());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_file_path_widened_with_no_extended_text_behaves_like_resolve_file_path() {
+        let dir = tempdir();
+        std::fs::write(dir.join("notes.txt"), b"").unwrap();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+        let resolved = resolve_file_path_widened("notes.txt", None, Some("t1"), &settings).unwrap();
+        assert_eq!(resolved, dir.join("notes.txt").to_string_lossy().into_owned());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

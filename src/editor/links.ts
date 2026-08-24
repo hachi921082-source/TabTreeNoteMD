@@ -131,12 +131,12 @@ export function resolveAndScrollToHeadingAnchor(view: EditorView, slug: string):
  * dialog itself is `config.requestExternalConfirm`'s job (an injected async prompt, since this
  * click handler runs deep inside a CodeMirror `ViewPlugin`, not a React component). Declining the
  * confirm is treated the same as any other unresolved/cancelled link: a silent no-op. */
-async function openExternalLink(kind: ExternalLinkKind, value: string, config: MarkdownDecorationConfig): Promise<void> {
+async function openExternalLink(kind: ExternalLinkKind, value: string, config: MarkdownDecorationConfig, extendedSearchText?: string): Promise<void> {
   if (config.confirmBeforeOpen) {
     const confirmed = await config.requestExternalConfirm(kind, value);
     if (!confirmed) return;
   }
-  await linkOpenExternal(kind, value, config.currentTabId ?? undefined);
+  await linkOpenExternal(kind, value, config.currentTabId ?? undefined, extendedSearchText);
 }
 
 export async function openDetectedLink(view: EditorView, link: DetectedLink, config: MarkdownDecorationConfig): Promise<void> {
@@ -147,9 +147,16 @@ export async function openDetectedLink(view: EditorView, link: DetectedLink, con
     case "email":
       await openExternalLink("email", link.target, config);
       return;
-    case "filePath":
-      await openExternalLink("filePath", link.target, config);
+    case "filePath": {
+      // Issue #235: widen the click-time search to the rest of the source line (never the
+      // decoration's own extent — see this module's `FILE_PATH_RE` comment) so a real path
+      // containing a space or `(`/`)` still resolves; the backend trims this back down word by
+      // word against the real filesystem (`link_open_external`'s `resolve_file_path_widened`).
+      const line = view.state.doc.lineAt(link.from);
+      const extendedSearchText = line.text.slice(link.from - line.from);
+      await openExternalLink("filePath", link.target, config, extendedSearchText);
       return;
+    }
     case "memo":
       await resolveAndOpenMemoLink(config.currentTabId, link.target, config.onOpenMemo);
       return;
