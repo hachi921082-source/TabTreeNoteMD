@@ -79,12 +79,12 @@ function classifyExternalLink(href: string): { kind: ExternalLinkKind; value: st
   return { kind: "url", value: href };
 }
 
-async function openExternal(kind: ExternalLinkKind, value: string, config: PreviewInteractionsConfig): Promise<void> {
+async function openExternal(kind: ExternalLinkKind, value: string, config: PreviewInteractionsConfig, extendedSearchText?: string): Promise<void> {
   if (config.confirmBeforeOpen) {
     const confirmed = await config.requestExternalConfirm(kind, value);
     if (!confirmed) return;
   }
-  await linkOpenExternal(kind, value, config.tabId ?? undefined);
+  await linkOpenExternal(kind, value, config.tabId ?? undefined, extendedSearchText);
 }
 
 function handleAnchorClick(e: MouseEvent, anchor: HTMLAnchorElement, container: HTMLElement, config: PreviewInteractionsConfig): void {
@@ -123,7 +123,12 @@ function handleAnchorClick(e: MouseEvent, anchor: HTMLAnchorElement, container: 
   }
   if (!linkClickMatchesTrigger(e, config.openTrigger, "click")) return;
   const { kind, value } = classifyExternalLink(href);
-  void openExternal(kind, value, config);
+  // Issue #235: `data-extended-search-text` is only ever set for a `filePath`-shaped bare token
+  // (`markdownIt.ts`'s `bareLinkCoreRule`); undefined for every other anchor shape (a real
+  // `[text](url)`/`[text](memo:...)` link, `linkify`'s own bare URL/email detection), where it's
+  // correctly ignored by `linkOpenExternal`/the backend.
+  const extendedSearchText = kind === "filePath" ? (anchor.dataset.extendedSearchText ?? undefined) : undefined;
+  void openExternal(kind, value, config, extendedSearchText);
 }
 
 /** Attaches one delegated `click` listener to `container`. Returns a cleanup function removing it
