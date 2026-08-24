@@ -17,9 +17,14 @@ export async function linkResolve(currentTabId: string, target: string): Promise
 
 /** Opens a URL/email/file-path via the OS-standard "open with default handler" API
  * (`docs/plans/link/PLAN.md` §2). `currentTabId` is only used to resolve a relative `filePath`
- * against that tab's folder — safe to omit for `url`/`email` targets. This command performs no
- * confirmation of its own; gate it behind `AppSettings.links.confirmBeforeOpen` on the caller side
- * (`link/PLAN.md` §2, §4). */
-export async function linkOpenExternal(kind: ExternalLinkKind, value: string, currentTabId?: string): Promise<Result<void>> {
-  return invoke<Result<void>>("link_open_external", { kind, value, currentTabId: currentTabId ?? null });
+ * against that tab's folder — safe to omit for `url`/`email` targets. `extendedSearchText` (issue
+ * #235, `filePath` only) is the rest of the source line from the bare-file-path match's start to
+ * end-of-line — wider than `value` (the regex-truncated match), letting the backend try
+ * progressively shorter word-trimmed prefixes of it against the real filesystem so a path
+ * containing a space or `(`/`)` (e.g. `C:\Program Files (x86)\Steam\userdata`) still opens
+ * correctly, even though `value` itself stays truncated at the first space/bracket. This command
+ * performs no confirmation of its own; gate it behind `AppSettings.links.confirmBeforeOpen` on the
+ * caller side (`link/PLAN.md` §2, §4). */
+export async function linkOpenExternal(kind: ExternalLinkKind, value: string, currentTabId?: string, extendedSearchText?: string): Promise<Result<void>> {
+  return invoke<Result<void>>("link_open_external", { kind, value, currentTabId: currentTabId ?? null, extendedSearchText: extendedSearchText ?? null });
 }
