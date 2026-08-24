@@ -202,6 +202,9 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
     ALLOWED_ATTR: [
       "data-source-line", "id", "href", "style", "src", "alt", "width", "height",
       "data-relative-src", "type", "checked", "disabled", "class",
+      // Issue #235's bare-file-path click-time search widening (`markdownIt.ts`'s
+      // `bareLinkCoreRule`/`previewInteractions.ts`'s `handleAnchorClick`).
+      "data-extended-search-text",
       // KaTeX `<svg>`/`<path>` attributes (see the `ALLOWED_TAGS` comment above) — `width`/`height`
       // are already allowlisted (shared with `<img>`), so only these five are new.
       "aria-hidden", "d", "viewBox", "preserveAspectRatio", "xmlns",
