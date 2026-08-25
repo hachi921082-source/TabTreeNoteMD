@@ -215,12 +215,18 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
     // scheme (`RENDERING.md` §9 / `previewInteractions.ts`'s `href.startsWith("memo:")` branch), so
     // without this override every `href="memo:..."` produced by `markdownIt.ts`'s link rule and its
     // bare-token autolink rule gets silently stripped here, leaving a dead `<a>` with no `href`.
-    // This is the EXACT same regex as DOMPurify's default with only `|memo` added to the scheme
-    // alternation — every other safe scheme and the relative/scheme-less fallback branches are
-    // unchanged, so genuinely dangerous schemes (`javascript:`, `data:` outside the separate
-    // `DATA_URI_TAGS` allowance, `vbscript:`, etc.) remain rejected exactly as before.
+    // This is the EXACT same regex as DOMPurify's default with `|memo` added to the scheme
+    // alternation, plus a new `[a-zA-Z]:[\\/]` alternative (found post-#235: a Windows drive-letter
+    // absolute path like `href="C:\Program Files\..."` was falling through every existing branch —
+    // the fallback scheme-less branch requires the char right after a letter run to NOT be `:`, so
+    // DOMPurify was treating the single-letter drive prefix as an unrecognized URI scheme and
+    // silently stripping `href`, same dead-link symptom as the `memo:` case above. The new
+    // alternative mirrors `links.ts`'s own `FILE_PATH_RE` drive-letter branch exactly (`[a-zA-Z]:`
+    // immediately followed by `\` or `/`), so it can't broaden beyond what `markdownIt.ts`'s
+    // bare-file-path rule actually emits — every genuinely dangerous scheme (`javascript:`, `data:`
+    // outside `DATA_URI_TAGS`, `vbscript:`, `file:`, ...) is 3+ letters and stays rejected.
     ALLOWED_URI_REGEXP:
-      /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|memo):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+      /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|memo):|[a-zA-Z]:[\\/]|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   });
 
   return { html: clean };
