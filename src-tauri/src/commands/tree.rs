@@ -794,6 +794,14 @@ fn memo_move_cross_tab(
         return AppResult::err_code(ErrorCode::Unknown, "failed to save target tab metadata");
     }
     if !copy {
+        // The moved memo(s) no longer exist in the source tab's tree, so a
+        // stale `last_viewed_memo` pointer must be cleared here rather than
+        // left dangling in the persisted metadata (issue #239).
+        if let Some(last_viewed) = &source_loaded.last_viewed_memo {
+            if all_names.iter().any(|name| name == last_viewed) {
+                source_loaded.last_viewed_memo = None;
+            }
+        }
         if let Err(err) = save_tab_meta(source_folder, source_loaded.schema_version, source_loaded.app_version, &source_loaded.tree, source_loaded.last_viewed_memo.clone(), registry) {
             tracing::error!(error = %err, "memo_move: failed to save source tab metadata");
             return AppResult::err_code(ErrorCode::Unknown, "failed to save source tab metadata");
@@ -1671,5 +1679,44 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // memo_move_cross_tab / stale last_viewed_memo clearing (issue #239)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn memo_move_cross_tab_clears_source_last_viewed_memo_when_the_moved_memo_was_it() {
+        let source_dir = tempdir();
+        let target_dir = tempdir();
+        std::fs::write(source_dir.join("Diary.md"), b"").unwrap();
+        let registry = SelfWriteRegistry::new();
+        let search_index = SearchIndex::new();
+
+        let loaded = load_and_reconcile(&source_dir);
+        save_tab_meta(&source_dir, loaded.schema_version, loaded.app_version, &loaded.tree, Some("Diary".to_string()), &registry).unwrap();
+
+        let result = memo_move_cross_tab(
+            "tab-1",
+            &source_dir,
+            "Source",
+            "tab-2",
+            &target_dir,
+            "Target",
+            &["Diary".to_string()],
+            None,
+            0,
+            false,
+            &registry,
+            &search_index,
+        );
+        let AppResult::Ok(result) = result else { panic!("expected Ok") };
+        assert_eq!(result.source.last_viewed_memo, None, "the returned source snapshot must reflect the cleared pointer");
+
+        let (parsed, _recovery) = load_tab_meta_with_recovery(&source_dir);
+        assert_eq!(parsed.unwrap().last_viewed_memo, None, "the persisted source tab metadata must no longer point at the moved-away memo");
+
+        std::fs::remove_dir_all(&source_dir).ok();
+        std::fs::remove_dir_all(&target_dir).ok();
     }
 }
