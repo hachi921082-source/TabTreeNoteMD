@@ -631,7 +631,19 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // `paneMode`/`paneModeRef`, which by the time this runs may already reflect the INCOMING memo's
     // own governed pane mode instead (`docs/plans/v1.2.0/preview-scroll-fix/PLAN.md` §3).
     const outgoingPaneMode = override?.previewLocked ? "preview" : (override?.paneMode ?? editorDefaults.paneMode);
-    const savedLine = outgoingPaneMode === "preview" ? currentPreviewTopLine() : computeTopVisibleLine(view);
+    // GitHub issue #241: this flush is deferred until the NEXT `[ed.loadGeneration]` effect run
+    // (see this function's own doc comment above) -- by then, `view.dom` has very often already
+    // been detached from the document. An ordinary tab switch transiently unmounts this whole
+    // `<EditorPane>` "open memo" branch (`state/useTabView.ts`'s `requestRestore`/`focusOnMemo`
+    // gates the destination tab's own memo-reopen on its `tree_open` fetch resolving), which tears
+    // down `.ttn-editor-cm-container` -- and with it this outgoing `view`'s DOM subtree -- before
+    // this flush ever runs, even when the destination tab/memo has its own content. A detached
+    // `scrollDOM` always reports `scrollTop === 0`, so `computeTopVisibleLine(view)` would silently
+    // return line 1 regardless of where the user had actually scrolled, corrupting the persisted
+    // position to "top of document" on essentially every tab switch. Same "skip the whole write
+    // rather than persist a wrong/zero value" treatment `currentPreviewTopLine()` already gets
+    // above for its own equivalent "container not available" case.
+    const savedLine = outgoingPaneMode === "preview" ? currentPreviewTopLine() : view.dom.isConnected ? computeTopVisibleLine(view) : null;
     if (savedLine === null) return;
     void memoSetEditorOverride(outgoingTabId, name, {
       ...override,
