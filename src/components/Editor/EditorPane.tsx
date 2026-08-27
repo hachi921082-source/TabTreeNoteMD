@@ -643,7 +643,25 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     // position to "top of document" on essentially every tab switch. Same "skip the whole write
     // rather than persist a wrong/zero value" treatment `currentPreviewTopLine()` already gets
     // above for its own equivalent "container not available" case.
-    const savedLine = outgoingPaneMode === "preview" ? currentPreviewTopLine() : view.dom.isConnected ? computeTopVisibleLine(view) : null;
+    //
+    // GitHub issue #241 (reopened): `view.dom.isConnected` alone isn't enough -- switching to a
+    // memo that's governed/locked `"preview"` flips this component's own live `paneMode` (derived
+    // from the INCOMING memo's `memoEditorOverride` prop, available synchronously from already-
+    // loaded tree metadata) on the SAME render that still shows the OUTGOING memo's still-mounted
+    // `view` in `.ttn-editor-cm-container` -- `paneMode === "preview"` puts `display: none` on that
+    // container (see the JSX below), which the OUTGOING view is still parented inside (its own
+    // `outgoingView.destroy()` doesn't run until this same flush call returns). `view.dom` stays
+    // `isConnected` throughout (nothing removes it from the document), but `display: none` still
+    // collapses `scrollDOM.scrollTop` to `0`, so `computeTopVisibleLine(view)` silently returns line
+    // 1 exactly like the already-handled detached-DOM case -- corrupting the persisted position to
+    // "top of document" on every switch to a preview-locked/governed-preview memo. Reproduced live
+    // (CDP-driven) with a realistic 160-line memo scrolled to line 100: `flushOutgoingEditorViewState`
+    // read `scrollTop: 0` while `isConnected: true`, confirmed by polling `getComputedStyle(...)
+    // .display` on the container across the transition ("none" throughout the switch). `offsetParent
+    // !== null` is the standard "is this element actually laid out/visible" check -- `null` for both
+    // a detached node AND one hidden by `display: none` on itself or an ancestor, so it subsumes the
+    // existing `isConnected` check while also covering this new case.
+    const savedLine = outgoingPaneMode === "preview" ? currentPreviewTopLine() : view.dom.isConnected && view.dom.offsetParent !== null ? computeTopVisibleLine(view) : null;
     if (savedLine === null) return;
     void memoSetEditorOverride(outgoingTabId, name, {
       ...override,
