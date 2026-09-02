@@ -26,6 +26,8 @@ The repository's main/default branch is `V1.0.0` (renamed from `implementation`;
 
 For each GitHub issue (repo `hachi921082-source/TabTreeNoteMD`): cut a branch named `fix/<short-slug>` (e.g. `fix/path-traversal-guard`) → fix on that branch (designer-lite/developer-lite/reviewer-lite flow above still applies) → Review → once the issue is resolved, open a PR and merge.
 
+If the change touches security-sensitive surface (sanitization/allowlist rules, path resolution, auth, crypto, tab-lock internals, etc.), ask the user whether to also run `/security-review` before opening the PR — not an unconditional step, just a check-in so it isn't silently skipped when it'd apply.
+
 After merge, close the GitHub issue (not delete — GitHub keeps the full history), and add a short summary entry (issue number, title, PR link) to [docs/RESOLVED-ISSUES.md](docs/RESOLVED-ISSUES.md).
 
 ## PLAN Implementation Workflow
@@ -35,4 +37,5 @@ Repo-specific detail for the shared "PLAN Implementation Flow" standard (see the
 - Branch naming: `feature/<version>-<feature-name>` (e.g. `feature/v1.2.0-preview-link-encoding-fix`), mirroring v1.1.0's `feature/v1.1.0-<name>` pattern.
 - Merge target: the current version branch (e.g. `V1.2.0`), via a GitHub PR (updated 2026-08-22 — superseded the original no-PR direct-merge precedent: a PR gives a visible reviewable diff, an explicit merge action as its own checkpoint, and a durable record on GitHub, all valued for the same reversibility reasons `fix/<slug>` branches are used for GitHub-issue-driven work). Commit message on merge: `Merge feature/<version>-<feature-name>: <description>`.
 - Confirm with the user before merging, pushing, or deleting the branch — reviewer-lite's approval alone is not authorization for these steps (some of these git operations may also require the user's own execution or explicit permission grant, since Claude Code's Auto Mode permission classifier blocks certain git operations that touch shared/remote state, independent of any prior chat confirmation).
+- Same security-review check-in as the GitHub Issue Workflow above: if the PLAN's change touches security-sensitive surface, ask the user whether to run `/security-review` before merging — not unconditional, just don't skip the ask.
 - After merge, write or update [docs/HANDOFF.md](docs/HANDOFF.md) summarizing what changed, what remains open, and the recommended next PLAN.md to implement.
