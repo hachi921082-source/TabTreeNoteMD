@@ -187,3 +187,46 @@
 .ttn-settings-shortcut-reset:hover {
   color: var(--ttn-fg);
 }
+
+/* Bottom-most link on the General tab, opening the third-party license notices dialog
+   (`SettingsDialog.tsx`). Styled as a plain inline text link rather than a button, since it isn't
+   a settings row with a value to change. */
+.ttn-settings-license-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin-top: 8px;
+  align-self: flex-start;
+  color: var(--ttn-accent);
+  font-size: calc(12px * var(--ui-font-scale));
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ttn-settings-license-link:hover {
+  color: var(--ttn-fg);
+}
+
+/* Wider box for the license notices dialog (default `.ttn-dialog` max-width of 480px is too
+   cramped for the license text's longer lines) — same override pattern as
+   `.ttn-dialog.ttn-settings-dialog` above. */
+.ttn-dialog.ttn-license-dialog {
+  min-width: 480px;
+  max-width: 720px;
+  width: 90vw;
+}
+
+/* Read-only license notices text (`THIRD-PARTY-NOTICES.md`, via `about_get_third_party_notices`) —
+   preserves the source Markdown's line breaks/whitespace and lets it scroll independently within
+   the dialog rather than growing the dialog itself unboundedly. */
+.ttn-settings-license-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: calc(12px * var(--ui-font-scale));
+  margin: 0;
+  user-select: text;
+}
