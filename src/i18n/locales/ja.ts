@@ -224,6 +224,8 @@ export const ja = {
   "settings.autoRelockLabel": "非アクティブによる自動ロック",
   "settings.minutesTemplate": "{n}分",
   "settings.disabled": "無効",
+  "settings.licenseLink": "サードパーティ ライセンス",
+  "settings.licenseDialogTitle": "サードパーティ ライセンス",
   "settings.language": "言語",
   "settings.recordingKeyWait": "キー入力待ち...",
   "settings.unbound": "未設定",
