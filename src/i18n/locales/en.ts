@@ -218,6 +218,8 @@ export const en: Record<keyof typeof ja, string> = {
   "settings.autoRelockLabel": "Auto-lock on Inactivity",
   "settings.minutesTemplate": "{n} min",
   "settings.disabled": "Disabled",
+  "settings.licenseLink": "Third-Party Licenses",
+  "settings.licenseDialogTitle": "Third-Party Licenses",
   "settings.language": "Language",
   "settings.recordingKeyWait": "Waiting for key input...",
   "settings.unbound": "Unbound",
