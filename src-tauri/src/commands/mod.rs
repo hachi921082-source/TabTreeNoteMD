@@ -4,6 +4,7 @@
 //! (search, lock, import — `docs/plans/v1.1.0/folder-import/PLAN.md`) are added by their own
 //! feature `PLAN.md` when implemented.
 
+pub mod about;
 pub mod autostart;
 pub mod editor;
 pub mod image;
