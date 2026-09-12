@@ -12,6 +12,7 @@ import { useState } from "react";
 import type { AppSettings, AppSettingsPatch } from "../../shared/models";
 import { REBINDABLE_ACTION_IDS, comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { autostartSetEnabled } from "../../ipc/autostart";
+import { aboutGetThirdPartyNotices } from "../../ipc/about";
 import { Dialog } from "../dialogs/Dialog";
 import { resolveDefaultLanguage, useT } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
@@ -72,6 +73,12 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
   const [recordingActionId, setRecordingActionId] = useState<string | null>(null);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
+  // Third-party license notices dialog (Settings > General, bottom-most link). Fetched lazily on
+  // first open rather than eagerly with the rest of `AppSettings` — this is static, rarely-viewed
+  // reference text baked into the binary (`ipc/about.ts`), not part of the settings model itself.
+  const [licensesOpen, setLicensesOpen] = useState(false);
+  const [licensesText, setLicensesText] = useState<string | null>(null);
+  const [licensesError, setLicensesError] = useState<string | null>(null);
 
   const effectiveShortcuts = resolveShortcuts(settings.shortcuts);
 
@@ -115,7 +122,17 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
     else setAutostartError(result.error.message);
   };
 
+  const openLicenses = async () => {
+    setLicensesOpen(true);
+    if (licensesText !== null) return; // already fetched successfully earlier this Settings session
+    setLicensesError(null);
+    const result = await aboutGetThirdPartyNotices();
+    if (result.ok) setLicensesText(result.value);
+    else setLicensesError(result.error.message);
+  };
+
   return (
+    <>
     <Dialog
       title={t("settings.title")}
       onClose={onClose}
@@ -282,6 +299,15 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
               </select>
             </label>
           </section>
+
+          {/* Bottom-most link on the General tab (`docs/DECISIONS.md`-adjacent compliance need:
+              distributing closed-source builds requires the third-party notices to stay
+              user-reachable from inside the app, not just the repo's `THIRD-PARTY-NOTICES.md`).
+              Deliberately outside any `<section>` — a standalone footer-style link, not a settings
+              row with its own value to change. */}
+          <button type="button" className="ttn-settings-license-link" onClick={() => void openLicenses()}>
+            {t("settings.licenseLink")}
+          </button>
         </div>
       )}
 
@@ -427,5 +453,22 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
         </div>
       )}
     </Dialog>
+    {licensesOpen && (
+      <Dialog
+        title={t("settings.licenseDialogTitle")}
+        onClose={() => setLicensesOpen(false)}
+        className="ttn-license-dialog"
+        footer={
+          <button type="button" onClick={() => setLicensesOpen(false)}>
+            {t("common.close")}
+          </button>
+        }
+      >
+        {licensesError && <p className="ttn-settings-error">{licensesError}</p>}
+        {!licensesError && licensesText === null && <p>{t("common.loading")}</p>}
+        {!licensesError && licensesText !== null && <pre className="ttn-settings-license-text">{licensesText}</pre>}
+      </Dialog>
+    )}
+    </>
   );
 }
