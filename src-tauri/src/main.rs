@@ -220,6 +220,7 @@ fn main() {
             commands::image::image_save_pasted,
             commands::image::image_read_bytes,
             commands::import::import_file,
+            commands::about::about_get_third_party_notices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
