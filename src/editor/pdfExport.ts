@@ -36,6 +36,7 @@ import type { EditorView } from "@codemirror/view";
 import { renderMarkdownToHtml } from "./preview/previewRenderer";
 import { getOrLoadImage, peekCachedBytes } from "./imageLoader";
 import { pdfExportWrite } from "../ipc/pdfExport";
+import type { Result } from "../shared/result";
 
 /** Self-contained print stylesheet (`PLAN.md` §3) — independent of the rest of the app's CSS (the
  * backend's print window — `commands/pdf_export.rs` — is a separate document with no access to
@@ -120,22 +121,20 @@ const IMAGE_FETCH_TIMEOUT_MS = 3000;
 /** Builds the same rendered HTML the on-screen preview shows (images inlined as `data:` URIs — see
  * `inlineImages` below) and hands it to the backend's native `PrintToPdfAsync` save flow
  * (`docs/MDEditor-spec.md` §6, issue #256). Never mutates `view` or any of CodeMirror's own DOM —
- * see this file's header comment. Resolves once the backend command settles — on user cancel of
- * its native save dialog this resolves normally (not an error; `pdfExportWrite`'s own doc comment),
- * so there is nothing for this function's caller to additionally branch on. */
-export async function exportMemoToPdf(view: EditorView, tabId: string, memoName: string, memoKey: string): Promise<void> {
+ * see this file's header comment. Returns the backend's raw `Result` (rather than swallowing it)
+ * so the caller (`EditorPane.tsx`'s `handlePdfExport`) can surface a failure visibly — an earlier
+ * version of this function only `console.error`'d a failure, which left a user who clicked "保存"
+ * in the native save dialog with no visible feedback at all when the write failed. `{ ok: true,
+ * value: null }` means the user cancelled the save dialog — not an error, callers should not treat
+ * a `null` value as a failure. */
+export async function exportMemoToPdf(view: EditorView, tabId: string, memoName: string, memoKey: string): Promise<Result<string | null>> {
   const { html } = renderMarkdownToHtml(view.state);
   const inlinedHtml = await inlineImages(html, tabId, memoKey);
   const documentHtml = buildPrintDocumentHtml(inlinedHtml);
 
   const result = await pdfExportWrite(documentHtml, memoName);
-  if (!result.ok) {
-    // No in-app toast/notification surface is wired up at either of this function's call sites
-    // (`EditorPane.tsx`'s toolbar/shortcut handlers both fire-and-forget this promise) — console
-    // logging is the extent of this function's own error handling; adding user-facing failure UI
-    // is out of this fix's scope.
-    console.error("PDF export failed", result.error);
-  }
+  if (!result.ok) console.error("PDF export failed", result.error);
+  return result;
 }
 
 /** Wraps `bodyHtml` into a full standalone HTML document, including this module's own print
