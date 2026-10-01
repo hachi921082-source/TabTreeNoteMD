@@ -119,8 +119,20 @@ type IframeWindow = Window & typeof globalThis;
 export async function exportMemoToPdf(view: EditorView, tabId: string, memoName: string, memoKey: string): Promise<void> {
   const { html } = renderMarkdownToHtml(view.state);
 
+  // Real, non-zero A4-sized box positioned off-screen (not `visibility: hidden`/`display: none`) —
+  // WebView2's print pipeline (Chromium-based) needs actual paginated layout dimensions to build a
+  // print job; a zero-size or visibility-hidden iframe gets treated as having nothing printable,
+  // which showed up only in packaged release builds, never in `tauri dev` (issue #256: the dev-vs-
+  // packaged-build WebView2 runtime discrepancy was the whole bug).
   const iframe = document.createElement("iframe");
-  Object.assign(iframe.style, { position: "fixed", width: "0", height: "0", border: "0", visibility: "hidden" });
+  Object.assign(iframe.style, {
+    position: "fixed",
+    left: "-10000px",
+    top: "0",
+    width: "210mm",
+    height: "297mm",
+    border: "0",
+  });
   document.body.appendChild(iframe);
 
   let cleanedUp = false;
