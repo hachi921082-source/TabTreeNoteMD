@@ -20,25 +20,19 @@
   border-color: #e0b400;
 }
 
-/* GitHub issue #251 — natural (unwrapped) width of this header, sized to the widest of its three
- * pane-mode variants (drag-hint + view-toggle + pane-mode + preview-lock + pdf-export, plus the
- * zoom group that only renders in `"preview"` pane-mode — `MarkdownToolbar.tsx`). Live-measured via
- * CDP (`scrollWidth` with this rule's `min-width` temporarily removed, so the parent
- * `.ttn-md-toolbar`'s shrink-to-fit sizing didn't mask the true content width) across all three
- * pane-mode labels and both `--ui-font-scale` extremes (1 and 1.5, `SettingsDialog.tsx`'s
- * uiFontScale slider max): the `"preview"` variant isn't always the widest in absolute terms — its
- * fixed-width zoom group doesn't grow with font scale, while `"split"` mode's pane-mode button
- * (next-state label "プレビューのみ", the longest of the three cycle labels) grows enough at scale
- * 1.5 to roughly tie it (~422-423px either way). 440px gives the ~423px measured ceiling a tight
- * ~17px/~4% headroom — deliberately NOT the originally-chosen 490px (~16% headroom), which in the
- * narrower pane-mode variants (edit/split, ~328-331px natural at scale 1) left 100+px of unused
- * slack in the header that `.ttn-md-toolbar-view-toggle`'s pre-existing `margin-left: auto` (see
- * below — previously inert, since the header never used to render wider than its own content)
- * collected into one large, visually-broken dead gap instead of trailing, harmless empty space
- * (GitHub issue #251 follow-up report). Paired with `flex-shrink: 0`/`white-space: nowrap` below on
- * every text-label child so the flex row never shrinks a button below its own content width (which
- * used to wrap button text onto multiple lines when the panel was snapped near the pane's right
- * edge, GitHub issue #245's bottom-right snap). */
+/* GitHub issue #251 — no `min-width` here, deliberately (a worst-case-sized static one was tried
+ * and reverted: it forced ~100px+ of dead space in the narrower pane-mode variants, e.g. edit/split
+ * at default font scale, which is the common case — see this file's git history for the full
+ * back-and-forth). `flex-shrink: 0`/`white-space: nowrap` below on every text-label child is what
+ * actually fixes the original bug (button text wrapping internally when the panel was squeezed near
+ * the pane's right edge, GitHub issue #245's bottom-right snap): each button now holds its own
+ * natural content width unconditionally, so the header as a whole is always exactly as wide as its
+ * current pane-mode's real content needs, no artificial padding. If the pane is ever squeezed
+ * narrower than that natural width, the panel now overflows past the pane edge instead of wrapping
+ * — accepted as strictly better than wrapped/mangled text, not fixed further here. Any resulting gap
+ * between this header's width and `.ttn-md-toolbar-grid`'s own narrower fixed width (its `width:
+ * fit-content` below) is accepted too — the grid trailing short of the header's width in some
+ * pane modes is fine; filling it with more slots later is one easy option if it ever looks sparse. */
 .ttn-md-toolbar-header {
   display: flex;
   align-items: center;
@@ -46,7 +40,6 @@
   padding: 2px 6px;
   cursor: move;
   border-bottom: 1px solid var(--ttn-border);
-  min-width: 440px;
 }
 
 .ttn-md-toolbar-drag-hint {
