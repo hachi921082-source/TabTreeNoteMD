@@ -45,6 +45,25 @@ function extractImageItem(dataTransfer: DataTransfer | null): DataTransferItem |
   return null;
 }
 
+/** Drag-and-drop image files (GitHub issue #244) — unlike paste/toolbar-pick, a drop can carry
+ * multiple files at once (e.g. multi-select in Explorer), so all image files are kept, in
+ * drop order; non-image files are silently ignored, matching the existing OS→tree-pane `.md`-only
+ * import behavior (`docs/spec.v1.1.0.md` §1.2) of quietly skipping payload items that don't apply. */
+function extractImageFiles(dataTransfer: DataTransfer | null): File[] {
+  if (!dataTransfer) return [];
+  return Array.from(dataTransfer.files).filter((file) => file.type.startsWith("image/"));
+}
+
+/** `dataTransfer.files` is only populated on the actual `drop` event — during `dragover` the
+ * browser withholds file contents/types for security, so `dragover` can only check the coarse
+ * `"Files"` payload-type flag (true for any OS file drag, image or not) to decide whether to
+ * `preventDefault()` and allow the drop to fire at all. The real image-vs-other-file filtering
+ * happens in `extractImageFiles` once `drop` actually delivers the file list. */
+function hasFilesPayload(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false;
+  return Array.from(dataTransfer.types).includes("Files");
+}
+
 /** `Array.from(new Uint8Array(...))`, not the `Uint8Array` itself — see `ipc/image.ts`'s doc
  * comment on why a plain number array is required for Tauri's JSON-serialized IPC. */
 async function readFileBytes(file: File): Promise<number[]> {
@@ -78,9 +97,36 @@ export async function saveAndInsertImage(view: EditorView, tabId: string, memoNa
   view.focus();
 }
 
+/** Sequential multi-file save-then-insert for a single drop (GitHub issue #244). Each file's
+ * `saveAndInsertImage` call is awaited before starting the next, since the insert position for
+ * file N+1 must land right after file N's just-inserted markup — not the drop point used by every
+ * file, which would otherwise overwrite/interleave them out of drop order. A single space is
+ * inserted between consecutive images purely for readability (`![](a.png)![](b.png)` with no
+ * separator is unreadable); this is a judgment call, not a spec requirement — nothing in
+ * `docs/spec.md`/`image-handling/PLAN.md` dictates multi-file-drop formatting. If a given file's
+ * save fails, `onError` fires for it (via `saveAndInsertImage`) and the loop continues on to the
+ * remaining files rather than aborting the whole drop. */
+async function saveAndInsertImages(view: EditorView, tabId: string, memoName: string, startPos: number, files: File[], onError: (code: ErrorCode) => void): Promise<void> {
+  let pos = startPos;
+  for (let i = 0; i < files.length; i++) {
+    const bytes = await readFileBytes(files[i]);
+    await saveAndInsertImage(view, tabId, memoName, pos, bytes, files[i].type || null, onError);
+    pos = view.state.selection.main.from;
+    if (i < files.length - 1) {
+      view.dispatch({ changes: { from: pos, to: pos, insert: " " }, selection: { anchor: pos + 1 } });
+      pos += 1;
+    }
+  }
+}
+
 /** Paste handler extension — intercepts an image clipboard payload, saves it, and inserts the
  * resulting Markdown. Returns `false` (lets normal text paste proceed) whenever the clipboard has
- * no image item or no tab is open. */
+ * no image item or no tab is open. Also handles dropping image file(s) onto the editor body
+ * (GitHub issue #244) the same way: `dragover` must call `preventDefault()` too, per standard
+ * HTML5 drag-and-drop — browsers reject a `drop` by default unless the preceding `dragover` already
+ * opted in. Unlike paste, the insert position comes from `view.posAtCoords()` at the drop point
+ * (where the user actually dropped), not the current selection — falling back to document end when
+ * `posAtCoords` returns `null` (e.g. dropped below the last line). */
 export function imagePasteExtension(config: ImagePasteConfig): Extension {
   return EditorView.domEventHandlers({
     paste(event, view) {
@@ -93,6 +139,25 @@ export function imagePasteExtension(config: ImagePasteConfig): Extension {
       const memoName = config.memoName;
       const insertPos = view.state.selection.main.from;
       void readFileBytes(file).then((bytes) => saveAndInsertImage(view, tabId, memoName, insertPos, bytes, file.type || null, config.onError));
+      return true;
+    },
+    dragover(event) {
+      if (!hasFilesPayload(event.dataTransfer) || !config.tabId || !config.memoName) return false;
+      event.preventDefault();
+      return true;
+    },
+    drop(event, view) {
+      if (!hasFilesPayload(event.dataTransfer) || !config.tabId || !config.memoName) return false;
+      // Prevent the browser's default "navigate to the dropped file" regardless of whether the
+      // payload turns out to contain any image files, once we've committed to handling this drop.
+      event.preventDefault();
+      const files = extractImageFiles(event.dataTransfer);
+      if (files.length === 0) return true;
+      const tabId = config.tabId;
+      const memoName = config.memoName;
+      const coords = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      const insertPos = coords ?? view.state.doc.length;
+      void saveAndInsertImages(view, tabId, memoName, insertPos, files, config.onError);
       return true;
     },
   });
