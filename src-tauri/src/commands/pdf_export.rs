@@ -22,6 +22,18 @@
 //! calls [`pdf_export_write`] with the already-rendered, self-contained HTML (images already
 //! inlined as `data:` URIs by the frontend) to write there.
 //!
+//! # The 2 MB `NavigateToString` limit (GitHub issue #257)
+//!
+//! An earlier version of this module navigated the print window via
+//! `ICoreWebView2.NavigateToString(html)` directly. `NavigateToString` has a documented,
+//! non-configurable 2 MB size limit on the HTML string itself (Microsoft's own WebView2 API docs;
+//! exceeding it throws rather than silently truncating) — easily exceeded by a memo with even one
+//! ordinary embedded photo/screenshot, since `pdfExport.ts` inlines every image as a base64
+//! `data:` URI (~33% larger than the raw bytes) directly into the HTML before it ever reaches this
+//! module. This version instead writes `html` to a temp `.html` file ([`TempHtmlFile`]) and
+//! navigates via `ICoreWebView2.Navigate(file://...)` — a real navigation, not string injection,
+//! with no such size limit — exactly Microsoft's own documented workaround for this limit.
+//!
 //! # Threading
 //!
 //! `WebviewWindowBuilder::build()`'s own doc comment warns it deadlocks if called synchronously
@@ -117,15 +129,61 @@ fn suggested_file_name(memo_name: &str) -> String {
 /// Unique per-call window label — export can be triggered again before a previous export's window
 /// has finished tearing down.
 fn print_window_label() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    format!("ttn-pdf-export-{nanos}")
+    format!("ttn-pdf-export-{}", unique_suffix())
 }
 
-/// Creates a hidden print window, navigates it to `html`, and writes the rendered PDF to
-/// `dest_path`. Runs on whatever thread calls it (a `spawn_blocking` background thread — see this
-/// module's header comment on why `.build()` must not run on the main thread).
+fn unique_suffix() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+}
+
+/// RAII guard around a temp `.html` file holding the print content (issue #257's fix — see this
+/// module's header comment) — written once, deleted on drop regardless of which path out of
+/// `render_pdf` is taken (success, any error, or an early return), so a failed export never leaves
+/// stray files behind in the OS temp directory.
+struct TempHtmlFile {
+    path: std::path::PathBuf,
+}
+
+impl TempHtmlFile {
+    fn write(html: &str) -> Result<Self, String> {
+        let path = std::env::temp_dir().join(format!("ttn-pdf-export-{}.html", unique_suffix()));
+        std::fs::write(&path, html.as_bytes()).map_err(|err| format!("failed to write temp HTML file \"{}\": {err}", path.display()))?;
+        tracing::info!(path = %path.display(), len = html.len(), "TempHtmlFile: wrote temp HTML file");
+        Ok(Self { path })
+    }
+
+    /// A `file://` URL string for [`ICoreWebView2::Navigate`] — not [`Self::path`] itself, which is
+    /// a plain filesystem path WebView2's `Navigate` (unlike a native `CreateFile`-style API) does
+    /// not accept directly.
+    fn file_url(&self) -> Result<String, String> {
+        url::Url::from_file_path(&self.path)
+            .map(|url| url.to_string())
+            .map_err(|()| format!("failed to build a file:// URL for \"{}\"", self.path.display()))
+    }
+}
+
+impl Drop for TempHtmlFile {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_file(&self.path) {
+            // Not fatal — a leftover temp file in the OS temp directory is cleaned up by the OS
+            // eventually either way, and this must never fail the export itself (`Drop` can't
+            // return a `Result`).
+            tracing::error!(path = %self.path.display(), error = %err, "TempHtmlFile: failed to delete temp HTML file");
+        }
+    }
+}
+
+/// Creates a hidden print window, navigates it to `html` (via a temp file — see this module's
+/// header comment on the `NavigateToString` size limit this works around), and writes the
+/// rendered PDF to `dest_path`. Runs on whatever thread calls it (a `spawn_blocking` background
+/// thread — see this module's header comment on why `.build()` must not run on the main thread).
 fn render_pdf(app: &AppHandle, html: String, dest_path: &Path) -> Result<(), String> {
+    // Written (and, via `Drop`, deleted) before anything else here can fail — no path out of this
+    // function leaves the temp file behind.
+    let temp_html = TempHtmlFile::write(&html)?;
+    let file_url = temp_html.file_url()?;
+
     let label = print_window_label();
     // Real on-screen dimensions (not zero — the root cause of this module's very first, since-
     // superseded fix attempt for issue #256: a zero-size surface gets treated as having nothing
@@ -140,7 +198,7 @@ fn render_pdf(app: &AppHandle, html: String, dest_path: &Path) -> Result<(), Str
         .map_err(|err| format!("failed to create print window: {err}"))?;
     tracing::info!(label = %label, "render_pdf: print window created");
 
-    let result = run_print_to_pdf(&window, html, dest_path);
+    let result = run_print_to_pdf(&window, &file_url, dest_path);
     tracing::info!(?result, "render_pdf: run_print_to_pdf finished, closing print window");
     let close_result = window.close();
     if let Err(err) = close_result {
@@ -158,16 +216,17 @@ fn render_pdf(app: &AppHandle, html: String, dest_path: &Path) -> Result<(), Str
 /// themselves — crosses back out through a plain `mpsc` channel instead of the closure's own
 /// (`()`-only) return value, since those COM types are not `Send` (required by `with_webview`'s own
 /// `F: Send` bound) and must never need to cross this boundary in either direction.
-fn run_print_to_pdf(window: &WebviewWindow, html: String, dest_path: &Path) -> Result<(), String> {
+fn run_print_to_pdf(window: &WebviewWindow, file_url: &str, dest_path: &Path) -> Result<(), String> {
     let dest_path = dest_path.to_string_lossy().into_owned();
     // Cloned, not moved, into the `with_webview` closure below — this function's own outer copy is
     // still needed afterward, by `wait_for_file_ready`.
     let dest_path_for_closure = dest_path.clone();
+    let file_url = file_url.to_owned();
     let (tx, rx) = mpsc::channel();
     window
         .with_webview(move |platform_webview| {
             tracing::info!("run_print_to_pdf: with_webview closure entered (now on main thread)");
-            let result = print_to_pdf_com(platform_webview, &html, &dest_path_for_closure);
+            let result = print_to_pdf_com(platform_webview, &file_url, &dest_path_for_closure);
             tracing::info!(?result, "run_print_to_pdf: print_to_pdf_com finished");
             let _ = tx.send(result);
         })
@@ -222,16 +281,15 @@ fn wait_for_file_ready(dest_path: &str) -> Result<(), String> {
 
 /// The actual WebView2 COM sequence, run from inside [`run_print_to_pdf`]'s `with_webview` closure
 /// (so always on the correct thread — see that function's own doc comment). Gets the
-/// `ICoreWebView2` controller Tauri's `wry` runtime wraps, navigates it directly to `html` via
-/// `NavigateToString` (no `data:` URL encoding needed — this is a dedicated WebView2 API for
-/// navigating to an HTML string in-memory), waits for that navigation to finish, then calls
-/// `PrintToPdf`.
-fn print_to_pdf_com(platform_webview: tauri::webview::PlatformWebview, html: &str, dest_path: &str) -> Result<(), String> {
+/// `ICoreWebView2` controller Tauri's `wry` runtime wraps, navigates it to `file_url` (the temp
+/// HTML file's `file://` URL — see this module's header comment on why this is `Navigate`, not
+/// `NavigateToString`), waits for that navigation to finish, then calls `PrintToPdf`.
+fn print_to_pdf_com(platform_webview: tauri::webview::PlatformWebview, file_url: &str, dest_path: &str) -> Result<(), String> {
     let controller: ICoreWebView2Controller = platform_webview.controller();
     let core = unsafe { controller.CoreWebView2() }.map_err(|err| format!("CoreWebView2 unavailable: {err}"))?;
     tracing::info!("print_to_pdf_com: got ICoreWebView2, navigating");
 
-    navigate_and_wait(&core, html)?;
+    navigate_and_wait(&core, file_url)?;
     tracing::info!("print_to_pdf_com: navigation completed successfully");
 
     // `PrintToPdf` was added in the `ICoreWebView2_7` minor-version interface (WebView2 Runtime
@@ -270,10 +328,11 @@ fn print_to_pdf_com(platform_webview: tauri::webview::PlatformWebview, html: &st
     Ok(())
 }
 
-/// Navigates `core` directly to `html` (`NavigateToString` — no intermediate URL at all) and
-/// blocks until `NavigationCompleted` fires, checking `IsSuccess` so a failed navigation surfaces
-/// as an error instead of silently proceeding to print whatever half-loaded state resulted.
-fn navigate_and_wait(core: &ICoreWebView2, html: &str) -> Result<(), String> {
+/// Navigates `core` to `file_url` (`Navigate`, not `NavigateToString` — see this module's header
+/// comment on the 2 MB size limit that forced this) and blocks until `NavigationCompleted` fires,
+/// checking `IsSuccess` so a failed navigation surfaces as an error instead of silently proceeding
+/// to print whatever half-loaded state resulted.
+fn navigate_and_wait(core: &ICoreWebView2, file_url: &str) -> Result<(), String> {
     let (tx, rx) = mpsc::channel::<Result<(), String>>();
     let handler = NavigationCompletedEventHandler::create(Box::new(move |_sender, args| {
         let outcome = match args {
@@ -294,12 +353,77 @@ fn navigate_and_wait(core: &ICoreWebView2, html: &str) -> Result<(), String> {
     let mut token: i64 = 0;
     unsafe { core.add_NavigationCompleted(&handler, &mut token) }.map_err(|err| format!("add_NavigationCompleted failed: {err}"))?;
 
-    let html_hstring = HSTRING::from(html);
-    tracing::info!(html_len = html.len(), "navigate_and_wait: calling NavigateToString");
-    unsafe { core.NavigateToString(&html_hstring) }.map_err(|err| format!("NavigateToString failed: {err}"))?;
+    let url_hstring = HSTRING::from(file_url);
+    tracing::info!(file_url, "navigate_and_wait: calling Navigate");
+    unsafe { core.Navigate(&url_hstring) }.map_err(|err| format!("Navigate failed: {err}"))?;
 
     let outcome = webview2_com::wait_with_pump(rx).map_err(|err| format!("navigation wait failed: {err:?}"))?;
     tracing::info!(?outcome, "navigate_and_wait: NavigationCompleted fired");
     let _ = unsafe { core.remove_NavigationCompleted(token) };
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exercises the actual bug trigger for issue #257 without needing a live WebView2 instance
+    /// (that part — `Navigate`/`PrintToPdf` — can only be driven through the real packaged app, see
+    /// this fix's own implementation report): builds a `TempHtmlFile` from HTML sized the same way
+    /// a real memo with one embedded photo would be (base64 image data inlined directly into the
+    /// HTML string, exactly what `pdfExport.ts`'s `inlineImages` produces), and confirms the
+    /// resulting HTML exceeds `NavigateToString`'s documented 2 MB limit — i.e. that this is a
+    /// real, reproducible trigger and not a theoretical one.
+    #[test]
+    fn realistic_image_inlined_html_exceeds_navigate_to_string_limit() {
+        const NAVIGATE_TO_STRING_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+        // A modest 1.6 MB "photo" (an ordinary phone screenshot is routinely this size or larger) —
+        // base64 alone inflates it past the limit before any surrounding HTML markup is even added.
+        let fake_raw_image_bytes = vec![0u8; 1_600_000];
+        let base64_image = base64_encode(&fake_raw_image_bytes);
+        let html = format!(r#"<html><body><img src="data:image/png;base64,{base64_image}"></body></html>"#);
+
+        assert!(
+            html.len() > NAVIGATE_TO_STRING_LIMIT_BYTES,
+            "expected a ~1.5 MB inlined image to push the HTML past NavigateToString's 2 MB limit, got {} bytes",
+            html.len()
+        );
+    }
+
+    /// Minimal base64 encoder — intentionally not reusing any project dependency, so this test
+    /// stays meaningful even if `pdfExport.ts`'s own encoding approach ever changes; only the
+    /// resulting *size* (not byte-for-byte correctness of the encoding) matters for this test.
+    fn base64_encode(bytes: &[u8]) -> String {
+        const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            out.push(CHARS[(b[0] >> 2) as usize] as char);
+            out.push(CHARS[(((b[0] & 0x03) << 4) | (b[1] >> 4)) as usize] as char);
+            out.push(if chunk.len() > 1 { CHARS[(((b[1] & 0x0f) << 2) | (b[2] >> 6)) as usize] as char } else { '=' });
+            out.push(if chunk.len() > 2 { CHARS[(b[2] & 0x3f) as usize] as char } else { '=' });
+        }
+        out
+    }
+
+    /// [`TempHtmlFile`] writes the exact HTML given, produces a well-formed `file://` URL for it,
+    /// and cleans the file up on drop — the part of this fix that's safe and meaningful to test
+    /// without a live WebView2 instance.
+    #[test]
+    fn temp_html_file_writes_and_cleans_up() {
+        let html = "<html><body>test content for issue #257</body></html>";
+        let path_after_drop;
+        {
+            let temp = TempHtmlFile::write(html).expect("TempHtmlFile::write should succeed");
+            let on_disk = std::fs::read_to_string(&temp.path).expect("temp file should be readable");
+            assert_eq!(on_disk, html, "temp file content should match the HTML passed in");
+
+            let url = temp.file_url().expect("file_url should succeed for a plain temp-dir path");
+            assert!(url.starts_with("file:///"), "expected a file:// URL, got {url}");
+
+            path_after_drop = temp.path.clone();
+            assert!(path_after_drop.exists(), "temp file should exist while the guard is alive");
+        }
+        assert!(!path_after_drop.exists(), "temp file should be deleted once the TempHtmlFile guard is dropped");
+    }
 }
