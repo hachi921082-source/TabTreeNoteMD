@@ -420,6 +420,9 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     if (rearranging) return; // see item 5 of the GitHub issue #26 write-up: keep this simple by
     // disabling the toggle entirely while a slot reorder is in progress, rather than deciding how a
     // hidden-mid-drag grid should behave.
+    if (paneMode === "preview") return; // issue #253: preview-only mode already auto-minimizes the
+    // toolbar (see the pane-mode effect below) since the formatting grid has no edit pane to act on;
+    // block manually restoring it from this toggle too, not just the auto-minimize path.
     if (!minimized) {
       minimizeNow();
       return;
@@ -794,7 +797,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           className="ttn-md-toolbar-minimize-btn"
           title={minimized ? t("markdownToolbar.restore") : t("markdownToolbar.minimize")}
           aria-label={minimized ? t("markdownToolbar.restore") : t("markdownToolbar.minimize")}
-          disabled={rearranging}
+          disabled={rearranging || paneMode === "preview"}
           onClick={toggleMinimized}
         >
           {minimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
