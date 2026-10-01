@@ -13,13 +13,8 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 # Tauri app shell (project-architecture/PLAN.md §1). `tray-icon` is needed for
-# window-operation/PLAN.md §4's auto-launch-to-tray feature. `webview-data-url` is needed for
-# PDF export's print window (`pdfExport.ts`'s `exportMemoToPdf`, issue #256): the print content is
-# navigated into a genuine top-level `WebviewWindow` via a `data:text/html,...` URL rather than a
-# nested iframe, since WebView2 does not reliably route a nested iframe's `print()` call through to
-# the native Save-As picker — without this feature, `WebviewWindow`'s `url` option rejects `data:`
-# URLs outright.
-tauri = { version = "2.11.5", features = ["tray-icon", "webview-data-url"] }
+# window-operation/PLAN.md §4's auto-launch-to-tray feature.
+tauri = { version = "2.11.5", features = ["tray-icon"] }
 # IPC / persisted-JSON serialization (project-architecture/PLAN.md §1, §3)
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -77,6 +72,18 @@ regex = "1.11.3"
 # enabled, rather than the crate's full default feature set, to keep the dependency footprint
 # proportional to what this one command actually needs.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+# Direct access to the raw WebView2 COM controller/`ICoreWebView2`, to call the native
+# `PrintToPdfAsync` API for PDF export (`commands/pdf_export.rs`, issue #256) — Tauri's own
+# `Webview::print()` is macOS-only (its own doc comment says so) and neither Tauri nor `wry` expose
+# any higher-level wrapper for `PrintToPdfAsync` itself, so this project calls the COM API directly.
+# Both are already present as transitive dependencies of `tauri`'s own `wry` runtime on Windows
+# (pinned to the same versions here deliberately, to avoid any duplicate-version ABI mismatch for
+# the shared `ICoreWebView2*`/`windows::core` types this module passes across that boundary via
+# `PlatformWebview::controller()`). Windows-only functionality, consistent with the rest of this
+# `Cargo.toml` not target-gating anything else (this project targets Windows 11 first — see the
+# repo's own `CLAUDE.md`).
+webview2-com = "0.38.2"
+windows = "0.61"
 
 [dev-dependencies]
 # `tauri::test::mock_app`/`MockRuntime` — used by `watch/watcher_registry.rs`'s lifecycle tests,
