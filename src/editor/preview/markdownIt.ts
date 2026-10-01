@@ -105,6 +105,27 @@ function wrapBlockMath(token: Token): string {
   return `<div class="ttn-preview-math-wrap"${lineAttr}>${renderMathToHtml(token.content, true)}</div>`;
 }
 
+/** markdown-it's CommonMark-mandated link/image URL normalization (via its bundled `mdurl`
+ * encoder) percent-encodes any non-ASCII byte in `![alt](url)`'s `url` — e.g. `![](きい/001.png)`
+ * renders `src="%E3%81%8D%E3%81%84/001.png"`, verified empirically against markdown-it 15.0.0
+ * (GitHub issue #248). Every downstream reader of `data-relative-src`
+ * (`PreviewPane.tsx`'s image-resolution effect, `pdfExport.ts`'s PDF-export image pass) treats it
+ * as a literal relative filesystem path, not a URL, so that encoding must be undone once, here at
+ * the single point markdown-it's output is first consumed — not duplicated at every read site.
+ * `decodeURIComponent` throws on a malformed escape (e.g. a stray `%` that was never meant as one);
+ * `mdurl`'s own encoder only ever emits well-formed `%XX` escapes for what IT encoded, so decoding
+ * markdown-it's own output back is safe in the normal case, but a user could still directly type a
+ * `%XX`-shaped literal substring into `![](literal%20path)` source — falls back to the raw
+ * (already-correct, in that case) string rather than letting a decode failure crash image
+ * rendering. */
+function decodeMarkdownItImageSrc(src: string): string {
+  try {
+    return decodeURIComponent(src);
+  } catch {
+    return src;
+  }
+}
+
 /** Mirrors markdown-it's own built-in `image` render rule (which flattens `alt` to plain text per
  * CommonMark's special alt-text handling) but additionally renames `src` to `data-relative-src` —
  * standard Markdown `![alt](path)` syntax is this app's actual primary image-insertion mechanism
@@ -125,9 +146,9 @@ const renderImageWithDeferredSrc: RendererRule = (tokens, idx, options, env, sel
   if (altIdx >= 0 && token.attrs) token.attrs[altIdx][1] = self.renderInlineAsText(token.children ?? [], options, env);
   const srcIdx = token.attrIndex("src");
   if (srcIdx >= 0 && token.attrs) {
-    const src = token.attrs[srcIdx][1];
+    const src = String(token.attrs[srcIdx][1]);
     token.attrs.splice(srcIdx, 1);
-    token.attrSet("data-relative-src", src);
+    token.attrSet("data-relative-src", decodeMarkdownItImageSrc(src));
   }
   return self.renderToken(tokens, idx, options);
 };
