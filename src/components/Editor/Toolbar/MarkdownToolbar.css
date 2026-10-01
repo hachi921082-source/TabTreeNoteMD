@@ -238,12 +238,20 @@
   border-bottom: none;
 }
 
+/* GitHub issue #251 follow-up — explicit `width` so the grid holds its own natural (~276px: 9×28px
+ * buttons + 8×2px gaps + 2×4px padding) size regardless of how wide the panel becomes. Without
+ * this, the grid (no `width` of its own) stretches its 9 equal `1fr` columns to fill whatever width
+ * `.ttn-md-toolbar`'s shrink-to-fit sizing settles on — which, once the header gained its own
+ * `min-width` floor above, is now driven by the wider header rather than the grid's own natural
+ * size, spacing the icons out visibly more than before even though no `gap`/`margin` value here
+ * changed. */
 .ttn-md-toolbar-grid {
   display: grid;
   grid-template-columns: repeat(9, 1fr);
   grid-template-rows: repeat(2, 1fr);
   gap: 2px;
   padding: 4px;
+  width: fit-content;
 }
 
 .ttn-md-toolbar-btn {
