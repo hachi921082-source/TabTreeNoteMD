@@ -219,6 +219,7 @@ fn main() {
             commands::link::link_open_external,
             commands::image::image_save_pasted,
             commands::image::image_read_bytes,
+            commands::image::image_read_external_file,
             commands::import::import_file,
             commands::about::about_get_third_party_notices,
         ])
