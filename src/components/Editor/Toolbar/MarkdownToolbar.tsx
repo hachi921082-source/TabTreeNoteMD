@@ -13,6 +13,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { EditorView } from "@codemirror/view";
 import { Lock, Maximize2, Minimize2, Unlock } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DEFAULT_TOOLBAR_ORDER, TOOLBAR_ACTIONS, normalizeToolbarOrder } from "../../../editor/toolbarSlots";
 import type { ToolbarActionId } from "../../../editor/toolbarSlots";
 import {
@@ -290,6 +291,10 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     if (optimisticMinimized !== null && optimisticMinimized === settingsMinimized) setOptimisticMinimized(null);
   }, [settingsMinimized, optimisticMinimized]);
   const minimized = optimisticMinimized ?? settingsMinimized;
+  // Mirrors `minimized` for the window-state-transition effect below, which registers its listener
+  // once (`useEffect(..., [])`) and so would otherwise close over a stale value from its mount render.
+  const minimizedRef = useRef(minimized);
+  minimizedRef.current = minimized;
   // Set right before `setOptimisticMinimized` in `toggleMinimized` below, so the layout effect that
   // reacts to `minimized` changing can tell "the user just clicked the toggle" (snap/restore the
   // position) apart from "`minimized` changed because settings were reloaded from elsewhere" (in
@@ -319,6 +324,12 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
       setBasePosition(raw);
       return;
     }
+    // Guard against a transient degenerate (zero-size) pane measurement — can happen around an
+    // OS-level window-state transition (minimize in particular, GitHub issue #245) before layout has
+    // caught up to the real size. Clamping against a 0×0 box would collapse the position to (0,0) and
+    // (for an `"immediate"` persist) write that bogus value straight to settings. Skip this call
+    // entirely instead; the next real measurable resize/minimize-toggle re-triggers it.
+    if (pane.clientWidth === 0 || pane.clientHeight === 0) return;
     const clamped = clampToolbarPosition(raw, { width: panel.offsetWidth, height: panel.offsetHeight }, { width: pane.clientWidth, height: pane.clientHeight });
     setBasePosition(clamped);
     if (clamped.x === raw.x && clamped.y === raw.y) return;
@@ -417,6 +428,62 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     setOptimisticMinimized(false);
     void patchSettings({ window: { toolbarMinimized: false } });
   };
+
+  // OS-level window-state collapse+snap (GitHub issue #245): minimizing, maximizing, or restoring
+  // the window back to its original (un-maximized) size each jump the editor pane's rendered size by
+  // a large, discrete amount. The pane-resize `ResizeObserver` effect above just re-clamps whatever
+  // position the toolbar happened to be dragged to into the new bounds, which for a discrete jump
+  // (rather than a smooth drag) lands it somewhere that reads as arbitrary rather than predictable.
+  // Default to the same collapsed+bottom-right-snapped state `toggleMinimized`/the pane-mode
+  // auto-minimize effect above already use for a deliberate user action, reusing `minimizeNow` rather
+  // than adding a new positioning path.
+  //
+  // Deliberately does NOT fire on ordinary interactive resize-dragging (the frameless window's own
+  // edge-drag resize, `window-operation/PLAN.md` §1) — only on the discrete OS-level state transition
+  // itself. Detected by comparing `isMinimized()`/`isMaximized()` (`useWindowGeometry.ts`'s own
+  // reference pattern for both) across `onResized` ticks, rather than reacting to every tick's raw
+  // size: during an interactive drag-resize both flags stay `false` throughout (no edge, no spurious
+  // collapse); they only flip on an actual minimize/maximize/restore action, producing exactly one
+  // edge per action even though `onResized` itself can still fire several times around it.
+  //
+  // Only queries the boolean `isMinimized()`/`isMaximized()` flags here, never `outerSize()` — Tauri's
+  // `onResized` is known to fire with a degenerate/zero native size on some platforms specifically
+  // around minimize, and those two flags aren't affected by that quirk. The DOM-measurement side
+  // (`clampAndApply`, invoked indirectly here via `minimizeNow` -> the `minimized`-reacting layout
+  // effect above) has its own separate zero-size guard for the pane's *rendered* size, covering the
+  // other half of that same concern.
+  const windowStateRef = useRef<{ minimized: boolean; maximized: boolean } | null>(null);
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const checkTransition = async () => {
+      const [currentMinimized, currentMaximized] = await Promise.all([appWindow.isMinimized(), appWindow.isMaximized()]);
+      if (cancelled) return;
+      const prev = windowStateRef.current;
+      windowStateRef.current = { minimized: currentMinimized, maximized: currentMaximized };
+      if (!prev) return; // first read just establishes the baseline — nothing to compare against yet
+      const enteringMinimized = currentMinimized && !prev.minimized;
+      const enteringMaximized = currentMaximized && !prev.maximized; // from normal size OR from minimized
+      const leavingMaximized = !currentMaximized && prev.maximized; // restore-to-original-size
+      const leavingMinimized = !currentMinimized && prev.minimized; // un-minimize, to normal or maximized
+      if ((enteringMinimized || enteringMaximized || leavingMaximized || leavingMinimized) && !minimizedRef.current) {
+        minimizeNow();
+      }
+    };
+
+    void checkTransition(); // establish the baseline immediately, before the first `onResized` tick
+    void appWindow.onResized(() => void checkTransition()).then((un) => {
+      if (cancelled) un();
+      else unlisten = un;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-minimize when pane-mode enters `"preview"` (`PLAN.md` §6.2) — not fully hiding the toolbar
   // (the header, and its pane-mode toggle button, stay visible) so there's always a visible escape
