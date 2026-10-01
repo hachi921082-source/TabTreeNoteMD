@@ -468,8 +468,19 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
       const enteringMaximized = currentMaximized && !prev.maximized; // from normal size OR from minimized
       const leavingMaximized = !currentMaximized && prev.maximized; // restore-to-original-size
       const leavingMinimized = !currentMinimized && prev.minimized; // un-minimize, to normal or maximized
-      if ((enteringMinimized || enteringMaximized || leavingMaximized || leavingMinimized) && !minimizedRef.current) {
-        minimizeNow();
+      if (enteringMinimized || enteringMaximized || leavingMaximized || leavingMinimized) {
+        if (!minimizedRef.current) {
+          minimizeNow();
+        } else {
+          // Already collapsed — `minimizeNow()`'s snap-to-corner is normally reached via the
+          // `minimized`-reacting layout effect above, which only re-fires on an actual `minimized`
+          // state change. Here `minimized` is already `true`, so `setOptimisticMinimized(true)`
+          // would be a no-op and that effect wouldn't re-run — re-run the same snap directly
+          // instead (GitHub issue #245, reopened: a second-or-later minimize/maximize/restore
+          // cycle while already collapsed used to fall through to the ordinary pane-resize
+          // re-clamp instead of re-snapping to the corner).
+          clampAndApply({ x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY }, "immediate");
+        }
       }
     };
 
