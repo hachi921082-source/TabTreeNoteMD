@@ -310,6 +310,7 @@ function App() {
                 onOpenMemoLink={openLinkTarget}
                 pendingAnchorSlug={pendingAnchorSlugRef.current}
                 pendingAnchorToken={pendingAnchorTokenRef.current}
+                toast={toastState}
               />
               {treeSide === "right" && splitter}
               {treeSide === "right" && treePane}
