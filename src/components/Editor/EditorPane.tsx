@@ -10,6 +10,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEditor } from "../../state/useEditor";
 import { useSearch } from "../../state/useSearch";
 import { memoGetProperties, memoOpenLocation, memoSetEditorOverride } from "../../ipc/tree";
@@ -39,7 +40,7 @@ import {
 import type { MarkdownDecorationConfig } from "../../editor/markdownDecorations";
 import { resolveAndScrollToHeadingAnchor } from "../../editor/links";
 import { computeTopVisiblePreviewLine, scrollPreviewToLine } from "../../editor/preview/scrollSync";
-import { imagePasteExtension } from "../../editor/imagePaste";
+import { imagePasteExtension, isImageFilePath, saveAndInsertDroppedPaths } from "../../editor/imagePaste";
 import { releaseMemoImages } from "../../editor/imageLoader";
 import { exportMemoToPdf } from "../../editor/pdfExport";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
@@ -428,7 +429,11 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   }, [tabId, memoName, memoKey]);
 
   // Refs so the debounced scroll listener / view-teardown flush always see the latest identity
-  // without stale closures (same pattern as `state/useEditor.ts`).
+  // without stale closures (same pattern as `state/useEditor.ts`). `tabIdRef` additionally backs
+  // the native-OS-drag-drop listener below (GitHub issue #244's re-fix), which is registered once
+  // (empty-deps effect) rather than re-subscribed on every `tabId`/`memoName` change.
+  const tabIdRef = useRef(tabId);
+  tabIdRef.current = tabId;
   const memoNameRef = useRef(memoName);
   memoNameRef.current = memoName;
   const overrideRef = useRef(memoEditorOverride);
@@ -670,6 +675,60 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       cursorHead: head,
     });
   };
+
+  // Native-OS-drag-drop image insert (GitHub issue #244's re-fix). The first attempt (merged as
+  // PR #246) added `dragover`/`drop` HTML5 DOM handlers inside `imagePasteExtension`
+  // (`editor/imagePaste.ts`) — that never fires for a genuine drag from Windows Explorer, since
+  // Tauri's native drag-drop interception (`tauri.conf.json`'s `dragDropEnabled`, default `true`)
+  // conflicts with the browser's own HTML5 DnD events on Windows. This uses
+  // `getCurrentWebview().onDragDropEvent(...)` instead, the same mechanism `TabBar.tsx`'s OS-
+  // folder-drop listener and `MarkdownToolbar.tsx`'s slot-reordering already use for the identical
+  // reason — see either of those for the fuller rationale.
+  //
+  // Registered once (empty deps) rather than re-subscribed on every `tabId`/`memoName`/view change
+  // — `tabIdRef`/`memoNameRef`/`viewRef` are read at drop time instead, same "register once, read
+  // refs at event time" shape already used elsewhere in this component (e.g. the keyboard-shortcut
+  // effects below). `ed.reportError`'s identity is stable (`useEditor.ts`'s own `useCallback(...,
+  // [])`), so capturing it once here is safe.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== "drop") return;
+        const view = viewRef.current;
+        const tabId = tabIdRef.current;
+        const memoName = memoNameRef.current;
+        if (!view || !tabId || !memoName) return;
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        // `event.payload.position` is in physical pixels; CSS/DOM coordinates (`getBoundingClientRect`,
+        // `posAtCoords`) are logical pixels — same scaling `TabBar.tsx`'s own `onDragDropEvent`
+        // listener already applies.
+        const scale = window.devicePixelRatio || 1;
+        const dropX = event.payload.position.x / scale;
+        const dropY = event.payload.position.y / scale;
+        const withinEditor = dropX >= rect.left && dropX <= rect.right && dropY >= rect.top && dropY <= rect.bottom;
+        if (!withinEditor) return;
+        // Non-image paths (and mixed image+non-image drops) are silently skipped — only the image
+        // paths, in drop order, are kept (GitHub issue #244: "non-image files are silently
+        // ignored", matching the OS→tree-pane `.md`-only import's own quiet-skip treatment).
+        const imagePaths = event.payload.paths.filter(isImageFilePath);
+        if (imagePaths.length === 0) return;
+        const coords = view.posAtCoords({ x: dropX, y: dropY });
+        const insertPos = coords ?? view.state.doc.length;
+        void saveAndInsertDroppedPaths(view, tabId, memoName, insertPos, imagePaths, ed.reportError);
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Fresh EditorState/history per memo (`editor-save/PLAN.md` §1: "no cross-memo undo") —
   // recreated whenever `loadGeneration` bumps (initial load, memo switch, or a conflict-

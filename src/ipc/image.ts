@@ -28,3 +28,14 @@ export async function imageReadBytes(tabId: string, relativePath: string): Promi
   const buffer = await invoke<ArrayBuffer>("image_read_bytes", { tabId, relativePath });
   return new Uint8Array(buffer);
 }
+
+/** Reads raw bytes from an arbitrary absolute filesystem path (GitHub issue #244's re-fix —
+ * `components/Editor/EditorPane.tsx`'s native-OS-drag-drop listener only ever receives real
+ * absolute paths from `getCurrentWebview().onDragDropEvent`, never `File` objects, so there is no
+ * client-side way to read the dropped file's bytes the way clipboard paste/the toolbar file-picker
+ * already do). Unlike `imageReadBytes` above, this uses the project's normal `AppResult<T>`
+ * envelope (not a raw `tauri::ipc::Response`) — `path` is always absolute here, not a
+ * relative-to-tab-folder path, so there's no containment check to bypass the envelope for. */
+export async function imageReadExternalFile(path: string): Promise<Result<number[]>> {
+  return invoke<Result<number[]>>("image_read_external_file", { path });
+}

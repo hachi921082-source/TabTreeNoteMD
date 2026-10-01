@@ -226,6 +226,42 @@ pub fn image_read_bytes(
     Ok(Response::new(bytes))
 }
 
+/// Reads raw bytes from an arbitrary absolute filesystem path (GitHub issue #244's re-fix — real
+/// OS drag-and-drop). `components/Editor/EditorPane.tsx`'s native-OS-drag-drop listener
+/// (`getCurrentWebview().onDragDropEvent`) only ever receives real absolute filesystem paths from
+/// Tauri, never `File` objects the way clipboard paste/the toolbar file-picker do, so there is no
+/// client-side way to turn a dropped path into bytes — this command is that missing step. The
+/// returned bytes are fed straight into the EXISTING, unchanged `image_save_pasted` (via
+/// `src/editor/imagePaste.ts`'s `saveAndInsertDroppedPaths` -> `saveAndInsertImage`), so this
+/// command does no format-sniffing/dimension-decoding of its own.
+///
+/// This is inherently an arbitrary-filesystem-read operation by design, at the SAME trust level as
+/// the existing toolbar file-picker (`insertImageViaFilePicker` in `imagePaste.ts`), which already
+/// lets the user read any file on disk via the OS file dialog — the user is explicitly dragging
+/// this exact path in via an OS-level gesture, so there is no "base folder" to contain it to the
+/// way `resolve_relative_within_base` contains a *relative* path within a tab folder (`image_
+/// read_bytes` above); that containment model simply doesn't apply to an already-absolute,
+/// user-supplied path. The only validation performed is that `path` actually looks like a real
+/// absolute filesystem path — a `onDragDropEvent` payload should never hand over anything else, so
+/// a non-absolute value here indicates a malformed/forged call, not a legitimate drop. Actual
+/// readability (existence, permissions, lock state) is left entirely to `std::fs::read` itself.
+#[tauri::command]
+pub fn image_read_external_file(path: String) -> AppResult<Vec<u8>> {
+    let candidate = Path::new(&path);
+    if path.is_empty() || !candidate.is_absolute() {
+        return AppResult::err_code(ErrorCode::NameInvalid, "path must be an absolute file path");
+    }
+
+    match with_retry(|| fs::read(candidate)) {
+        Ok(bytes) => AppResult::ok(bytes),
+        Err(err) => {
+            tracing::error!(error = %err, path = %path, "image_read_external_file: failed to read dropped file");
+            let code = if is_lock_class_error(&err) { ErrorCode::IoLocked } else { ErrorCode::NotFound };
+            AppResult::err_code(code, "failed to read dropped file")
+        }
+    }
+}
+
 /// Magic-number sniff first (`image::guess_format`), MIME-hint fallback, `png` default
 /// (`docs/plans/image-handling/PLAN.md` §2).
 fn detect_extension(bytes: &[u8], mime_hint: Option<&str>) -> String {
@@ -392,6 +428,51 @@ mod tests {
         let resolved = resolve_relative_within_base("img_0011223344556677.png", Some(&base), AbsolutePathPolicy::Reject).unwrap();
         assert_eq!(resolved, base.join("img_0011223344556677.png"));
         fs::remove_dir_all(&base).ok();
+    }
+
+    // `image_read_external_file`'s own path-shape validation (GitHub issue #244's re-fix) —
+    // the command itself takes no `State<...>` params, so it's callable directly in a unit test,
+    // unlike most other commands in this module.
+    #[test]
+    fn image_read_external_file_reads_an_absolute_path() {
+        let dir = tempdir();
+        let file = dir.join("dropped.png");
+        fs::write(&file, ONE_PX_PNG).unwrap();
+
+        match image_read_external_file(file.to_str().unwrap().to_string()) {
+            AppResult::Ok(bytes) => assert_eq!(bytes, ONE_PX_PNG),
+            AppResult::Err(err) => panic!("expected success, got {err:?}"),
+        }
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn image_read_external_file_rejects_a_relative_path() {
+        match image_read_external_file("relative/dropped.png".to_string()) {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::NameInvalid),
+            AppResult::Ok(_) => panic!("expected a relative path to be rejected"),
+        }
+    }
+
+    #[test]
+    fn image_read_external_file_rejects_an_empty_path() {
+        match image_read_external_file(String::new()) {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::NameInvalid),
+            AppResult::Ok(_) => panic!("expected an empty path to be rejected"),
+        }
+    }
+
+    #[test]
+    fn image_read_external_file_reports_not_found_for_a_missing_absolute_path() {
+        let dir = tempdir();
+        let missing = dir.join("missing.png");
+        fs::remove_dir_all(&dir).ok();
+
+        match image_read_external_file(missing.to_str().unwrap().to_string()) {
+            AppResult::Err(err) => assert_eq!(err.code, ErrorCode::NotFound),
+            AppResult::Ok(_) => panic!("expected a missing path to report NotFound"),
+        }
     }
 
     #[test]
