@@ -10,6 +10,7 @@ pub mod editor;
 pub mod image;
 pub mod import;
 pub mod link;
+pub mod pdf_export;
 pub mod search;
 pub mod settings;
 pub mod tab;
