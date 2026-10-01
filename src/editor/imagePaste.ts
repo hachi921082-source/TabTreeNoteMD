@@ -9,6 +9,17 @@
 // `.ttn-editor-error` banner (the same mechanism already used for save/load failures), rather than
 // introducing a second, parallel notification UI for this one feature.
 //
+// GitHub issue #244's real-OS-drag-and-drop image insert does NOT live here as a CodeMirror
+// `domEventHandlers` extension (an earlier attempt, merged as PR #246, added `dragover`/`drop`
+// HTML5 DOM handlers here — that never fires for a genuine Explorer drag, since Tauri's native
+// drag-drop interception, `tauri.conf.json`'s `dragDropEnabled`, conflicts with the browser's own
+// HTML5 DnD events on Windows; see `TabBar.tsx`'s OS-folder-drop listener and
+// `MarkdownToolbar.tsx`'s slot-reordering for the same documented constraint). The real fix
+// (`components/Editor/EditorPane.tsx`) uses `getCurrentWebview().onDragDropEvent(...)` instead,
+// which hands over real absolute filesystem paths rather than HTML5 `File` objects — so it needs
+// its own bytes-from-path read step (`saveAndInsertDroppedPaths` below) rather than reusing a
+// `domEventHandlers` extension at all.
+//
 // Real image *rendering* (an actual `<img>` in the live-view decoration layer) and the resize-
 // handle interaction that converts `![alt](path)` markup into `<img src width height>`
 // (`image-handling/PLAN.md` §4's second/third bullets) are explicitly NOT implemented here — see
@@ -21,9 +32,54 @@
 // meantime — no regression from before this module's real save/insert logic was wired up.
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
-import { imageSavePasted } from "../ipc/image";
+import { imageReadExternalFile, imageSavePasted } from "../ipc/image";
 import { downscaleImageIfNeeded } from "./imageDownscale";
 import type { ErrorCode } from "../shared/result";
+
+/** Extensions accepted by both the toolbar's file-picker (`insertImageViaFilePicker`'s `accept`
+ * list below) and the native-OS-drag-drop path (GitHub issue #244) — kept as one shared set so the
+ * two entry points can never silently drift apart on which image types are supported. */
+const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+
+function fileExtensionOf(path: string): string | null {
+  const dot = path.lastIndexOf(".");
+  if (dot === -1 || dot === path.length - 1) return null;
+  return path.slice(dot + 1).toLowerCase();
+}
+
+/** `true` for a path whose extension matches `IMAGE_FILE_EXTENSIONS` — used to filter a native
+ * OS drag-drop's `event.payload.paths` down to image files, silently skipping the rest (GitHub
+ * issue #244: "non-image files are silently ignored", matching the existing OS→tree-pane `.md`-only
+ * import behavior's own quiet-skip treatment, `docs/spec.v1.1.0.md` §1.2). */
+export function isImageFilePath(path: string): boolean {
+  const ext = fileExtensionOf(path);
+  return ext !== null && IMAGE_FILE_EXTENSIONS.has(ext);
+}
+
+/** Best-effort MIME hint derived from a dropped file's extension — native drag-drop paths carry no
+ * MIME type at all (unlike `DataTransferItem`/`File`), so `saveAndInsertImage`'s `mimeHint`
+ * parameter (used for downscale-eligibility and as the backend's format-sniff fallback, see that
+ * function's own doc comment) is reconstructed from the extension instead. `null` for an
+ * unrecognized extension — `saveAndInsertImage`'s downstream callees already treat a `null` hint as
+ * "defer to magic-number sniffing" (`imageDownscale.ts`'s `isDownscaleEligible`,
+ * `commands/image.rs`'s `detect_extension`). */
+function mimeHintFromExtension(path: string): string | null {
+  switch (fileExtensionOf(path)) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "bmp":
+      return "image/bmp";
+    default:
+      return null;
+  }
+}
 
 export interface ImagePasteConfig {
   /** Tab the currently-open memo belongs to; `null` only when no tab is open at all (in which
@@ -43,25 +99,6 @@ function extractImageItem(dataTransfer: DataTransfer | null): DataTransferItem |
     if (item.kind === "file" && item.type.startsWith("image/")) return item;
   }
   return null;
-}
-
-/** Drag-and-drop image files (GitHub issue #244) — unlike paste/toolbar-pick, a drop can carry
- * multiple files at once (e.g. multi-select in Explorer), so all image files are kept, in
- * drop order; non-image files are silently ignored, matching the existing OS→tree-pane `.md`-only
- * import behavior (`docs/spec.v1.1.0.md` §1.2) of quietly skipping payload items that don't apply. */
-function extractImageFiles(dataTransfer: DataTransfer | null): File[] {
-  if (!dataTransfer) return [];
-  return Array.from(dataTransfer.files).filter((file) => file.type.startsWith("image/"));
-}
-
-/** `dataTransfer.files` is only populated on the actual `drop` event — during `dragover` the
- * browser withholds file contents/types for security, so `dragover` can only check the coarse
- * `"Files"` payload-type flag (true for any OS file drag, image or not) to decide whether to
- * `preventDefault()` and allow the drop to fire at all. The real image-vs-other-file filtering
- * happens in `extractImageFiles` once `drop` actually delivers the file list. */
-function hasFilesPayload(dataTransfer: DataTransfer | null): boolean {
-  if (!dataTransfer) return false;
-  return Array.from(dataTransfer.types).includes("Files");
 }
 
 /** `Array.from(new Uint8Array(...))`, not the `Uint8Array` itself — see `ipc/image.ts`'s doc
@@ -97,22 +134,29 @@ export async function saveAndInsertImage(view: EditorView, tabId: string, memoNa
   view.focus();
 }
 
-/** Sequential multi-file save-then-insert for a single drop (GitHub issue #244). Each file's
- * `saveAndInsertImage` call is awaited before starting the next, since the insert position for
- * file N+1 must land right after file N's just-inserted markup — not the drop point used by every
- * file, which would otherwise overwrite/interleave them out of drop order. A single space is
- * inserted between consecutive images purely for readability (`![](a.png)![](b.png)` with no
- * separator is unreadable); this is a judgment call, not a spec requirement — nothing in
- * `docs/spec.md`/`image-handling/PLAN.md` dictates multi-file-drop formatting. If a given file's
- * save fails, `onError` fires for it (via `saveAndInsertImage`) and the loop continues on to the
- * remaining files rather than aborting the whole drop. */
-async function saveAndInsertImages(view: EditorView, tabId: string, memoName: string, startPos: number, files: File[], onError: (code: ErrorCode) => void): Promise<void> {
+/** Sequential multi-path save-then-insert for a single native OS drag-drop (GitHub issue #244's
+ * re-fix). Unlike the paste/toolbar-pick paths above, `getCurrentWebview().onDragDropEvent`
+ * (`components/Editor/EditorPane.tsx`) hands over real absolute filesystem paths rather than
+ * `File` objects, so each path's bytes must be fetched from the backend
+ * (`image_read_external_file`) instead of read client-side via `File.arrayBuffer()` — everything
+ * else mirrors the old `saveAndInsertImages`: `saveAndInsertImage` is awaited before starting the
+ * next path (insert position for path N+1 must land right after path N's just-inserted markup,
+ * not the drop point used for every path, which would otherwise overwrite/interleave them out of
+ * drop order), a single space is inserted between consecutive images purely for readability (a
+ * judgment call, not a spec requirement), and a given path's read/save failure (`onError`) does not
+ * abort the remaining paths. */
+export async function saveAndInsertDroppedPaths(view: EditorView, tabId: string, memoName: string, startPos: number, paths: string[], onError: (code: ErrorCode) => void): Promise<void> {
   let pos = startPos;
-  for (let i = 0; i < files.length; i++) {
-    const bytes = await readFileBytes(files[i]);
-    await saveAndInsertImage(view, tabId, memoName, pos, bytes, files[i].type || null, onError);
+  for (let i = 0; i < paths.length; i++) {
+    const path = paths[i];
+    const result = await imageReadExternalFile(path);
+    if (!result.ok) {
+      onError(result.error.code);
+      continue;
+    }
+    await saveAndInsertImage(view, tabId, memoName, pos, result.value, mimeHintFromExtension(path), onError);
     pos = view.state.selection.main.from;
-    if (i < files.length - 1) {
+    if (i < paths.length - 1) {
       view.dispatch({ changes: { from: pos, to: pos, insert: " " }, selection: { anchor: pos + 1 } });
       pos += 1;
     }
@@ -121,12 +165,11 @@ async function saveAndInsertImages(view: EditorView, tabId: string, memoName: st
 
 /** Paste handler extension — intercepts an image clipboard payload, saves it, and inserts the
  * resulting Markdown. Returns `false` (lets normal text paste proceed) whenever the clipboard has
- * no image item or no tab is open. Also handles dropping image file(s) onto the editor body
- * (GitHub issue #244) the same way: `dragover` must call `preventDefault()` too, per standard
- * HTML5 drag-and-drop — browsers reject a `drop` by default unless the preceding `dragover` already
- * opted in. Unlike paste, the insert position comes from `view.posAtCoords()` at the drop point
- * (where the user actually dropped), not the current selection — falling back to document end when
- * `posAtCoords` returns `null` (e.g. dropped below the last line). */
+ * no image item or no tab is open. Native-OS-drag-drop image insert (GitHub issue #244) is
+ * deliberately NOT handled here — see this file's top-of-file comment for why (HTML5 `dragover`/
+ * `drop` DOM events never fire for a genuine Explorer drag under Tauri's native drag-drop
+ * interception); that path lives in `components/Editor/EditorPane.tsx` instead, using
+ * `saveAndInsertDroppedPaths` above. */
 export function imagePasteExtension(config: ImagePasteConfig): Extension {
   return EditorView.domEventHandlers({
     paste(event, view) {
@@ -139,25 +182,6 @@ export function imagePasteExtension(config: ImagePasteConfig): Extension {
       const memoName = config.memoName;
       const insertPos = view.state.selection.main.from;
       void readFileBytes(file).then((bytes) => saveAndInsertImage(view, tabId, memoName, insertPos, bytes, file.type || null, config.onError));
-      return true;
-    },
-    dragover(event) {
-      if (!hasFilesPayload(event.dataTransfer) || !config.tabId || !config.memoName) return false;
-      event.preventDefault();
-      return true;
-    },
-    drop(event, view) {
-      if (!hasFilesPayload(event.dataTransfer) || !config.tabId || !config.memoName) return false;
-      // Prevent the browser's default "navigate to the dropped file" regardless of whether the
-      // payload turns out to contain any image files, once we've committed to handling this drop.
-      event.preventDefault();
-      const files = extractImageFiles(event.dataTransfer);
-      if (files.length === 0) return true;
-      const tabId = config.tabId;
-      const memoName = config.memoName;
-      const coords = view.posAtCoords({ x: event.clientX, y: event.clientY });
-      const insertPos = coords ?? view.state.doc.length;
-      void saveAndInsertImages(view, tabId, memoName, insertPos, files, config.onError);
       return true;
     },
   });
