@@ -84,6 +84,15 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # repo's own `CLAUDE.md`).
 webview2-com = "0.38.2"
 windows = "0.61"
+# `Url::from_file_path` for building a `file://` URL to a temp HTML file (GitHub issue #257):
+# `ICoreWebView2.NavigateToString` has a documented, non-configurable 2 MB size limit on the HTML
+# string itself (Microsoft's own API docs; exceeding it throws rather than truncating), which a
+# memo with even one ordinary embedded photo/screenshot can exceed once `pdfExport.ts` inlines it
+# as a base64 `data:` URI (~33% larger than the raw bytes) directly into the HTML — `Navigate()` to
+# an actual file has no such limit, since it is a real navigation rather than string injection.
+# Already a transitive dependency of `tauri`'s own `url`-using code; pinned to the same
+# already-resolved version for consistency, not because a specific feature requires it.
+url = "2.5.8"
 
 [dev-dependencies]
 # `tauri::test::mock_app`/`MockRuntime` — used by `watch/watcher_registry.rs`'s lifecycle tests,
