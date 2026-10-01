@@ -20,6 +20,20 @@
   border-color: #e0b400;
 }
 
+/* GitHub issue #251 — natural (unwrapped) width of this header, sized to the widest of its three
+ * pane-mode variants (drag-hint + view-toggle + pane-mode + preview-lock + pdf-export, plus the
+ * zoom group that only renders in `"preview"` pane-mode — `MarkdownToolbar.tsx`). Live-measured via
+ * CDP (`scrollWidth` with this rule's `min-width` temporarily removed, so the parent
+ * `.ttn-md-toolbar`'s shrink-to-fit sizing didn't mask the true content width) across all three
+ * pane-mode labels and both `--ui-font-scale` extremes (1 and 1.5, `SettingsDialog.tsx`'s
+ * uiFontScale slider max): the `"preview"` variant isn't always the widest in absolute terms — its
+ * fixed-width zoom group doesn't grow with font scale, while `"split"` mode's pane-mode button
+ * (next-state label "プレビューのみ", the longest of the three cycle labels) grows enough at scale
+ * 1.5 to roughly tie it (~422-423px either way). 490px gives the ~423px measured ceiling about 16%
+ * headroom for OS/font-rendering variance. Paired with `flex-shrink: 0`/`white-space: nowrap` below
+ * on every text-label child so the flex row never shrinks a button below its own content width
+ * (which used to wrap button text onto multiple lines when the panel was snapped near the pane's
+ * right edge, GitHub issue #245's bottom-right snap). */
 .ttn-md-toolbar-header {
   display: flex;
   align-items: center;
@@ -27,15 +41,19 @@
   padding: 2px 6px;
   cursor: move;
   border-bottom: 1px solid var(--ttn-border);
+  min-width: 490px;
 }
 
 .ttn-md-toolbar-drag-hint {
+  flex-shrink: 0;
   color: var(--ttn-fg-subtle);
   font-size: calc(12px * var(--ui-font-scale));
   letter-spacing: -2px;
 }
 
 .ttn-md-toolbar-view-toggle {
+  flex-shrink: 0;
+  white-space: nowrap;
   margin-left: auto;
   font-size: calc(11px * var(--ui-font-scale));
   padding: 2px 8px;
@@ -50,6 +68,8 @@
  * `.ttn-md-toolbar-view-toggle`'s own styling (same header row, no `margin-left: auto` since it's
  * not the first flex item pushed to the right — the view-toggle button already claims that). */
 .ttn-md-toolbar-pane-mode {
+  flex-shrink: 0;
+  white-space: nowrap;
   margin-left: 4px;
   font-size: calc(11px * var(--ui-font-scale));
   padding: 2px 8px;
@@ -73,6 +93,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   margin-left: 4px;
@@ -101,6 +122,8 @@
 /* `docs/plans/markdown/pdf-export/PLAN.md` §4 — PDF-export trigger button. Follows
  * `.ttn-md-toolbar-pane-mode`'s own styling (same header row, sits right after it). */
 .ttn-md-toolbar-pdf-export {
+  flex-shrink: 0;
+  white-space: nowrap;
   margin-left: 4px;
   font-size: calc(11px * var(--ui-font-scale));
   padding: 2px 8px;
@@ -122,6 +145,7 @@
 .ttn-md-toolbar-zoom {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 2px;
   margin-left: 4px;
 }
@@ -130,6 +154,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   padding: 0;
@@ -159,6 +184,7 @@
  * width instead of adding to it. */
 .ttn-md-toolbar-zoom-reset {
   box-sizing: border-box;
+  flex-shrink: 0;
   width: 40px;
   padding: 2px 4px;
   border: 1px solid var(--ttn-border);
@@ -180,6 +206,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   margin-left: 4px;
