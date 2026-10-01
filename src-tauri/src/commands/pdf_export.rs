@@ -73,19 +73,24 @@ pub async fn pdf_export_write(app: AppHandle, html: String, memo_name: String) -
         Err(_) => return AppResult::err_code(ErrorCode::Unknown, "save dialog task was dropped"),
     };
     let Some(file_path) = picked else {
+        tracing::info!("pdf_export_write: save dialog cancelled");
         return AppResult::ok(None);
     };
     let dest_path = match file_path.into_path() {
         Ok(path) => path,
         Err(err) => return AppResult::err_code(ErrorCode::Unknown, format!("invalid save path: {err}")),
     };
+    tracing::info!(dest_path = %dest_path.display(), "pdf_export_write: save dialog returned path");
 
     let app_for_render = app.clone();
     let dest_path_for_render = dest_path.clone();
     let render_result = tauri::async_runtime::spawn_blocking(move || render_pdf(&app_for_render, html, &dest_path_for_render)).await;
 
     match render_result {
-        Ok(Ok(())) => AppResult::ok(Some(dest_path.to_string_lossy().into_owned())),
+        Ok(Ok(())) => {
+            tracing::info!(dest_path = %dest_path.display(), "pdf_export_write: render succeeded");
+            AppResult::ok(Some(dest_path.to_string_lossy().into_owned()))
+        }
         Ok(Err(message)) => {
             tracing::error!(error = %message, "pdf_export_write: render failed");
             AppResult::err_code(ErrorCode::Unknown, message)
@@ -133,9 +138,14 @@ fn render_pdf(app: &AppHandle, html: String, dest_path: &Path) -> Result<(), Str
         .inner_size(820.0, 1160.0)
         .build()
         .map_err(|err| format!("failed to create print window: {err}"))?;
+    tracing::info!(label = %label, "render_pdf: print window created");
 
     let result = run_print_to_pdf(&window, html, dest_path);
-    let _ = window.close();
+    tracing::info!(?result, "render_pdf: run_print_to_pdf finished, closing print window");
+    let close_result = window.close();
+    if let Err(err) = close_result {
+        tracing::error!(error = %err, "render_pdf: failed to close print window");
+    }
     result
 }
 
@@ -150,14 +160,64 @@ fn render_pdf(app: &AppHandle, html: String, dest_path: &Path) -> Result<(), Str
 /// `F: Send` bound) and must never need to cross this boundary in either direction.
 fn run_print_to_pdf(window: &WebviewWindow, html: String, dest_path: &Path) -> Result<(), String> {
     let dest_path = dest_path.to_string_lossy().into_owned();
+    // Cloned, not moved, into the `with_webview` closure below — this function's own outer copy is
+    // still needed afterward, by `wait_for_file_ready`.
+    let dest_path_for_closure = dest_path.clone();
     let (tx, rx) = mpsc::channel();
     window
         .with_webview(move |platform_webview| {
-            let result = print_to_pdf_com(platform_webview, &html, &dest_path);
+            tracing::info!("run_print_to_pdf: with_webview closure entered (now on main thread)");
+            let result = print_to_pdf_com(platform_webview, &html, &dest_path_for_closure);
+            tracing::info!(?result, "run_print_to_pdf: print_to_pdf_com finished");
             let _ = tx.send(result);
         })
         .map_err(|err| format!("failed to access webview controller: {err}"))?;
-    rx.recv().map_err(|_| "PDF render task was dropped before completion".to_string())?
+    tracing::info!("run_print_to_pdf: scheduled on main thread, waiting for result");
+    let outcome = rx.recv().map_err(|_| "PDF render task was dropped before completion".to_string())?;
+    tracing::info!(?outcome, "run_print_to_pdf: received result from main thread");
+    outcome?;
+
+    // `PrintToPdf`'s own completion handler firing "success" only means WebView2's print pipeline
+    // (which runs the actual render/PDF encode in a separate process) has told the COM caller it's
+    // done — it does not by itself guarantee that process's filesystem write is fully durable yet.
+    // The caller (`render_pdf`) destroys this function's owning print window immediately once this
+    // function returns, which can tear down that same process; a same-binary, same-code,
+    // pass/fail-inconsistent-across-runs report (not a deterministic logic bug — the kind a wrong
+    // path or malformed HTML would produce) is exactly the symptom of that race. Blocking here
+    // (background `spawn_blocking` thread, never the main/UI thread) until the file is actually
+    // observable with content closes that race at the only point this code can: before the window
+    // gets torn down.
+    wait_for_file_ready(&dest_path)
+}
+
+/// Polls for `dest_path` to exist with nonzero size, up to a few seconds total — see
+/// [`run_print_to_pdf`]'s own doc comment for why this exists. Returns an error (surfaced to the
+/// user via `pdf_export_write`'s `AppResult`, not silently dropped) if the file never appears in
+/// time, rather than reporting success for an export that may not have actually produced a usable
+/// file.
+fn wait_for_file_ready(dest_path: &str) -> Result<(), String> {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+    const MAX_ATTEMPTS: u32 = 30; // 3 seconds total — generous relative to how fast this race, if it
+                                   // is one, should resolve, but still bounded so a genuinely failed
+                                   // export doesn't hang the command indefinitely.
+    for attempt in 1..=MAX_ATTEMPTS {
+        match std::fs::metadata(dest_path) {
+            Ok(meta) if meta.len() > 0 => {
+                tracing::info!(dest_path, size = meta.len(), attempt, "wait_for_file_ready: file ready");
+                return Ok(());
+            }
+            Ok(meta) => {
+                tracing::info!(dest_path, size = meta.len(), attempt, "wait_for_file_ready: file exists but still 0 bytes, retrying");
+            }
+            Err(err) => {
+                tracing::info!(dest_path, attempt, error = %err, "wait_for_file_ready: file not yet visible, retrying");
+            }
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    Err(format!(
+        "PrintToPdf reported success but \"{dest_path}\" never appeared with content within {MAX_ATTEMPTS} x {POLL_INTERVAL:?}"
+    ))
 }
 
 /// The actual WebView2 COM sequence, run from inside [`run_print_to_pdf`]'s `with_webview` closure
@@ -169,8 +229,10 @@ fn run_print_to_pdf(window: &WebviewWindow, html: String, dest_path: &Path) -> R
 fn print_to_pdf_com(platform_webview: tauri::webview::PlatformWebview, html: &str, dest_path: &str) -> Result<(), String> {
     let controller: ICoreWebView2Controller = platform_webview.controller();
     let core = unsafe { controller.CoreWebView2() }.map_err(|err| format!("CoreWebView2 unavailable: {err}"))?;
+    tracing::info!("print_to_pdf_com: got ICoreWebView2, navigating");
 
     navigate_and_wait(&core, html)?;
+    tracing::info!("print_to_pdf_com: navigation completed successfully");
 
     // `PrintToPdf` was added in the `ICoreWebView2_7` minor-version interface (WebView2 Runtime
     // 1.0.1264.42+, shipped well before any currently-supported Windows 11 WebView2 Evergreen
@@ -179,10 +241,12 @@ fn print_to_pdf_com(platform_webview: tauri::webview::PlatformWebview, html: &st
         .cast()
         .map_err(|err| format!("ICoreWebView2_7 unavailable (WebView2 Runtime too old for PrintToPdf): {err}"))?;
 
+    tracing::info!(dest_path, "print_to_pdf_com: calling PrintToPdf");
     let path_hstring = HSTRING::from(dest_path);
-    PrintToPdfCompletedHandler::wait_for_async_operation(
+    let print_result = PrintToPdfCompletedHandler::wait_for_async_operation(
         Box::new(move |handler| unsafe { core7.PrintToPdf(&path_hstring, None, &handler) }.map_err(Into::into)),
         Box::new(|hresult_result: windows::core::Result<()>, success: bool| -> windows::core::Result<()> {
+            tracing::info!(success, hresult_ok = hresult_result.is_ok(), "print_to_pdf_com: PrintToPdf completion handler invoked");
             hresult_result?;
             if success {
                 Ok(())
@@ -190,8 +254,18 @@ fn print_to_pdf_com(platform_webview: tauri::webview::PlatformWebview, html: &st
                 Err(windows::core::Error::from(HRESULT(-1)))
             }
         }),
-    )
-    .map_err(|err| format!("PrintToPdf failed: {err}"))?;
+    );
+    tracing::info!(?print_result, "print_to_pdf_com: wait_for_async_operation returned");
+    print_result.map_err(|err| format!("PrintToPdf failed: {err}"))?;
+
+    // Sanity check: `PrintToPdf`'s completion handler reporting success is documented to mean the
+    // file was written, but logging whether it actually exists on disk (and its size) here removes
+    // any doubt when diagnosing a "dialog appeared, nothing happened" report — cheap, and this is a
+    // background thread already doing blocking I/O-adjacent work, not a hot path.
+    match std::fs::metadata(dest_path) {
+        Ok(meta) => tracing::info!(dest_path, size = meta.len(), "print_to_pdf_com: destination file exists after PrintToPdf"),
+        Err(err) => tracing::error!(dest_path, error = %err, "print_to_pdf_com: destination file does NOT exist after PrintToPdf reported success"),
+    }
 
     Ok(())
 }
@@ -221,9 +295,11 @@ fn navigate_and_wait(core: &ICoreWebView2, html: &str) -> Result<(), String> {
     unsafe { core.add_NavigationCompleted(&handler, &mut token) }.map_err(|err| format!("add_NavigationCompleted failed: {err}"))?;
 
     let html_hstring = HSTRING::from(html);
+    tracing::info!(html_len = html.len(), "navigate_and_wait: calling NavigateToString");
     unsafe { core.NavigateToString(&html_hstring) }.map_err(|err| format!("NavigateToString failed: {err}"))?;
 
     let outcome = webview2_com::wait_with_pump(rx).map_err(|err| format!("navigation wait failed: {err:?}"))?;
+    tracing::info!(?outcome, "navigate_and_wait: NavigationCompleted fired");
     let _ = unsafe { core.remove_NavigationCompleted(token) };
     outcome
 }
