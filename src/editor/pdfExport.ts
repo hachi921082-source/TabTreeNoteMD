@@ -1,29 +1,30 @@
-// Print-to-PDF flow for PDF export (`docs/plans/markdown/pdf-export/PLAN.md` §3,
-// `docs/MDEditor-spec.md` §6, issue #256). Reuses the exact same `renderMarkdownToHtml` call the
-// on-screen preview pane uses (`preview/previewRenderer.ts`) — never a separately-configured render
-// pass — and the same shared image-loading pipeline (`imageLoader.ts`) the preview and live-view
-// already share.
+// PDF export (`docs/plans/markdown/pdf-export/PLAN.md` §3, `docs/MDEditor-spec.md` §6, issue
+// #256). Reuses the exact same `renderMarkdownToHtml` call the on-screen preview pane uses
+// (`preview/previewRenderer.ts`) — never a separately-configured render pass — and the same shared
+// image-loading pipeline (`imageLoader.ts`) the preview and live-view already share.
 //
 // Read-only with respect to the main editor: `exportMemoToPdf` only ever READS `view.state`
 // (`renderMarkdownToHtml(view.state)`, a pure function of the document text). It never calls
 // `view.dispatch` and never touches `view.contentDOM` or any of the main window's own DOM — the
-// print content is built as a plain string and handed to a brand-new, separate top-level
-// `WebviewWindow` (see below), so this carries none of the CM6-transaction-safety risk the
-// live-view's `ImageWidget` had to work around (`image-handling/PLAN.md`'s own implementation
-// report) — there is simply no CodeMirror `contentDOM` anywhere in this file's reach.
+// print content is built as a plain string and handed to the backend (`pdfExportWrite`, below), so
+// this carries none of the CM6-transaction-safety risk the live-view's `ImageWidget` had to work
+// around (`image-handling/PLAN.md`'s own implementation report) — there is simply no CodeMirror
+// `contentDOM` anywhere in this file's reach.
 //
-// Genuine top-level window, not a nested iframe (issue #256 follow-up investigation): an earlier
-// version of this module built a hidden `<iframe>` in the main window and called
-// `iframe.contentWindow.print()`. Packaged-release-build testing against the actual WebView2
-// runtime showed that, while the print preview itself rendered correctly, clicking "印刷" in the
-// native print dialog never produced the OS "Save As" file picker — no PDF was ever written. A
-// control test (printing a normal top-level page in a different Chromium-based browser) confirmed
-// the OS "Microsoft Print to PDF" pipeline itself works fine, so the failure was specific to this
-// app's WebView2-hosted *nested iframe* print flow. This version instead creates a real, separate
-// top-level `WebviewWindow` (Tauri's `@tauri-apps/api/webviewWindow`) and navigates it to a
-// self-contained `data:` HTML document that triggers its own `window.print()` once loaded — a
-// genuine top-level navigated page, which is what WebView2's native print-to-PDF Save-As dialog is
-// documented/expected to support.
+// Native `PrintToPdfAsync`, not `window.print()` (issue #256's final fix): two earlier versions of
+// this module routed through `window.print()` — first from a hidden `<iframe>`, then from a
+// genuine separate top-level `WebviewWindow` navigated via `window.print()`/`afterprint`. Both
+// rendered the print preview correctly in a packaged release build, but clicking "印刷" never
+// produced the OS "Save As" file picker and no PDF was ever written, regardless of which
+// window/document triggered `print()` — a control test confirmed the OS print-to-PDF pipeline
+// itself works fine for an ordinary top-level page in a different Chromium-based browser, so the
+// failure was specific to how this app's packaged WebView2 hosting reaches the native Save-As step
+// from `window.print()`'s browser-style print dialog. This version instead calls the backend's
+// `pdf_export_write` command (`commands/pdf_export.rs`), which shows its own native save-file
+// dialog and writes the PDF directly via WebView2's `ICoreWebView2.PrintToPdfAsync` — a separate,
+// dedicated, dialog-free API Microsoft documents for exactly this use case, with no native print
+// UI/Save-As-picker dependency at all. All frontend DOM work below (`inlineImages` etc.) is
+// unchanged from the previous versions — only how the final HTML reaches a saved PDF changed.
 //
 // Sanitization: `renderMarkdownToHtml`'s returned `html` is already DOMPurify-sanitized, including
 // the `memo:`-scheme fix to `ALLOWED_URI_REGEXP` (`previewRenderer.ts`'s own comment on that fix).
@@ -32,18 +33,18 @@
 // via `.innerHTML`, which does not reintroduce a stripping bug like that one (no regex/string
 // rewriting of the markup itself).
 import type { EditorView } from "@codemirror/view";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { renderMarkdownToHtml } from "./preview/previewRenderer";
 import { getOrLoadImage, peekCachedBytes } from "./imageLoader";
+import { pdfExportWrite } from "../ipc/pdfExport";
 
 /** Self-contained print stylesheet (`PLAN.md` §3) — independent of the rest of the app's CSS (the
- * print window is a separate top-level document with no access to `theme.css`'s `data-theme`
- * custom properties, and print output should look sane regardless of the app's current light/dark
- * theme), so colors here are plain literals, not `var(--ttn-...)` references. Mirrors the preview
- * pane's own base typography/table/code/image rules (`Editor.css`'s `.ttn-editor-preview-pane`
- * rules, `markdown-preview/RENDERING.md` §10) closely enough that the printed output visually
- * matches what the preview showed. Sets margins only — no explicit `@page` size
- * (`docs/MDEditor-spec.md` §6: paper size is left to the OS/printer default). */
+ * backend's print window — `commands/pdf_export.rs` — is a separate document with no access to
+ * `theme.css`'s `data-theme` custom properties, and print output should look sane regardless of
+ * the app's current light/dark theme), so colors here are plain literals, not `var(--ttn-...)`
+ * references. Mirrors the preview pane's own base typography/table/code/image rules (`Editor.css`'s
+ * `.ttn-editor-preview-pane` rules, `markdown-preview/RENDERING.md` §10) closely enough that the
+ * printed output visually matches what the preview showed. Sets margins only — no explicit `@page`
+ * size (`docs/MDEditor-spec.md` §6: paper size is left to the OS/printer default). */
 const PRINT_STYLESHEET = `
   @page { margin: 20mm; }
   body {
@@ -111,116 +112,38 @@ const PRINT_STYLESHEET = `
 
 /** Per-image byte-fetch timeout (`docs/MDEditor-spec.md` §6: "a reasonable per-image timeout (e.g.
  * ~3 seconds) so one broken or slow image cannot hang PDF export indefinitely") — bounds the
- * `getOrLoadImage` IPC round-trip below, not image decoding (decoding of the already-inlined
- * `data:` URIs happens inside the print window itself; see `PRINT_TRIGGER_SCRIPT`'s own
- * image-readiness wait). */
+ * `getOrLoadImage` IPC round-trip below, not image decoding (the backend's `NavigateToString` +
+ * `NavigationCompleted` wait — `commands/pdf_export.rs` — handles waiting for the already-inlined
+ * `data:`-URI images to finish loading on its own side). */
 const IMAGE_FETCH_TIMEOUT_MS = 3000;
 
-/** Fallback print-window-close delay if neither `afterprint` nor the window's own destruction ever
- * fires — generous so a slow print dialog (the user leaving the native "Save as PDF" dialog open)
- * doesn't get its window yanked out from under it mid-print. */
-const PRINT_WINDOW_CLEANUP_FALLBACK_MS = 60000;
-
-/** Inline script baked directly into the print window's own `data:` HTML document — runs in that
- * window's own JS realm (a separate top-level `WebviewWindow`, not reachable from this module's own
- * `window`/`document`), so image-readiness waiting and the `print()`/`window.close()` calls all have
- * to live here rather than being driven from the main window the way the old hidden-iframe version
- * could. Every `<img>` source is already a `data:` URI by the time this runs (see `inlineImages`
- * below) — no network/IPC fetch happens inside the print window itself, so `document.images[i]
- * .complete` becomes reliably true very quickly once `load` fires; the `setTimeout` fallback below
- * exists only so a pathologically slow/broken individual image can't hang the print trigger
- * indefinitely, mirroring `IMAGE_FETCH_TIMEOUT_MS`'s spec-mandated intent one level up. */
-const PRINT_TRIGGER_SCRIPT = `
-(function () {
-  var printed = false;
-  function triggerPrint() {
-    if (printed) return;
-    printed = true;
-    window.print();
-  }
-  function allImagesComplete() {
-    var imgs = document.images;
-    for (var i = 0; i < imgs.length; i++) {
-      if (!imgs[i].complete) return false;
-    }
-    return true;
-  }
-  window.addEventListener("afterprint", function () {
-    window.close();
-  }, { once: true });
-  if (document.readyState === "complete" && allImagesComplete()) {
-    triggerPrint();
-  } else {
-    window.addEventListener("load", triggerPrint, { once: true });
-  }
-  window.setTimeout(triggerPrint, 5000);
-})();
-`;
-
-/** Builds a real, separate top-level print `WebviewWindow` holding the same rendered HTML the
- * on-screen preview shows, and triggers the OS print dialog from inside it (`docs/MDEditor-spec.md`
- * §6, issue #256). Never mutates `view` or any of CodeMirror's own DOM — see this file's header
- * comment. */
+/** Builds the same rendered HTML the on-screen preview shows (images inlined as `data:` URIs — see
+ * `inlineImages` below) and hands it to the backend's native `PrintToPdfAsync` save flow
+ * (`docs/MDEditor-spec.md` §6, issue #256). Never mutates `view` or any of CodeMirror's own DOM —
+ * see this file's header comment. Resolves once the backend command settles — on user cancel of
+ * its native save dialog this resolves normally (not an error; `pdfExportWrite`'s own doc comment),
+ * so there is nothing for this function's caller to additionally branch on. */
 export async function exportMemoToPdf(view: EditorView, tabId: string, memoName: string, memoKey: string): Promise<void> {
   const { html } = renderMarkdownToHtml(view.state);
   const inlinedHtml = await inlineImages(html, tabId, memoKey);
-  const documentHtml = buildPrintDocumentHtml(inlinedHtml, memoName);
+  const documentHtml = buildPrintDocumentHtml(inlinedHtml);
 
-  let printWindow: WebviewWindow | null = null;
-  let cleanedUp = false;
-  const cleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    printWindow?.close().catch(() => {
-      // Already closed (e.g. the window's own `afterprint` → `window.close()` already tore it
-      // down) or never finished creating — either way there is nothing left to clean up.
-    });
-  };
-
-  try {
-    // Real on-screen size (not a hidden/zero-size surface — the whole lesson of issue #256's first
-    // fix attempt) but positioned far off the visible desktop area, so the user never sees it.
-    printWindow = new WebviewWindow(printWindowLabel(), {
-      url: `data:text/html;charset=utf-8,${encodeURIComponent(documentHtml)}`,
-      x: -10000,
-      y: 0,
-      width: 820,
-      height: 1160,
-      decorations: false,
-      visible: true,
-      skipTaskbar: true,
-    });
-
-    printWindow.once("tauri://error", cleanup);
-    printWindow.once("tauri://destroyed", () => {
-      cleanedUp = true;
-    });
-
-    window.setTimeout(cleanup, PRINT_WINDOW_CLEANUP_FALLBACK_MS);
-  } catch {
-    cleanup();
+  const result = await pdfExportWrite(documentHtml, memoName);
+  if (!result.ok) {
+    // No in-app toast/notification surface is wired up at either of this function's call sites
+    // (`EditorPane.tsx`'s toolbar/shortcut handlers both fire-and-forget this promise) — console
+    // logging is the extent of this function's own error handling; adding user-facing failure UI
+    // is out of this fix's scope.
+    console.error("PDF export failed", result.error);
   }
 }
 
-/** Unique per-call window label — export can be triggered again (e.g. from a different memo) before
- * a previous print window has finished closing, and Tauri window labels must be unique among
- * currently-open windows. */
-function printWindowLabel(): string {
-  return `ttn-pdf-print-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
-}
-
-/** Wraps `bodyHtml` into a full standalone HTML document for the print window, including this
- * module's own print stylesheet and the inline print-trigger script (`PRINT_TRIGGER_SCRIPT`). The
- * `<title>` becomes the OS "Save as PDF" dialog's suggested file name, matching the old iframe
- * version's `doc.title = memoName` behavior. `memoName` is escaped since it lands in HTML text
- * content (memo names are user-controlled free text, not markdown-sanitized by `renderMarkdownToHtml`
- * the way `bodyHtml` already is). */
-function buildPrintDocumentHtml(bodyHtml: string, memoName: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(memoName)}</title><style>${PRINT_STYLESHEET}</style></head><body>${bodyHtml}<script>${PRINT_TRIGGER_SCRIPT}</script></body></html>`;
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** Wraps `bodyHtml` into a full standalone HTML document, including this module's own print
+ * stylesheet. No inline `<script>` here (unlike this module's two earlier, since-superseded
+ * versions) — the backend's `NavigateToString`/`PrintToPdfAsync` flow needs no
+ * `window.print()`/`afterprint`/`window.close()` choreography from inside the page itself. */
+function buildPrintDocumentHtml(bodyHtml: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${PRINT_STYLESHEET}</style></head><body>${bodyHtml}</body></html>`;
 }
 
 /** Resolves every `img[data-relative-src]` in `html` (both this app's standard `![alt](path)`
@@ -229,11 +152,10 @@ function escapeHtml(text: string): string {
  * handling — so this single selector covers every resolvable image; there is no other `<img>`
  * shape in this app's rendered output) to inline `data:` URIs, using a detached `DOMParser`
  * document — never touches the main window's own DOM, consistent with this file's read-only
- * guarantee. Baking images in as `data:` URIs here (rather than reusing/minting `blob:` URLs the
- * way the old iframe version did) sidesteps `blob:` URL cross-document/cross-webview sharing
- * entirely — a genuinely separate top-level `WebviewWindow` is a different WebView2 instance from
- * the main window, so a `blob:` URL minted in the main window would not be expected to resolve
- * there the way it might (same-realm) inside a same-window iframe. Runs all images concurrently. */
+ * guarantee. Baking images in as `data:` URIs here (rather than reusing/minting `blob:` URLs)
+ * sidesteps `blob:` URL cross-document/cross-process sharing entirely — the backend's print
+ * target is a wholly separate WebView2 instance, not reachable from the main window's own `blob:`
+ * URL registry at all. Runs all images concurrently. */
 async function inlineImages(html: string, tabId: string, memoKey: string): Promise<string> {
   const doc = new DOMParser().parseFromString(`<!DOCTYPE html><html><body>${html}</body></html>`, "text/html");
   const images = Array.from(doc.querySelectorAll<HTMLImageElement>("img[data-relative-src]"));
@@ -245,7 +167,7 @@ async function inlineImages(html: string, tabId: string, memoKey: string): Promi
  * bytes (`imageLoader.ts`), bounding the `getOrLoadImage` IPC round-trip by
  * `IMAGE_FETCH_TIMEOUT_MS`. Leaves `src` unset (broken-image fallback) on timeout, load failure, or
  * a since-evicted cache entry — the same "fall back silently, let the browser render its own
- * broken-image state" behavior the old iframe version had. */
+ * broken-image state" behavior the earlier iframe/window versions had. */
 async function inlineOneImage(img: HTMLImageElement, tabId: string, memoKey: string): Promise<void> {
   const relativePath = img.dataset.relativeSrc;
   if (!relativePath) return;
