@@ -20,6 +20,19 @@
   border-color: #e0b400;
 }
 
+/* GitHub issue #251 — no `min-width` here, deliberately (a worst-case-sized static one was tried
+ * and reverted: it forced ~100px+ of dead space in the narrower pane-mode variants, e.g. edit/split
+ * at default font scale, which is the common case — see this file's git history for the full
+ * back-and-forth). `flex-shrink: 0`/`white-space: nowrap` below on every text-label child is what
+ * actually fixes the original bug (button text wrapping internally when the panel was squeezed near
+ * the pane's right edge, GitHub issue #245's bottom-right snap): each button now holds its own
+ * natural content width unconditionally, so the header as a whole is always exactly as wide as its
+ * current pane-mode's real content needs, no artificial padding. If the pane is ever squeezed
+ * narrower than that natural width, the panel now overflows past the pane edge instead of wrapping
+ * — accepted as strictly better than wrapped/mangled text, not fixed further here. Any resulting gap
+ * between this header's width and `.ttn-md-toolbar-grid`'s own narrower fixed width (its `width:
+ * fit-content` below) is accepted too — the grid trailing short of the header's width in some
+ * pane modes is fine; filling it with more slots later is one easy option if it ever looks sparse. */
 .ttn-md-toolbar-header {
   display: flex;
   align-items: center;
@@ -30,13 +43,15 @@
 }
 
 .ttn-md-toolbar-drag-hint {
+  flex-shrink: 0;
   color: var(--ttn-fg-subtle);
   font-size: calc(12px * var(--ui-font-scale));
   letter-spacing: -2px;
 }
 
 .ttn-md-toolbar-view-toggle {
-  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: calc(11px * var(--ui-font-scale));
   padding: 2px 8px;
   border: 1px solid var(--ttn-border);
@@ -47,9 +62,10 @@
 }
 
 /* `docs/plans/markdown/markdown-preview/PLAN.md` §6.3 — pane-mode cycling toggle button. Follows
- * `.ttn-md-toolbar-view-toggle`'s own styling (same header row, no `margin-left: auto` since it's
- * not the first flex item pushed to the right — the view-toggle button already claims that). */
+ * `.ttn-md-toolbar-view-toggle`'s own styling (same header row). */
 .ttn-md-toolbar-pane-mode {
+  flex-shrink: 0;
+  white-space: nowrap;
   margin-left: 4px;
   font-size: calc(11px * var(--ui-font-scale));
   padding: 2px 8px;
@@ -73,6 +89,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   margin-left: 4px;
@@ -101,6 +118,8 @@
 /* `docs/plans/markdown/pdf-export/PLAN.md` §4 — PDF-export trigger button. Follows
  * `.ttn-md-toolbar-pane-mode`'s own styling (same header row, sits right after it). */
 .ttn-md-toolbar-pdf-export {
+  flex-shrink: 0;
+  white-space: nowrap;
   margin-left: 4px;
   font-size: calc(11px * var(--ui-font-scale));
   padding: 2px 8px;
@@ -122,6 +141,7 @@
 .ttn-md-toolbar-zoom {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 2px;
   margin-left: 4px;
 }
@@ -130,6 +150,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   padding: 0;
@@ -159,6 +180,7 @@
  * width instead of adding to it. */
 .ttn-md-toolbar-zoom-reset {
   box-sizing: border-box;
+  flex-shrink: 0;
   width: 40px;
   padding: 2px 4px;
   border: 1px solid var(--ttn-border);
@@ -180,6 +202,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   margin-left: 4px;
@@ -208,12 +231,20 @@
   border-bottom: none;
 }
 
+/* GitHub issue #251 follow-up — explicit `width` so the grid holds its own natural (~276px: 9×28px
+ * buttons + 8×2px gaps + 2×4px padding) size regardless of how wide the panel becomes. Without
+ * this, the grid (no `width` of its own) stretches its 9 equal `1fr` columns to fill whatever width
+ * `.ttn-md-toolbar`'s shrink-to-fit sizing settles on — which, once the header gained its own
+ * `min-width` floor above, is now driven by the wider header rather than the grid's own natural
+ * size, spacing the icons out visibly more than before even though no `gap`/`margin` value here
+ * changed. */
 .ttn-md-toolbar-grid {
   display: grid;
   grid-template-columns: repeat(9, 1fr);
   grid-template-rows: repeat(2, 1fr);
   gap: 2px;
   padding: 4px;
+  width: fit-content;
 }
 
 .ttn-md-toolbar-btn {
