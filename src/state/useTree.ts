@@ -27,12 +27,14 @@ import {
   treeOpen,
   treeSetLastViewed,
 } from "../ipc/tree";
-import type { LabelColor, MemoEditorSettings, MemoProperties, MoveTarget, RecoveryKind, TreeNode, TreeSnapshot } from "../shared/models";
+import type { LabelColor, MemoEditorSettings, MemoMutationWarning, MemoProperties, MoveTarget, RecoveryKind, TreeNode, TreeSnapshot } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 import type { ClickModifiers, SelectionState } from "../shared/treeSelection";
 import { applyClick, clearSelection, flattenVisible, moveSelection } from "../shared/treeSelection";
 
-export type TreeMutationOutcome = { ok: true } | { ok: false; code: ErrorCode; message: string };
+/** `warning` is only ever set by `renameMemo`/`deleteMemo` (GitHub issue #263's non-fatal
+ * image-folder problem) — the mutation itself succeeded. */
+export type TreeMutationOutcome = { ok: true; warning?: MemoMutationWarning } | { ok: false; code: ErrorCode; message: string };
 
 /** The just-created memo is always appended as the last child of its parent (or the last
  * root-level node, when `parent` is omitted) — `insert_node_at_end` (`commands/tree.rs`). Walking
@@ -452,7 +454,7 @@ export function useTree(tabId: string | null): UseTreeResult {
         applySnapshot(result.value);
         const trimmed = newName.trim();
         applyIfCurrent((prev) => (prev.openMemoName === path ? { ...prev, openMemoName: trimmed } : prev));
-        return { ok: true };
+        return { ok: true, warning: result.value.warning };
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
@@ -471,7 +473,7 @@ export function useTree(tabId: string | null): UseTreeResult {
           openMemoName: prev.openMemoName && paths.includes(prev.openMemoName) ? null : prev.openMemoName,
           selection: clearSelection(),
         }));
-        return { ok: true };
+        return { ok: true, warning: result.value.warning };
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
