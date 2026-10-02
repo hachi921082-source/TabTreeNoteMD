@@ -13,6 +13,7 @@ import { EditorView } from "@codemirror/view";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEditor } from "../../state/useEditor";
 import { useSearch } from "../../state/useSearch";
+import type { UseToastResult } from "../../state/useToast";
 import { memoGetProperties, memoOpenLocation, memoSetEditorOverride } from "../../ipc/tree";
 import type { AppSettings, AppSettingsPatch, EditorDefaults, ExternalLinkKind, MemoEditorSettings, MemoProperties, PaneMode } from "../../shared/models";
 import { errorMessageFor } from "../../shared/errorMessages";
@@ -133,6 +134,10 @@ export interface EditorPaneProps {
    * a stale slug if it merely reused `focusEditorToken`. */
   pendingAnchorSlug: string | null;
   pendingAnchorToken: number;
+  /** Shared app-wide toast queue (`state/useToast.ts`), lifted to `App.tsx` — used by
+   * `handlePdfExport` below to surface a PDF-export failure visibly instead of only logging it to
+   * the console (issue #256), the same pattern `TreeView.tsx`'s own `toast` prop already uses. */
+  toast: UseToastResult;
 }
 
 /** Imperative handle so `App.tsx` can force-flush the currently-open memo's pending save and
@@ -163,6 +168,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     onOpenMemoLink,
     pendingAnchorSlug,
     pendingAnchorToken,
+    toast,
   },
   ref,
 ) {
@@ -424,9 +430,16 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // callback and both of its call sites below must not accidentally narrow with a `readOnly` check).
   const handlePdfExport = useCallback(() => {
     const view = viewRef.current;
-    if (view && tabId && memoName && memoKey) void exportMemoToPdf(view, tabId, memoName, memoKey);
+    if (!view || !tabId || !memoName || !memoKey) return;
+    void exportMemoToPdf(view, tabId, memoName, memoKey).then((result) => {
+      // `{ ok: true, value: null }` is a user-cancelled save dialog, not a failure — nothing to
+      // show for that. A real failure gets a visible toast (issue #256: an earlier version only
+      // logged to the console here, leaving a user who clicked "保存" with no feedback at all when
+      // the write silently failed).
+      if (!result.ok) toast.pushToast(errorMessageFor(result.error.code, t), "warning");
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, memoName, memoKey]);
+  }, [tabId, memoName, memoKey, toast]);
 
   // Refs so the debounced scroll listener / view-teardown flush always see the latest identity
   // without stale closures (same pattern as `state/useEditor.ts`). `tabIdRef` additionally backs

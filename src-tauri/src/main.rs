@@ -217,6 +217,7 @@ fn main() {
             commands::search::search_get_favorites,
             commands::link::link_resolve,
             commands::link::link_open_external,
+            commands::pdf_export::pdf_export_write,
             commands::image::image_save_pasted,
             commands::image::image_read_bytes,
             commands::image::image_read_external_file,
