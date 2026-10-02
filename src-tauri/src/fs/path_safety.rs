@@ -154,7 +154,7 @@ pub fn memo_image_folder_path(tab_folder: &Path, memo_name: &str) -> Option<Path
 }
 
 /// `memo_image_folder_path`, additionally requiring that the folder exists as a real directory
-/// — a symlink/junction (any reparse point) is never treated as an image folder, consistent with
+/// — a symlink/junction is never treated as an image folder, consistent with
 /// `scan_real_memo_names` excluding links (`docs/spec.md` §2.2), so delete/rename never follow a
 /// link out of the tab folder.
 pub fn existing_memo_image_folder(tab_folder: &Path, memo_name: &str) -> Option<PathBuf> {
@@ -166,20 +166,12 @@ pub fn existing_memo_image_folder(tab_folder: &Path, memo_name: &str) -> Option<
     Some(path)
 }
 
-/// `true` for a symlink, junction, or any other reparse point (`symlink_metadata` result).
+/// `true` for a symlink or junction (`symlink_metadata` result). Rust's Windows
+/// `FileType::is_symlink()` already covers both (name-surrogate reparse tags) — same criterion as
+/// `scan_real_memo_names`. Other reparse points (OneDrive Files On-Demand placeholders, dedup,
+/// etc.) are deliberately NOT treated as links, so a OneDrive-synced data folder still works.
 pub fn is_link_or_reparse_point(meta: &std::fs::Metadata) -> bool {
-    if meta.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return true;
-        }
-    }
-    false
+    meta.file_type().is_symlink()
 }
 
 #[cfg(test)]
