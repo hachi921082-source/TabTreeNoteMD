@@ -13,31 +13,25 @@
 
 ## Index
 
-1. Where the project stands — **unmerged PDF-export branch, action needed**
+1. Where the project stands — all work merged, no pending branch
 2. This session's completed+merged work (issues #244 re-fix, #245, #248, #251, #253)
-3. In-progress, NOT merged: PDF export (#256, #257)
+3. PDF export (#256, #257) — merged via PR #258
 4. Process failures this session — read before trusting any "verified" claim
 5. Global `CLAUDE.md` changes made this session
 6. Repo-root clutter to clean up
 7. New standing memory this session
 
-## 1. Where the project stands — unmerged PDF-export branch, action needed
+## 1. Where the project stands — all work merged, no pending branch
 
-- `V1.2.0` is at `1a894bd` (local == origin, pushed).
-- **Current branch is `fix/pdf-export-print-release-build`**, NOT `V1.2.0` — 17+ commits ahead,
-  covering issues #256 and #257 (both still **open** on GitHub). Nothing on this branch is pushed,
-  no PR opened. The user just confirmed ("確認した") that the latest build
-  (`TabTreeNoteMD_20261002-073626.exe`) fixes the images-missing problem — **but no explicit "merge
-  it" instruction had been given yet when this handoff was written.** Next session: confirm with the
-  user whether to proceed with push → PR → merge → close #256/#257 → `RESOLVED-ISSUES.md` entries →
-  branch cleanup → switch back to `V1.2.0`, following the exact same pattern used for every other
-  issue this session (see §2).
-- **Commit messages on this branch are inconsistent about citing issue numbers.** The first ~17
-  commits (iframe fix → WebviewWindow rewrite → PrintToPdfAsync implementation → race-condition fix)
-  do NOT mention "#256" anywhere. Only the last few (`e49c413` etc., the images-missing fix) cite
-  "#257". **When finalizing**, make sure the PR description explicitly says "Closes #256, Closes #257"
-  and the `RESOLVED-ISSUES.md` entry documents both issue numbers clearly, to restore the
-  traceability the individual commits are missing. See §4 for why this happened.
+- `V1.2.0` is at `be434e5` (local == origin, pushed). Working tree clean apart from the untracked
+  build exes / `data/` noted in §6.
+- PDF export (#256, #257) was finalized on 2026-10-02: PR #258 merged into `V1.2.0` (merge commit
+  `87f7aa7`), both issues closed, `RESOLVED-ISSUES.md` entries added for both numbers (`be434e5`),
+  branch `fix/pdf-export-print-release-build` deleted locally and on origin.
+- The traceability gap (most branch commits don't cite #256) is covered by PR #258's
+  "Closes #256, Closes #257" and the `RESOLVED-ISSUES.md` entry — no further action needed.
+- `/security-review` was run on the branch before merge: no findings.
+- No open in-progress work. Next step is whatever the user picks next (new issue or next PLAN).
 
 ## 2. This session's completed+merged work
 
@@ -52,7 +46,7 @@ context only:
 | 251 | Toolbar header text wrapped ugly when squeezed near the pane edge (triggered by #245's snap) — went through 3 rounds of regressions (dead gap from an activated `margin-left:auto`, then a stretched icon grid) before landing on: no `min-width` at all, just `flex-shrink:0`/`white-space:nowrap` so the header always sizes to its real current content | #254 |
 | 253 | Toolbar's expand/restore button now disabled while in preview-only pane mode (no formatting actions are meaningful there) | #255 |
 
-## 3. In-progress, NOT merged: PDF export (#256, #257)
+## 3. PDF export (#256, #257) — merged via PR #258
 
 **#256** — PDF export did nothing in a packaged release build (print dialog opened, "印刷プレビュー
 をサポートしていません", clicking 印刷 just closed the dialog, no file, no save-location prompt).
@@ -88,7 +82,7 @@ Two new Rust unit tests lock in both the size-limit confirmation and the temp-fi
 (`src-tauri/src/commands/pdf_export.rs`'s `#[cfg(test)]` module).
 
 **User-confirmed working** as of `TabTreeNoteMD_20261002-073626.exe` (repo root) — images now appear.
-Not yet merged — see §1.
+Merged via PR #258 — see §1.
 
 ## 4. Process failures this session — read before trusting any "verified" claim
 
@@ -123,7 +117,7 @@ to how much to trust anything already done:
 
 None of this invalidates the final, merged work in §2 — those issues were properly verified (in some
 cases by the user personally) before merge. It's specifically the PDF-export branch's history that
-carries these scars, which is part of why §1 recommends extra care finalizing it.
+carries these scars (now merged, see §1).
 
 ## 5. Global `CLAUDE.md` changes made this session
 
