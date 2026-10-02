@@ -83,6 +83,8 @@ export async function downscaleImageIfNeeded(bytes: number[], mimeType: string |
       // Step 1 (#82): same-MIME re-encode of the resized canvas.
       let currentBytes: Uint8Array = new Uint8Array(bytes);
       let currentMime: string | null = mimeType;
+      // True once any step replaced the original bytes (resize or adopted WebP).
+      let changed = needsResize;
       if (needsResize) {
         const resized = await canvas.convertToBlob({ type: mimeType ?? undefined });
         currentBytes = new Uint8Array(await resized.arrayBuffer());
@@ -94,10 +96,11 @@ export async function downscaleImageIfNeeded(bytes: number[], mimeType: string |
         if (shouldAdoptWebp(currentBytes.length, webp.type, webp.size)) {
           currentBytes = new Uint8Array(await webp.arrayBuffer());
           currentMime = WEBP_MIME;
+          changed = true;
         }
       }
 
-      if (!needsResize && currentMime === mimeType) return original;
+      if (!changed) return original;
       return { bytes: Array.from(currentBytes), mimeType: currentMime };
     } finally {
       bitmap.close();
