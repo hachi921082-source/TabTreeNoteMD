@@ -116,11 +116,12 @@ async function readFileBytes(file: File): Promise<number[]> {
  * was actually pointing — not recomputed after the await, since the selection may have moved by
  * then. `![alt](url)` with an empty `alt` (`PLAN.md` §4: "`alt` may be empty... not mandated"). */
 export async function saveAndInsertImage(view: EditorView, tabId: string, memoName: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
-  // Downscale oversized source images before saving (GitHub issue #82) — shared by both call
-  // sites below since they both funnel through this function. No-op (returns `bytes` unchanged)
-  // for already-small images, `image/gif`, missing `mimeHint`, or any decode/encode failure.
-  const downscaledBytes = await downscaleImageIfNeeded(bytes, mimeHint);
-  const result = await imageSavePasted(tabId, memoName, downscaledBytes, mimeHint);
+  // Downscale/recompress oversized source images before saving (GitHub issues #82, #259) —
+  // shared by all call sites since they funnel through this function. No-op (returns `bytes`
+  // unchanged) for already-small images, `image/gif`, missing `mimeHint`, or any decode/encode
+  // failure. The effective MIME is passed on because the WebP step (#259) may change the format.
+  const downscaled = await downscaleImageIfNeeded(bytes, mimeHint);
+  const result = await imageSavePasted(tabId, memoName, downscaled.bytes, downscaled.mimeType);
   if (!result.ok) {
     onError(result.error.code);
     return;
