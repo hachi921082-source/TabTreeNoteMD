@@ -23,7 +23,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::commands::tab_lock;
 use crate::commands::{emit_meta_recovered, emit_settings_recovery_event};
 use crate::fs::atomic_write::{atomic_write, bak_path};
-use crate::fs::path_safety::{validate_name, ValidationMode};
+use crate::fs::path_safety::{existing_memo_image_folder, memo_image_folder_path, validate_name, ValidationMode};
 use crate::fs::retry::{is_lock_class_error, with_retry};
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::fs::trash;
@@ -491,14 +491,18 @@ pub fn memo_rename(
 /// occupying the new name) does not roll it back; it is logged and returned as a non-fatal
 /// warning so the frontend can tell the user (GitHub issue #263).
 fn follow_rename_image_folder(folder: &Path, old_name: &str, new_name: &str, new_memo_path: &Path, registry: &SelfWriteRegistry) -> Option<MemoMutationWarning> {
-    let old_image_folder = folder.join(old_name);
-    let new_image_folder = folder.join(new_name);
-    if !old_image_folder.is_dir() {
+    // 旧名側は実在する実ディレクトリ(リンク以外)かつタブ直下の安全な名前のみ対象(`fs::path_safety`)。
+    let Some(old_image_folder) = existing_memo_image_folder(folder, old_name) else {
         return None;
-    }
+    };
+    let Some(new_image_folder) = memo_image_folder_path(folder, new_name) else {
+        tracing::warn!("memo_rename: new name is not usable as an image folder name; images remain under the old name");
+        return Some(MemoMutationWarning::ImageFolderRenameFailed);
+    };
     // 移動先が既に存在する場合は明示的に失敗扱い(Windowsでは空フォルダへのrenameが成功しうるため、
-    // 既存フォルダへの上書き・統合は行わない)。大文字小文字のみの変更は同一フォルダなので対象外。
-    if new_image_folder.exists() && !old_name.eq_ignore_ascii_case(new_name) {
+    // 既存フォルダへの上書き・統合は行わない)。リンク切れのリンクも存在扱い。大文字小文字のみの変更は
+    // 同一フォルダなので対象外。
+    if std::fs::symlink_metadata(&new_image_folder).is_ok() && !old_name.eq_ignore_ascii_case(new_name) {
         tracing::warn!(path = %new_image_folder.display(), "memo_rename: image folder destination already exists; images remain under the old name");
         return Some(MemoMutationWarning::ImageFolderRenameFailed);
     }
@@ -673,11 +677,11 @@ fn delete_memo_files(folder: &Path, names: &[String], force_direct: bool, regist
             }
         }
 
-        // 画像フォルダが無いメモ(添付なし)はスキップ。
-        let image_folder = folder.join(name);
-        if !image_folder.is_dir() {
+        // 画像フォルダが無いメモ(添付なし)はスキップ。`name` は未検証のディスク上の stem でありうる
+        // (`..md` → `.` 等)ため、タブ直下の実ディレクトリに解決できるものだけを対象にする。
+        let Some(image_folder) = existing_memo_image_folder(folder, name) else {
             continue;
-        }
+        };
         if force_direct {
             if let Err(err) = trash::delete_dir_directly(&image_folder, registry) {
                 tracing::warn!(error = %err, path = %image_folder.display(), "memo_delete: failed to delete memo's image folder");
@@ -1925,5 +1929,43 @@ mod tests {
         assert!(dir.join("新名").join("画像-1.png").exists());
         assert!(!dir.join("旧名").exists());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_memo_files_dot_stems_never_touch_tab_folder_or_parent() {
+        // `..md` / `...md` の stem は `.` / `..`。タブフォルダ自身や親フォルダを削除してはならない
+        let parent = tempdir();
+        let dir = parent.join("タブ");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(parent.join("外側.txt"), b"keep").unwrap();
+        make_memo_with_image_folder(&dir, "日記");
+        let registry = SelfWriteRegistry::new();
+        let names = [".".to_string(), "..".to_string(), "a.".to_string()];
+        let result = delete_memo_files(&dir, &names, true, &registry);
+        assert_eq!(result, Ok(None));
+        assert!(dir.is_dir());
+        assert!(parent.join("外側.txt").exists());
+        assert!(dir.join("日記").join("画像-1.png").exists());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn follow_rename_image_folder_dot_names_never_touch_outside() {
+        let parent = tempdir();
+        let dir = parent.join("タブ");
+        std::fs::create_dir_all(&dir).unwrap();
+        make_memo_with_image_folder(&dir, "日記");
+        let registry = SelfWriteRegistry::new();
+        // 旧名が `..` → 対象フォルダなし扱い(親フォルダを移動しない)
+        assert_eq!(follow_rename_image_folder(&dir, "..", "新名", &dir.join("新名.md"), &registry), None);
+        assert!(!dir.join("新名").exists());
+        assert!(dir.is_dir());
+        // 新名が `..` → 警告、旧フォルダはそのまま
+        assert_eq!(
+            follow_rename_image_folder(&dir, "日記", "..", &dir.join("日記.md"), &registry),
+            Some(MemoMutationWarning::ImageFolderRenameFailed)
+        );
+        assert!(dir.join("日記").join("画像-1.png").exists());
+        std::fs::remove_dir_all(&parent).ok();
     }
 }
