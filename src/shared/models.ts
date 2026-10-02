@@ -228,6 +228,14 @@ export interface TreeSnapshot {
   lastViewedMemo: string | null;
 }
 
+/** GitHub issue #263: non-fatal per-memo image-folder problem attached to an otherwise successful
+ * `memo_rename`/`memo_delete` (mirrors `MemoMutationWarning` in `commands/tree.rs`). The primary
+ * `.md` operation already succeeded; the caller only notifies the user (toast). */
+export type MemoMutationWarning = "IMAGE_FOLDER_RENAME_FAILED" | "IMAGE_FOLDER_DELETE_FAILED";
+
+/** `memo_rename`/`memo_delete` response: a regular `TreeSnapshot` plus an optional `warning`. */
+export type MemoMutationResult = TreeSnapshot & { warning?: MemoMutationWarning };
+
 export interface MemoProperties {
   fileName: string;
   filePath: string;
