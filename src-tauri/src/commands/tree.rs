@@ -436,8 +436,13 @@ pub fn memo_rename(
     if old_image_folder.is_dir() {
         registry.register(&old_image_folder);
         registry.register(&new_image_folder);
-        if let Err(err) = with_retry(|| std::fs::rename(&old_image_folder, &new_image_folder)) {
-            tracing::warn!(error = %err, "memo_rename: failed to rename memo's image folder; images may now be orphaned under the old name");
+        match with_retry(|| std::fs::rename(&old_image_folder, &new_image_folder)) {
+            Err(err) => {
+                tracing::warn!(error = %err, "memo_rename: failed to rename memo's image folder; images may now be orphaned under the old name");
+            }
+            // GitHub issue #261: フォルダ名変更が成功した場合のみ、本文の画像リンクも追従させる
+            // (後続の検索インデックス更新は書き換え後の本文を読み直す)。
+            Ok(()) => rewrite_renamed_memo_image_links(&new_path, &path, trimmed, &registry),
         }
     }
 
@@ -463,6 +468,37 @@ pub fn memo_rename(
         recovery_kind: None,
         last_viewed_memo: loaded.last_viewed_memo,
     })
+}
+
+/// GitHub issue #261: rewrites `![..](<old>/..)` image links in the just-renamed memo's own body
+/// to `<new>/..` (`util::image_link_rewrite`). Best-effort like the image-folder rename it
+/// follows: the rename itself already succeeded, so any failure is logged, not returned. Only
+/// UTF-8 bodies are rewritten (BOM and EOL bytes preserved verbatim); a non-UTF-8 (e.g.
+/// Shift_JIS) body is skipped rather than silently re-encoded.
+fn rewrite_renamed_memo_image_links(memo_path: &Path, old_name: &str, new_name: &str, registry: &SelfWriteRegistry) {
+    let bytes = match std::fs::read(memo_path) {
+        Ok(b) => b,
+        Err(err) => {
+            tracing::warn!(error = %err, "memo_rename: failed to read memo for image-link rewrite");
+            return;
+        }
+    };
+    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+    let (bom, rest) = if bytes.starts_with(BOM) { bytes.split_at(BOM.len()) } else { (&[][..], &bytes[..]) };
+    let Ok(body) = std::str::from_utf8(rest) else {
+        tracing::warn!("memo_rename: memo body is not UTF-8; image links not rewritten");
+        return;
+    };
+    let Some(rewritten) = crate::util::image_link_rewrite::rewrite_image_links_for_rename(body, old_name, new_name) else {
+        return;
+    };
+    let mut out = Vec::with_capacity(bom.len() + rewritten.len());
+    out.extend_from_slice(bom);
+    out.extend_from_slice(rewritten.as_bytes());
+    registry.register(memo_path);
+    if let Err(err) = atomic_write(memo_path, &out, registry) {
+        tracing::warn!(error = %err, "memo_rename: failed to write rewritten image links");
+    }
 }
 
 // ---------------------------------------------------------------------------
