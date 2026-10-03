@@ -172,9 +172,12 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
       const outcome = await tree.deleteMemo(paths, forceDirect);
       if (!outcome.ok && outcome.code === "TRASH_FAILED") {
         setPendingDialog({ kind: "trashFailedConfirm", paths });
+      } else if (outcome.ok && outcome.warning === "IMAGE_FOLDER_DELETE_FAILED") {
+        // GitHub issue #263: メモ本体は削除済み、画像フォルダのみ削除失敗(非致命的)
+        toast.pushToast(t("toast.imageFolderDeleteFailed"), "warning");
       }
     },
-    [tree],
+    [tree, toast, t],
   );
 
   // ---- F2 rename (default): also global, regardless of current focus target — a plain click that
@@ -247,9 +250,15 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
     (memoName: string, newName: string) => {
       setRenamingPath(null);
       const trimmed = newName.trim();
-      if (trimmed && trimmed !== memoName) void tree.renameMemo(memoName, trimmed);
+      if (!trimmed || trimmed === memoName) return;
+      void tree.renameMemo(memoName, trimmed).then((outcome) => {
+        // GitHub issue #263: 名前変更は成功、画像フォルダのみ追従失敗(画像は旧名フォルダに残る)
+        if (outcome.ok && outcome.warning === "IMAGE_FOLDER_RENAME_FAILED") {
+          toast.pushToast(t("toast.imageFolderRenameFailed"), "warning");
+        }
+      });
     },
-    [tree],
+    [tree, toast, t],
   );
 
   // ---- DND: pointer-based, within-tree reorder/reparent + drag onto a

@@ -25,7 +25,7 @@ use tauri::{AppHandle, State};
 
 use crate::commands::emit_settings_recovery_event;
 use crate::commands::tab_lock::{resolve_tab_access, TabAccess};
-use crate::fs::path_safety::{resolve_relative_within_base, validate_name, AbsolutePathPolicy, ValidationMode};
+use crate::fs::path_safety::{is_link_or_reparse_point, memo_image_folder_path, resolve_relative_within_base, validate_name, AbsolutePathPolicy, ValidationMode};
 use crate::fs::retry::{is_lock_class_error, with_retry};
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::fs::temp_naming::generate_temp_file_name;
@@ -100,7 +100,14 @@ pub fn image_save_pasted(
         Err(e) => return AppResult::err(e),
     };
 
-    let save_dir = if use_memo_subfolder { folder.join(&memo_name) } else { folder.clone() };
+    let save_dir = if use_memo_subfolder {
+        match plain_tab_image_dir(&folder, &memo_name) {
+            Ok(dir) => dir,
+            Err(code) => return AppResult::err_code(code, "invalid memo image folder"),
+        }
+    } else {
+        folder.clone()
+    };
     if use_memo_subfolder {
         if let Err(err) = fs::create_dir_all(&save_dir) {
             tracing::error!(error = %err, path = %save_dir.display(), "image_save_pasted: failed to create the memo's image folder");
@@ -307,6 +314,21 @@ fn write_image_file(target: &Path, bytes: &[u8], registry: &SelfWriteRegistry) -
     with_retry(|| fs::rename(&temp_path, target))
 }
 
+/// GitHub issue #263: the plain-tab per-memo image folder for `memo_name`, guarded so it is
+/// always exactly `<tab_folder>/<memo_name>` (`fs::path_safety::memo_image_folder_path`) — never
+/// the tab folder itself, its parent, or a path through a symlink/junction already occupying that
+/// name. Errors instead of writing anywhere else.
+fn plain_tab_image_dir(folder: &Path, memo_name: &str) -> Result<PathBuf, ErrorCode> {
+    let dir = memo_image_folder_path(folder, memo_name).ok_or(ErrorCode::NameInvalid)?;
+    if let Ok(meta) = fs::symlink_metadata(&dir) {
+        // 既存エントリがリンク/ファイルならタブ外への書き込みを防ぐため拒否
+        if is_link_or_reparse_point(&meta) || !meta.is_dir() {
+            return Err(ErrorCode::NameInvalid);
+        }
+    }
+    Ok(dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,5 +514,18 @@ mod tests {
         assert!(!leftover_temp);
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn plain_tab_image_dir_accepts_japanese_name_and_rejects_dot_names() {
+        let dir = tempdir();
+        assert_eq!(plain_tab_image_dir(&dir, "日記"), Ok(dir.join("日記")));
+        for bad in [".", "..", "...", "../日記", "a\\b"] {
+            assert_eq!(plain_tab_image_dir(&dir, bad), Err(ErrorCode::NameInvalid), "{bad:?} must be rejected");
+        }
+        // 同名のファイルが既にある場合も拒否
+        std::fs::write(dir.join("ファイル"), b"x").unwrap();
+        assert_eq!(plain_tab_image_dir(&dir, "ファイル"), Err(ErrorCode::NameInvalid));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

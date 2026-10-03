@@ -12,7 +12,8 @@ use crate::model::result::ErrorCode;
 use super::retry::with_retry;
 use super::self_write_registry::SelfWriteRegistry;
 
-/// Moves `path` to the OS trash/recycle bin.
+/// Moves `path` to the OS trash/recycle bin. `path` may be a file or a directory — the `trash`
+/// crate moves a directory as a whole (GitHub issue #263: per-memo image folders).
 pub fn trash_file(path: &Path, registry: &SelfWriteRegistry) -> Result<(), ErrorCode> {
     registry.register(path);
     trash::delete(path).map_err(|_| ErrorCode::TrashFailed)
@@ -24,4 +25,12 @@ pub fn trash_file(path: &Path, registry: &SelfWriteRegistry) -> Result<(), Error
 pub fn delete_directly(path: &Path, registry: &SelfWriteRegistry) -> std::io::Result<()> {
     registry.register(path);
     with_retry(|| std::fs::remove_file(path))
+}
+
+/// Direct (permanent) recursive delete of a directory — the directory counterpart of
+/// `delete_directly`, used for a memo's per-memo image folder on the same consent-gated
+/// force-direct path (GitHub issue #263).
+pub fn delete_dir_directly(path: &Path, registry: &SelfWriteRegistry) -> std::io::Result<()> {
+    registry.register(path);
+    with_retry(|| std::fs::remove_dir_all(path))
 }

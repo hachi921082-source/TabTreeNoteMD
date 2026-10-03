@@ -3,7 +3,7 @@
 // §6; `docs/plans/memo-tree/PLAN.md` §3). No business logic here.
 import { invoke } from "@tauri-apps/api/core";
 import type { Result } from "../shared/result";
-import type { LabelColor, MemoEditorSettings, MemoMoveResult, MemoProperties, MoveTarget, TreeSnapshot } from "../shared/models";
+import type { LabelColor, MemoEditorSettings, MemoMoveResult, MemoMutationResult, MemoProperties, MoveTarget, TreeSnapshot } from "../shared/models";
 
 export async function treeOpen(tabId: string): Promise<Result<TreeSnapshot>> {
   return invoke<Result<TreeSnapshot>>("tree_open", { tabId });
@@ -19,14 +19,14 @@ export async function memoCreateChild(tabId: string, name: string, parent: strin
 }
 
 /** Also the backend for F2 rename (single-selection only, enforced by the caller). */
-export async function memoRename(tabId: string, path: string, newName: string): Promise<Result<TreeSnapshot>> {
-  return invoke<Result<TreeSnapshot>>("memo_rename", { tabId, path, newName });
+export async function memoRename(tabId: string, path: string, newName: string): Promise<Result<MemoMutationResult>> {
+  return invoke<Result<MemoMutationResult>>("memo_rename", { tabId, path, newName });
 }
 
 /** `forceDirect: true` is only sent after the user explicitly consents to a direct (non-trash)
  * delete, following a prior `TRASH_FAILED` response (`[spec §5.8]`). */
-export async function memoDelete(tabId: string, paths: string[], forceDirect = false): Promise<Result<TreeSnapshot>> {
-  return invoke<Result<TreeSnapshot>>("memo_delete", { tabId, paths, forceDirect });
+export async function memoDelete(tabId: string, paths: string[], forceDirect = false): Promise<Result<MemoMutationResult>> {
+  return invoke<Result<MemoMutationResult>>("memo_delete", { tabId, paths, forceDirect });
 }
 
 export async function memoMove(tabId: string, paths: string[], target: MoveTarget): Promise<Result<MemoMoveResult>> {

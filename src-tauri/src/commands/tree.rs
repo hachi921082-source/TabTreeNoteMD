@@ -23,7 +23,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::commands::tab_lock;
 use crate::commands::{emit_meta_recovered, emit_settings_recovery_event};
 use crate::fs::atomic_write::{atomic_write, bak_path};
-use crate::fs::path_safety::{validate_name, ValidationMode};
+use crate::fs::path_safety::{existing_memo_image_folder, memo_image_folder_path, validate_name, ValidationMode};
 use crate::fs::retry::{is_lock_class_error, with_retry};
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::fs::trash;
@@ -64,6 +64,37 @@ pub struct TreeSnapshot {
     /// this command's. `None` for a recovery-pending or locked-no-session snapshot (nothing to
     /// restore from either).
     pub last_viewed_memo: Option<String>,
+}
+
+/// GitHub issue #263: non-fatal problem with a memo's per-memo image folder (#139) that did NOT
+/// block the primary `.md` operation — surfaced to the user as a toast, never rolled back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MemoMutationWarning {
+    /// `memo_rename`: the `.md` was renamed but its image folder could not follow (e.g. a folder
+    /// with the new name already exists) — images remain under the old name.
+    ImageFolderRenameFailed,
+    /// `memo_delete` (force-direct path): the `.md` was deleted but its image folder could not be.
+    ImageFolderDeleteFailed,
+}
+
+/// Return type of `memo_rename`/`memo_delete`: the usual `TreeSnapshot` (flattened — same wire
+/// shape as before) plus an optional non-fatal `warning` (GitHub issue #263).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoMutationResult {
+    #[serde(flatten)]
+    pub snapshot: TreeSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<MemoMutationWarning>,
+}
+
+/// 警告なしの `MemoMutationResult` へ変換(ロック中タブのセッション経路用)。
+fn without_warning(result: AppResult<TreeSnapshot>) -> AppResult<MemoMutationResult> {
+    match result {
+        AppResult::Ok(snapshot) => AppResult::ok(MemoMutationResult { snapshot, warning: None }),
+        AppResult::Err(e) => AppResult::err(e),
+    }
 }
 
 /// Which crash-recovery flow `recovery_pending: true` refers to
@@ -382,7 +413,7 @@ pub fn memo_rename(
     registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
-) -> AppResult<TreeSnapshot> {
+) -> AppResult<MemoMutationResult> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
 
@@ -397,7 +428,7 @@ pub fn memo_rename(
     };
     let (folder, tab_name) = match access {
         tab_lock::TabAccess::Session { tab_id, folder } => {
-            return tab_lock::session_rename_memo(&sessions, &registry, &folder, &tab_id, &path, trimmed);
+            return without_warning(tab_lock::session_rename_memo(&sessions, &registry, &folder, &tab_id, &path, trimmed));
         }
         tab_lock::TabAccess::Plain { folder, tab_name } => (folder, tab_name),
     };
@@ -425,26 +456,7 @@ pub fn memo_rename(
         return AppResult::err_code(code, "failed to rename memo file");
     }
 
-    // GitHub issue #139: follow-rename the memo's per-memo image subfolder, if it has one — a
-    // memo with no attachments has no such folder, so this is skipped rather than erroring. Best-
-    // effort: the `.md` rename above already succeeded, so a failure here (e.g. an orphaned
-    // folder from a previously-deleted, differently-attached memo already occupying `new_path`'s
-    // name — orphan folders are never auto-cleaned, `image-handling/PLAN.md` §5) is logged and the
-    // memo rename still completes rather than rolling back a successful file rename over it.
-    let old_image_folder = folder.join(&path);
-    let new_image_folder = folder.join(trimmed);
-    if old_image_folder.is_dir() {
-        registry.register(&old_image_folder);
-        registry.register(&new_image_folder);
-        match with_retry(|| std::fs::rename(&old_image_folder, &new_image_folder)) {
-            Err(err) => {
-                tracing::warn!(error = %err, "memo_rename: failed to rename memo's image folder; images may now be orphaned under the old name");
-            }
-            // GitHub issue #261: フォルダ名変更が成功した場合のみ、本文の画像リンクも追従させる
-            // (後続の検索インデックス更新は書き換え後の本文を読み直す)。
-            Ok(()) => rewrite_renamed_memo_image_links(&new_path, &path, trimmed, &registry),
-        }
-    }
+    let warning = follow_rename_image_folder(&folder, &path, trimmed, &new_path, &registry);
 
     if let Some(node) = find_node_mut(&mut loaded.tree, &path) {
         node.memo_name = trimmed.to_string();
@@ -460,14 +472,54 @@ pub fn memo_rename(
     search_index.remove(&tab_id, &path);
     search_index.upsert(&tab_id, trimmed, &read_body_for_index(&folder, trimmed));
 
-    AppResult::ok(TreeSnapshot {
-        nodes: loaded.tree,
-        tab_name,
-        locked: false,
-        recovery_pending: false,
-        recovery_kind: None,
-        last_viewed_memo: loaded.last_viewed_memo,
+    AppResult::ok(MemoMutationResult {
+        snapshot: TreeSnapshot {
+            nodes: loaded.tree,
+            tab_name,
+            locked: false,
+            recovery_pending: false,
+            recovery_kind: None,
+            last_viewed_memo: loaded.last_viewed_memo,
+        },
+        warning,
     })
+}
+
+/// GitHub issue #139: follow-renames the memo's per-memo image subfolder, if it has one — a memo
+/// with no attachments has no such folder, so this is skipped rather than erroring. Best-effort:
+/// the `.md` rename already succeeded, so a failure here (e.g. an orphaned folder already
+/// occupying the new name) does not roll it back; it is logged and returned as a non-fatal
+/// warning so the frontend can tell the user (GitHub issue #263).
+fn follow_rename_image_folder(folder: &Path, old_name: &str, new_name: &str, new_memo_path: &Path, registry: &SelfWriteRegistry) -> Option<MemoMutationWarning> {
+    // 旧名側は実在する実ディレクトリ(リンク以外)かつタブ直下の安全な名前のみ対象(`fs::path_safety`)。
+    let Some(old_image_folder) = existing_memo_image_folder(folder, old_name) else {
+        return None;
+    };
+    let Some(new_image_folder) = memo_image_folder_path(folder, new_name) else {
+        tracing::warn!("memo_rename: new name is not usable as an image folder name; images remain under the old name");
+        return Some(MemoMutationWarning::ImageFolderRenameFailed);
+    };
+    // 移動先が既に存在する場合は明示的に失敗扱い(Windowsでは空フォルダへのrenameが成功しうるため、
+    // 既存フォルダへの上書き・統合は行わない)。リンク切れのリンクも存在扱い。大文字小文字のみの変更は
+    // 同一フォルダなので対象外。
+    if std::fs::symlink_metadata(&new_image_folder).is_ok() && !old_name.eq_ignore_ascii_case(new_name) {
+        tracing::warn!(path = %new_image_folder.display(), "memo_rename: image folder destination already exists; images remain under the old name");
+        return Some(MemoMutationWarning::ImageFolderRenameFailed);
+    }
+    registry.register(&old_image_folder);
+    registry.register(&new_image_folder);
+    match with_retry(|| std::fs::rename(&old_image_folder, &new_image_folder)) {
+        Err(err) => {
+            tracing::warn!(error = %err, "memo_rename: failed to rename memo's image folder; images may now be orphaned under the old name");
+            Some(MemoMutationWarning::ImageFolderRenameFailed)
+        }
+        // GitHub issue #261: フォルダ名変更が成功した場合のみ、本文の画像リンクも追従させる
+        // (後続の検索インデックス更新は書き換え後の本文を読み直す)。
+        Ok(()) => {
+            rewrite_renamed_memo_image_links(new_memo_path, old_name, new_name, registry);
+            None
+        }
+    }
 }
 
 /// GitHub issue #261: rewrites `![..](<old>/..)` image links in the just-renamed memo's own body
@@ -515,7 +567,7 @@ pub fn memo_delete(
     registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
-) -> AppResult<TreeSnapshot> {
+) -> AppResult<MemoMutationResult> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
 
@@ -528,7 +580,7 @@ pub fn memo_delete(
         // obfuscated file is always permanently deleted (`tab_lock.rs`'s `session_delete_memo`
         // doc comment).
         tab_lock::TabAccess::Session { tab_id, folder } => {
-            return tab_lock::session_delete_memo(&sessions, &registry, &folder, &tab_id, &paths);
+            return without_warning(tab_lock::session_delete_memo(&sessions, &registry, &folder, &tab_id, &paths));
         }
         tab_lock::TabAccess::Plain { folder, tab_name } => (folder, tab_name),
     };
@@ -569,21 +621,10 @@ pub fn memo_delete(
     // `tree_open` reconciliation (a metadata entry with no matching file is
     // simply dropped, `[detailed-spec §3.5]`), and this call is safe to
     // retry (already-gone files are skipped, not re-attempted).
-    for name in &all_names {
-        let file_path = folder.join(format!("{name}.md"));
-        if !file_path.exists() {
-            continue;
-        }
-        let result = if force_direct {
-            trash::delete_directly(&file_path, &registry).map_err(|_| ErrorCode::IoLocked)
-        } else {
-            trash::trash_file(&file_path, &registry)
-        };
-        if let Err(code) = result {
-            tracing::error!(?code, path = %file_path.display(), "memo_delete: failed to delete memo file");
-            return AppResult::err_code(code, "failed to delete one or more memo files");
-        }
-    }
+    let warning = match delete_memo_files(&folder, &all_names, force_direct, &registry) {
+        Ok(w) => w,
+        Err(code) => return AppResult::err_code(code, "failed to delete one or more memo files"),
+    };
 
     for name in &all_names {
         remove_node(&mut loaded.tree, name);
@@ -595,14 +636,63 @@ pub fn memo_delete(
         return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
     }
 
-    AppResult::ok(TreeSnapshot {
-        nodes: loaded.tree,
-        tab_name,
-        locked: false,
-        recovery_pending: false,
-        recovery_kind: None,
-        last_viewed_memo: loaded.last_viewed_memo,
+    AppResult::ok(MemoMutationResult {
+        snapshot: TreeSnapshot {
+            nodes: loaded.tree,
+            tab_name,
+            locked: false,
+            recovery_pending: false,
+            recovery_kind: None,
+            last_viewed_memo: loaded.last_viewed_memo,
+        },
+        warning,
     })
+}
+
+/// File-operation half of `memo_delete`: for each memo, `<name>.md` first (primary action), then
+/// its per-memo image folder `<name>/` (GitHub issue #263), both through the same trash /
+/// force-direct split.
+///
+/// Partial-failure policy:
+/// - Trash path: an image-folder trash failure returns `TrashFailed` exactly like a `.md` trash
+///   failure, so the existing consent dialog -> force-direct retry flow (`[spec §5.8]`) covers
+///   it. Already-trashed `.md` files are not rolled back; the retry skips them (absent) and
+///   direct-deletes the remaining folder.
+/// - Force-direct path: there is no further fallback, so an image-folder delete failure is
+///   logged and returned as a non-fatal warning rather than leaving the tree out of sync with an
+///   already-deleted `.md`. A `.md` failure is still fatal, as before.
+fn delete_memo_files(folder: &Path, names: &[String], force_direct: bool, registry: &SelfWriteRegistry) -> Result<Option<MemoMutationWarning>, ErrorCode> {
+    let mut warning = None;
+    for name in names {
+        let file_path = folder.join(format!("{name}.md"));
+        if file_path.exists() {
+            let result = if force_direct {
+                trash::delete_directly(&file_path, registry).map_err(|_| ErrorCode::IoLocked)
+            } else {
+                trash::trash_file(&file_path, registry)
+            };
+            if let Err(code) = result {
+                tracing::error!(?code, path = %file_path.display(), "memo_delete: failed to delete memo file");
+                return Err(code);
+            }
+        }
+
+        // 画像フォルダが無いメモ(添付なし)はスキップ。`name` は未検証のディスク上の stem でありうる
+        // (`..md` → `.` 等)ため、タブ直下の実ディレクトリに解決できるものだけを対象にする。
+        let Some(image_folder) = existing_memo_image_folder(folder, name) else {
+            continue;
+        };
+        if force_direct {
+            if let Err(err) = trash::delete_dir_directly(&image_folder, registry) {
+                tracing::warn!(error = %err, path = %image_folder.display(), "memo_delete: failed to delete memo's image folder");
+                warning = Some(MemoMutationWarning::ImageFolderDeleteFailed);
+            }
+        } else if let Err(code) = trash::trash_file(&image_folder, registry) {
+            tracing::error!(?code, path = %image_folder.display(), "memo_delete: failed to trash memo's image folder");
+            return Err(code);
+        }
+    }
+    Ok(warning)
 }
 
 // ---------------------------------------------------------------------------
@@ -1754,5 +1844,128 @@ mod tests {
 
         std::fs::remove_dir_all(&source_dir).ok();
         std::fs::remove_dir_all(&target_dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // GitHub issue #263: image folder delete / rename-collision warning
+    // -----------------------------------------------------------------------
+
+    fn make_memo_with_image_folder(dir: &Path, name: &str) {
+        std::fs::write(dir.join(format!("{name}.md")), format!("![図]({name}/画像-1.png)")).unwrap();
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+        std::fs::write(dir.join(name).join("画像-1.png"), b"png").unwrap();
+    }
+
+    #[test]
+    fn delete_memo_files_force_direct_removes_md_and_image_folder() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        make_memo_with_image_folder(&dir, "日記");
+        let result = delete_memo_files(&dir, &["日記".to_string()], true, &registry);
+        assert_eq!(result, Ok(None));
+        assert!(!dir.join("日記.md").exists());
+        assert!(!dir.join("日記").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_memo_files_without_image_folder_is_not_an_error() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(dir.join("メモ.md"), b"").unwrap();
+        let result = delete_memo_files(&dir, &["メモ".to_string()], true, &registry);
+        assert_eq!(result, Ok(None));
+        assert!(!dir.join("メモ.md").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_memo_files_subtree_removes_each_memos_image_folder() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        make_memo_with_image_folder(&dir, "親メモ");
+        make_memo_with_image_folder(&dir, "子メモ");
+        std::fs::write(dir.join("孫メモ.md"), b"").unwrap();
+        make_memo_with_image_folder(&dir, "無関係");
+        // `memo_delete` が `collect_names` で集めるサブツリー全体と同じ形
+        let parent = node_with_children("親メモ", vec![node_with_children("子メモ", vec![leaf("孫メモ")])]);
+        let mut names = Vec::new();
+        collect_names(&parent, &mut names);
+        let result = delete_memo_files(&dir, &names, true, &registry);
+        assert_eq!(result, Ok(None));
+        for n in ["親メモ", "子メモ", "孫メモ"] {
+            assert!(!dir.join(format!("{n}.md")).exists(), "{n}.md should be gone");
+            assert!(!dir.join(n).exists(), "{n}/ should be gone");
+        }
+        assert!(dir.join("無関係.md").exists());
+        assert!(dir.join("無関係").join("画像-1.png").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn follow_rename_image_folder_into_existing_folder_returns_warning() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        make_memo_with_image_folder(&dir, "旧名");
+        // 以前削除されたメモの取り残しフォルダが新名を占有している状況
+        std::fs::create_dir_all(dir.join("新名")).unwrap();
+        std::fs::rename(dir.join("旧名.md"), dir.join("新名.md")).unwrap();
+        let warning = follow_rename_image_folder(&dir, "旧名", "新名", &dir.join("新名.md"), &registry);
+        assert_eq!(warning, Some(MemoMutationWarning::ImageFolderRenameFailed));
+        // 画像は旧名フォルダに残り、本文リンクも書き換えない
+        assert!(dir.join("旧名").join("画像-1.png").exists());
+        assert_eq!(std::fs::read_to_string(dir.join("新名.md")).unwrap(), "![図](旧名/画像-1.png)");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn follow_rename_image_folder_success_returns_no_warning() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        make_memo_with_image_folder(&dir, "旧名");
+        std::fs::rename(dir.join("旧名.md"), dir.join("新名.md")).unwrap();
+        let warning = follow_rename_image_folder(&dir, "旧名", "新名", &dir.join("新名.md"), &registry);
+        assert_eq!(warning, None);
+        assert!(dir.join("新名").join("画像-1.png").exists());
+        assert!(!dir.join("旧名").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_memo_files_dot_stems_never_touch_tab_folder_or_parent() {
+        // `..md` / `...md` の stem は `.` / `..`。タブフォルダ自身や親フォルダを削除してはならない
+        let parent = tempdir();
+        let dir = parent.join("タブ");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(parent.join("外側.txt"), b"keep").unwrap();
+        make_memo_with_image_folder(&dir, "日記");
+        let registry = SelfWriteRegistry::new();
+        let names = [".".to_string(), "..".to_string(), "a.".to_string()];
+        let result = delete_memo_files(&dir, &names, true, &registry);
+        assert_eq!(result, Ok(None));
+        assert!(dir.is_dir());
+        assert!(parent.join("外側.txt").exists());
+        assert!(dir.join("日記").join("画像-1.png").exists());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn follow_rename_image_folder_dot_names_never_touch_outside() {
+        let parent = tempdir();
+        let dir = parent.join("タブ");
+        std::fs::create_dir_all(&dir).unwrap();
+        make_memo_with_image_folder(&dir, "日記");
+        let registry = SelfWriteRegistry::new();
+        // 旧名が `..` → 対象フォルダなし扱い(親フォルダを移動しない)
+        assert_eq!(follow_rename_image_folder(&dir, "..", "新名", &dir.join("新名.md"), &registry), None);
+        assert!(!dir.join("新名").exists());
+        assert!(dir.is_dir());
+        // 新名が `..` → 警告、旧フォルダはそのまま
+        assert_eq!(
+            follow_rename_image_folder(&dir, "日記", "..", &dir.join("日記.md"), &registry),
+            Some(MemoMutationWarning::ImageFolderRenameFailed)
+        );
+        assert!(dir.join("日記").join("画像-1.png").exists());
+        std::fs::remove_dir_all(&parent).ok();
     }
 }
