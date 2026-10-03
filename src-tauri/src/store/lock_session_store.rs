@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::crypto::kdf::KdfParams;
-use crate::crypto::lock_blob::FileMapEntry;
+use crate::crypto::lock_blob::{FileMapEntry, ImageFolderEntry};
 use crate::model::tree::MetaTreeNode;
 
 /// One tab's active unlock session.
@@ -33,6 +33,9 @@ pub struct LockSession {
     /// re-encrypted into the lock blob on every change (`commands/tab_lock.rs`'s
     /// `session_set_last_viewed`), same treatment as `tree`/`file_map` above.
     pub last_viewed_memo: Option<String>,
+    /// GitHub issue #271: 復号した `LockPayload::image_folders`(メモ名 -> ランダム画像フォルダ名)。
+    /// `tree`/`file_map` と同様、変更のたびにロック blob へ再暗号化して保存する。
+    pub image_folders: Vec<ImageFolderEntry>,
 }
 
 pub struct LockSessionStore {
@@ -94,6 +97,7 @@ mod tests {
             hint: None,
             key: [0u8; 32],
             last_viewed_memo: None,
+            image_folders: vec![],
         }
     }
 
