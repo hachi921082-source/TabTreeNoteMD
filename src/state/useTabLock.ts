@@ -20,8 +20,10 @@ import {
   tabPermanentUnlockRecoveryStatus,
   tabUnlock,
 } from "../ipc/tabLock";
-import type { PermanentUnlockRecoveryStatus, RecoveryStatus } from "../shared/models";
+import type { PermanentUnlockRecoveryStatus, PermanentUnlockResult, RecoveryStatus } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
+import type { UseToastResult } from "./useToast";
+import { useT } from "../i18n";
 
 export interface UseTabLockResult {
   /** tabId -> real (decrypted) tab name, for every tab currently holding an active unlock
@@ -55,8 +57,20 @@ export interface UseTabLockResult {
 
 /** `onTabsChanged`/`onTreeChanged` are `state/useTabs.ts`'s `refresh` / `state/useTree.ts`'s
  * `refresh` — every operation here that changes locked state or tree content triggers a refetch
- * rather than hand-rolling an optimistic local merge. */
-export function useTabLock(activeTabId: string | null, onTabsChanged: () => void, onTreeChanged: () => void): UseTabLockResult {
+ * rather than hand-rolling an optimistic local merge. `toast`: the app-wide notification queue,
+ * used for the permanent-unlock image-folder warning (GitHub issue #273). */
+export function useTabLock(activeTabId: string | null, onTabsChanged: () => void, onTreeChanged: () => void, toast: UseToastResult): UseTabLockResult {
+  const t = useT();
+  // 完全解除は成功したが、画像フォルダの一部をメモ名へ戻せずランダム名のまま残した場合の警告(#273)
+  const pushToast = toast.pushToast;
+  const warnImageFoldersLeftRandom = useCallback(
+    (value: PermanentUnlockResult) => {
+      if (value.imageFoldersLeftRandom > 0) {
+        pushToast(t("toast.permanentUnlockImageFoldersLeftRandomTemplate").replace("{count}", String(value.imageFoldersLeftRandom)), "warning");
+      }
+    },
+    [pushToast, t],
+  );
   const [activeSessionRealNames, setActiveSessionRealNames] = useState<Map<string, string>>(new Map());
   const [busy, setBusy] = useState(false);
   const [lastErrorCode, setLastErrorCode] = useState<ErrorCode | null>(null);
@@ -183,12 +197,13 @@ export function useTabLock(activeTabId: string | null, onTabsChanged: () => void
       if (result.ok) {
         onTabsChanged();
         onTreeChanged();
+        warnImageFoldersLeftRandom(result.value);
         return true;
       }
       setLastErrorCode(result.error.code);
       return false;
     },
-    [onTabsChanged, onTreeChanged],
+    [onTabsChanged, onTreeChanged, warnImageFoldersLeftRandom],
   );
 
   const fetchPermanentUnlockRecoveryStatus = useCallback(async (tabId: string, password?: string): Promise<PermanentUnlockRecoveryStatus | null> => {
@@ -206,12 +221,13 @@ export function useTabLock(activeTabId: string | null, onTabsChanged: () => void
       if (result.ok) {
         onTabsChanged();
         onTreeChanged();
+        warnImageFoldersLeftRandom(result.value);
         return true;
       }
       setLastErrorCode(result.error.code);
       return false;
     },
-    [onTabsChanged, onTreeChanged],
+    [onTabsChanged, onTreeChanged, warnImageFoldersLeftRandom],
   );
 
   const restorePermanentUnlockRecovery = useCallback(

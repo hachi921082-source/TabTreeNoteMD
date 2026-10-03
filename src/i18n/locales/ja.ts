@@ -355,6 +355,7 @@ export const ja = {
   "toast.importMissingImagesTemplate": "見つからなかった画像が{count}件あります（リンクは元のまま残しました）",
   "toast.imageFolderRenameFailed": "メモ名は変更しましたが、画像フォルダの名前を変更できませんでした（同名のフォルダが既に存在する可能性があります）。画像は旧名のフォルダに残っています",
   "toast.imageFolderDeleteFailed": "メモは削除しましたが、画像フォルダを削除できませんでした",
+  "toast.permanentUnlockImageFoldersLeftRandomTemplate": "ロックを完全解除しましたが、画像フォルダ{count}件はメモ名に戻せなかったため、ランダムな名前のまま残しました（同名のフォルダが既にある、または使用中）。画像はそのまま表示されます",
 
   // ---- errors.* — `shared/errorMessages.ts`'s `ErrorCode` -> user-facing message map --------
   "errors.NAME_DUPLICATE": "同じ名前のものが既に存在します",
@@ -369,6 +370,7 @@ export const ja = {
   "errors.TAB_LOCKED": "ロックされたタブには操作できません",
   "errors.ANOMALOUS_FILE_STATE": "想定外の状態のファイルが見つかりました。タブをもう一度開いて復旧処理を行ってください。",
   "errors.MEMO_EDIT_LOCKED": "編集ロック中のメモは削除・名前変更できません",
+  "errors.IMAGE_FOLDER_RENAME_FAILED": "画像フォルダの名前を変更できなかったため、処理を中止しました。フォルダ内の画像を開いているプログラムを閉じてから、もう一度お試しください。",
   "errors.UNKNOWN": "予期しないエラーが発生しました",
 
   // ---- validation.* — `shared/nameSanitize.ts`'s `validateNameStrict` inline field-error reasons --

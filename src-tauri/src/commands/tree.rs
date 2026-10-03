@@ -576,11 +576,11 @@ pub fn memo_delete(
         Err(e) => return AppResult::err(e),
     };
     let (folder, tab_name) = match access {
-        // `force_direct`/trash is a plain-tab-only distinction — a locked-session memo's
-        // obfuscated file is always permanently deleted (`tab_lock.rs`'s `session_delete_memo`
-        // doc comment).
+        // A locked-session memo's obfuscated file is always permanently deleted (`tab_lock.rs`'s
+        // `session_delete_memo` doc comment); `force_direct` only selects trash vs. direct delete
+        // for its random-named image folder (GitHub issue #271, same split as #263).
         tab_lock::TabAccess::Session { tab_id, folder } => {
-            return without_warning(tab_lock::session_delete_memo(&sessions, &registry, &folder, &tab_id, &paths));
+            return tab_lock::session_delete_memo(&sessions, &registry, &folder, &tab_id, &paths, force_direct);
         }
         tab_lock::TabAccess::Plain { folder, tab_name } => (folder, tab_name),
     };

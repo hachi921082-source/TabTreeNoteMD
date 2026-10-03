@@ -68,6 +68,13 @@ export interface TabInfo {
   lockLabel: string | null;
 }
 
+/** Return type of `tab_permanent_unlock` / `tab_permanent_unlock_recovery_finish` (GitHub issue
+ * #273): the usual `TabInfo` plus how many image folders could not be renamed back to their memo
+ * name and keep their random name (non-fatal warning). */
+export interface PermanentUnlockResult extends TabInfo {
+  imageFoldersLeftRandom: number;
+}
+
 export interface TabSettingsEntry {
   id: string;
   name: string;

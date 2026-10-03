@@ -349,6 +349,7 @@ export const en: Record<keyof typeof ja, string> = {
   "toast.importMissingImagesTemplate": "{count} image(s) could not be found (links were left as-is)",
   "toast.imageFolderRenameFailed": "The memo was renamed, but its image folder could not be renamed (a folder with the same name may already exist). The images remain in the old folder",
   "toast.imageFolderDeleteFailed": "The memo was deleted, but its image folder could not be deleted",
+  "toast.permanentUnlockImageFoldersLeftRandomTemplate": "The tab was permanently unlocked, but {count} image folder(s) could not be renamed back to the memo name (a folder with that name already exists, or it is in use) and keep their random name. Images still display",
 
   // ---- errors.* -------------------------------------------------------------------------------
   "errors.NAME_DUPLICATE": "An item with the same name already exists",
@@ -363,6 +364,7 @@ export const en: Record<keyof typeof ja, string> = {
   "errors.TAB_LOCKED": "This operation cannot be performed on a locked tab",
   "errors.ANOMALOUS_FILE_STATE": "A file in an unexpected state was found. Please reopen the tab and run recovery.",
   "errors.MEMO_EDIT_LOCKED": "An edit-locked memo cannot be deleted or renamed",
+  "errors.IMAGE_FOLDER_RENAME_FAILED": "An image folder could not be renamed, so the operation was stopped. Close any program using images in the folder and try again.",
   "errors.UNKNOWN": "An unexpected error occurred",
 
   // ---- validation.* ---------------------------------------------------------------------------

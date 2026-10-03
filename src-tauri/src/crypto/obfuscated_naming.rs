@@ -27,6 +27,15 @@ pub fn generate_unique_token(folder: &Path) -> String {
     }
 }
 
+/// GitHub issue #271: ロック中タブのメモ単位画像フォルダ名。64 ビット乱数の小文字 16 進 16 文字
+/// (推測不能、かつ本文中のリンク `<名前>/NNN.ext` が長くなりすぎない長さ)。実メモ名とは無関係。
+/// 衝突確認は呼び出し側(`commands/tab_lock.rs` の `generate_unique_image_folder`)で行う。
+pub fn generate_image_folder_name() -> String {
+    let mut bytes = [0u8; 8];
+    rand::rng().fill(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,5 +70,14 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn image_folder_names_are_16_char_lowercase_hex_and_distinct() {
+        let a = generate_image_folder_name();
+        let b = generate_image_folder_name();
+        assert_eq!(a.len(), 16);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert_ne!(a, b);
     }
 }
