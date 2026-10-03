@@ -213,7 +213,7 @@ fn encode_normalized(normalized_text: &str, source_eol: Eol, eol_policy: EolPoli
 /// 戻り値は (書き換え後の本文 — 変更なしなら `None`, 見つからなかった相対画像の件数)。
 ///
 /// 対象外(リンクはそのまま): スキーム付き(`http:`/`file:`/`data:` 等)・絶対パス・`/` 始まり、
-/// 対応外の拡張子、50MB超、読み込み/書き込み失敗。相対パスだが通常ファイルとして存在しないものだけを
+/// 対応外の拡張子、50MB超、読み込み/書き込み失敗。対応画像拡張子の相対パスで、通常ファイルとして存在しないものだけを
 /// 「見つからない」として数える。同じ元ファイルを同じメモ内で複数回参照した場合は1回だけコピーする。
 /// 書き込み先は `plain_tab_image_dir`(#263 のパスガード)経由に限定する。
 fn copy_relative_images(body: &str, source_dir: &Path, tab_folder: &Path, memo_name: &str, registry: &SelfWriteRegistry) -> (Option<String>, u32) {
@@ -226,6 +226,11 @@ fn copy_relative_images(body: &str, source_dir: &Path, tab_folder: &Path, memo_n
     let rewritten = rewrite_image_destinations(body, |dest| {
         let rel = relative_image_path(dest)?;
         let source = source_dir.join(&rel);
+        // 拡張子判定を先に行い、対応画像拡張子のリンクだけを「見つからない」対象にする
+        let source_ext = source.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)?;
+        if !IMAGE_FILE_EXTENSIONS.contains(&source_ext.as_str()) {
+            return None;
+        }
         let meta = match std::fs::metadata(&source) {
             Ok(m) if m.is_file() => m,
             _ => {
@@ -233,10 +238,6 @@ fn copy_relative_images(body: &str, source_dir: &Path, tab_folder: &Path, memo_n
                 return None;
             }
         };
-        let source_ext = source.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)?;
-        if !IMAGE_FILE_EXTENSIONS.contains(&source_ext.as_str()) {
-            return None;
-        }
         let key = std::fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
         if let Some(existing) = copied.get(&key) {
             return Some(existing.clone());
@@ -430,10 +431,11 @@ mod tests {
     #[test]
     fn missing_image_is_counted_and_left_untouched() {
         let (root, src, tab) = import_dirs();
-        let body = "![](無い.png) ![](画像/)\n";
+        // 画像拡張子でないリンク(フォルダ・存在しない .txt/.svg)は数えない
+        let body = "![](無い.png) ![](画像/) ![](無い.txt) ![](無い.svg)\n";
         let (got, missing) = copy_relative_images(body, &src, &tab, "メモ", &SelfWriteRegistry::new());
         assert_eq!(got, None);
-        assert_eq!(missing, 2);
+        assert_eq!(missing, 1);
         // 何もコピーしないときは画像フォルダも作らない
         assert!(!tab.join("メモ").exists());
         std::fs::remove_dir_all(&root).ok();
