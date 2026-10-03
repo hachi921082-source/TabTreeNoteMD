@@ -355,6 +355,7 @@ export const ja = {
   "toast.importMissingImagesTemplate": "見つからなかった画像が{count}件あります（リンクは元のまま残しました）",
   "toast.imageFolderRenameFailed": "メモ名は変更しましたが、画像フォルダの名前を変更できませんでした（同名のフォルダが既に存在する可能性があります）。画像は旧名のフォルダに残っています",
   "toast.imageFolderDeleteFailed": "メモは削除しましたが、画像フォルダを削除できませんでした",
+  "toast.permanentUnlockImageFoldersLeftRandomTemplate": "ロックを完全解除しましたが、画像フォルダ{count}件はメモ名に戻せなかったため、ランダムな名前のまま残しました（同名のフォルダが既にある、または使用中）。画像はそのまま表示されます",
 
   // ---- errors.* — `shared/errorMessages.ts`'s `ErrorCode` -> user-facing message map --------
   "errors.NAME_DUPLICATE": "同じ名前のものが既に存在します",
