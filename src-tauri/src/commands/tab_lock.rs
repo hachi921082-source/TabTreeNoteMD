@@ -23,7 +23,7 @@ use crate::commands::emit_settings_recovery_event;
 use crate::crypto::kdf::{self, KdfParams};
 use crate::crypto::lock_blob::{self, FileMapEntry, ImageFolderEntry, LockField, LockKey, LockPayload};
 use crate::fs::atomic_write::{atomic_write, bak_path};
-use crate::fs::path_safety::{existing_memo_image_folder, memo_image_folder_path};
+use crate::fs::path_safety::{existing_direct_child_file, existing_memo_image_folder, memo_image_folder_path};
 use crate::fs::trash;
 use crate::fs::retry::with_retry;
 use crate::fs::self_write_registry::SelfWriteRegistry;
@@ -545,6 +545,10 @@ fn lock_folder_files(
         return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to save the locked tab metadata"));
     }
 
+    // Step 8b (GitHub issue #276): 暗号化状態が確定したので平文の `.bak`/一時ファイルを消す。
+    // マーカー削除より前に行うので、ここで中断してもマーカーが残り、復旧「ロックを完了」が再実行する。
+    remove_plaintext_residue(folder, &payload.file_map, true, registry);
+
     // Step 9: delete the marker — the sole success signal the recovery check relies on.
     if let Err(err) = delete_marker(folder, registry) {
         tracing::error!(error = %err, "tab_lock: failed to delete the in-progress marker after a successful lock");
@@ -789,6 +793,58 @@ fn rename_and_encrypt_entry(folder: &Path, entry: &FileMapEntry, image_folder: O
 }
 
 // ---------------------------------------------------------------------------
+// GitHub issue #276: plaintext residue cleanup (`CRASH-RECOVERY.md` "Plaintext Residue")
+// ---------------------------------------------------------------------------
+
+/// `.tabtreenote.json.bak` が暗号化済み(ロック済み)メタの形(`lock` あり・平文 `tree` なし)なら `true`。
+/// セッション中の保存(`save_lock_blob` が前のロック済みメタを回す)で出来るもので平文を含まないため残す。
+fn meta_bak_is_encrypted_shape(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else { return false };
+    match serde_json::from_slice::<TabMetaFile>(&bytes) {
+        Ok(meta) => meta.lock.is_some() && meta.tree.is_none(),
+        Err(_) => false,
+    }
+}
+
+/// GitHub issue #276: ロック後もタブフォルダに残る平文の残骸を完全削除する(ごみ箱へは送らない —
+/// ごみ箱に平文が残るため)。対象:
+/// - `fileMap` の各メモの `<メモ名>.md.bak`(`atomic_write` の 1 世代 `.bak` に回った旧版本文。名前自体がメモ名を明かす)
+/// - `.tabtreenote.json.bak`(暗号化済みメタの形なら残す。ロック前の平文メタ = 全メモ名入りが
+///   `write_lock_field` 自身の `atomic_write` で `.bak` に回ったもの)
+/// - `.tabtreenote.lock-inprogress.bak`(マーカーの `.bak` は全メモ名を含む)
+/// - `include_temp_files` のとき、`atomic_write` の残骸 `.ttn-tmp-*`(過去に中断した保存の平文本文の可能性)
+///
+/// 復号済み `fileMap` から作った名前と固定のメタ名だけを、`existing_direct_child_file`(直下・通常
+/// ファイル・リンク不可)で確認してから消す。暗号化済みの `<token>` / `<token>.bak` は一致しない。
+/// ベストエフォート: 失敗はログのみで、次回アンロック時に再試行される。
+fn remove_plaintext_residue(folder: &Path, file_map: &[FileMapEntry], include_temp_files: bool, registry: &SelfWriteRegistry) {
+    let mut names: Vec<String> = file_map.iter().map(|e| format!("{}.md.bak", e.memo_name)).collect();
+    names.push(format!("{LOCK_INPROGRESS_MARKER_NAME}.bak"));
+    let meta_bak = bak_path(&folder.join(TAB_META_FILE_NAME));
+    if meta_bak.exists() && !meta_bak_is_encrypted_shape(&meta_bak) {
+        names.push(format!("{TAB_META_FILE_NAME}.bak"));
+    }
+    if include_temp_files {
+        if let Ok(entries) = std::fs::read_dir(folder) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if crate::fs::temp_naming::is_temp_file_name(name) {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for name in names {
+        let Some(path) = existing_direct_child_file(folder, &name) else { continue };
+        registry.register(&path);
+        if let Err(err) = with_retry(|| std::fs::remove_file(&path)) {
+            tracing::warn!(error = %err, "tab lock: failed to remove a plaintext backup file (retried on next unlock)");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // tab_unlock
 // ---------------------------------------------------------------------------
 
@@ -833,6 +889,11 @@ pub async fn tab_unlock(app: AppHandle, tab_id: String, password: String) -> App
         Ok(p) => p,
         Err(_) => return AppResult::err_code(ErrorCode::DecryptFailed, "incorrect password"),
     };
+
+    // GitHub issue #276: 旧ビルドでロックしたタブ(またはロック時の削除に失敗したタブ)には平文の
+    // `<メモ名>.md.bak` / 平文メタの `.bak` が残りうる。復号した `fileMap` でこのタブのメモ名が
+    // 分かったので、ここで消す。一時ファイルはメモ名と照合できないのでここでは消さない。
+    remove_plaintext_residue(&folder, &payload.file_map, false, &registry);
 
     // Step 4: hold the decrypted session in memory.
     sessions.start(
@@ -1217,6 +1278,8 @@ fn recovery_finish_files(folder: &Path, marker: &LockInProgressMarker, key: &Loc
     if already_has_lock_field {
         // Step 8 already succeeded before the interruption (the blob already carries the
         // image-folder map); nothing more to encrypt/write (`CRASH-RECOVERY.md`'s "Idempotency").
+        // #276: step 8b(平文残骸の削除)より前に中断した可能性がある
+        remove_plaintext_residue(folder, &marker.file_map, true, registry);
         return Ok(());
     }
 
@@ -1247,7 +1310,10 @@ fn recovery_finish_files(folder: &Path, marker: &LockInProgressMarker, key: &Loc
     write_lock_field(folder, &field, registry).map_err(|err| {
         tracing::error!(error = %err, "tab_lock_recovery_finish: failed to write the encrypted lock blob");
         AppErrorPayload::new(ErrorCode::Unknown, "failed to save the locked tab metadata")
-    })
+    })?;
+    // #276: `lock_folder_files` と同じ step 8b
+    remove_plaintext_residue(folder, &marker.file_map, true, registry);
+    Ok(())
 }
 
 /// `CRASH-RECOVERY.md` "Restore": with the verified key, for every `Renamed` entry decrypt +
@@ -4076,5 +4142,175 @@ mod tests {
         assert!(value.as_object_mut().unwrap().remove("imageFolders").is_some());
         let parsed: LockInProgressMarker = serde_json::from_value(value).unwrap();
         assert!(parsed.image_folders.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // GitHub issue #276: ロック後に平文の .bak / 一時ファイルが残らない
+    // -----------------------------------------------------------------------
+
+    const T276_NAMES: [&str; 4] = ["日記", "日記の続き", "新 メモ", "古いメモ"];
+    const T276_STRAY: &str = ".ttn-tmp-00000000deadbeef";
+
+    fn t276_old_body(memo: &str) -> String {
+        format!("旧版の本文: {memo} の下書き\n")
+    }
+
+    /// t272_setup の平文タブに、通常の保存で出来る残骸を作る: 各メモの `<メモ名>.md.bak`(旧版本文)、
+    /// 平文メタの `.tabtreenote.json.bak`、中断した保存の一時ファイル。
+    fn t276_setup(dir: &Path, registry: &SelfWriteRegistry) -> Vec<MetaTreeNode> {
+        let nodes = t272_setup(dir, registry);
+        for memo in T276_NAMES {
+            let path = dir.join(format!("{memo}.md"));
+            let current = std::fs::read(&path).unwrap();
+            atomic_write(&path, t276_old_body(memo).as_bytes(), registry).unwrap();
+            atomic_write(&path, &current, registry).unwrap();
+            assert!(bak_path(&path).exists());
+        }
+        tree::save_tab_meta(dir, TAB_META_SCHEMA_VERSION, "test".to_string(), &nodes, None, registry).unwrap();
+        assert!(dir.join(format!("{TAB_META_FILE_NAME}.bak")).exists());
+        std::fs::write(dir.join(T276_STRAY), t276_old_body("日記")).unwrap();
+        nodes
+    }
+
+    /// タブフォルダ配下の全ファイル(`.tabtreenote*` を含む)を走査し、ファイル名にもメモ名が無く、
+    /// 内容にもメモ名・本文(旧版を含む)が平文で現れないことを確認する。
+    fn t276_assert_no_plaintext(dir: &Path) {
+        fn walk(cur: &Path, out: &mut Vec<PathBuf>) {
+            for e in std::fs::read_dir(cur).unwrap().filter_map(|e| e.ok()) {
+                if e.path().is_dir() {
+                    walk(&e.path(), out);
+                } else {
+                    out.push(e.path());
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(dir, &mut files);
+        let mut needles: Vec<Vec<u8>> = T276_NAMES.iter().map(|n| n.as_bytes().to_vec()).collect();
+        needles.extend(T276_NAMES.iter().map(|n| t276_old_body(n).into_bytes()));
+        needles.push(T272_OLD.as_bytes().to_vec());
+        for f in files {
+            let rel = f.strip_prefix(dir).unwrap().to_string_lossy().to_string();
+            for n in T276_NAMES {
+                assert!(!rel.contains(n), "memo name {n} in file name {rel}");
+            }
+            assert!(!crate::fs::temp_naming::is_temp_file_name(&rel), "stray temp file {rel}");
+            let bytes = std::fs::read(&f).unwrap();
+            for needle in &needles {
+                assert!(!bytes.windows(needle.len()).any(|w| w == needle.as_slice()), "plaintext {:?} in {rel}", String::from_utf8_lossy(needle));
+            }
+        }
+    }
+
+    #[test]
+    fn lock_leaves_no_plaintext_backup_or_temp_file() {
+        let dir = tempdir().join("タブ フォルダ");
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = SelfWriteRegistry::new();
+        let nodes = t276_setup(&dir, &registry);
+        lock_folder_files(&dir, nodes, None, "非公開".to_string(), &LockKey::new(&T272_KEY), KdfParams::generate_new(), None, &registry).unwrap();
+        t272_assert_locked(&dir);
+        t276_assert_no_plaintext(&dir);
+        std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+    }
+
+    /// 中断点 D(一部暗号化済み)/ E(ロック blob 書き込み済み・step 8b 前)からの「ロックを完了」でも
+    /// 平文残骸が消える。マーカーの `.bak` も消す。
+    #[test]
+    fn recovery_finish_removes_plaintext_backups() {
+        for after_blob in [false, true] {
+            let dir = tempdir();
+            let registry = SelfWriteRegistry::new();
+            let nodes = t276_setup(&dir, &registry);
+            let marker = t272_begin(&dir, &nodes, &registry);
+            std::fs::write(dir.join(format!("{LOCK_INPROGRESS_MARKER_NAME}.bak")), std::fs::read(marker_path(&dir)).unwrap()).unwrap();
+            convert_image_folders_for_lock(&dir, &marker.image_folders, &registry).unwrap();
+            t272_encrypt(&dir, &marker, "日記", &registry);
+            if after_blob {
+                for memo in ["日記の続き", "新 メモ", "古いメモ"] {
+                    t272_encrypt(&dir, &marker, memo, &registry);
+                }
+                t272_write_blob(&dir, &marker, &nodes, &registry);
+            }
+            recovery_finish_files(&dir, &marker, &LockKey::new(&T272_KEY), "非公開".to_string(), &registry).unwrap();
+            delete_marker(&dir, &registry).unwrap();
+            t272_assert_locked(&dir);
+            t276_assert_no_plaintext(&dir);
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// step 8b の後・マーカー削除前に中断しても、「元に戻す」は削除済みの `.bak` に頼らず
+    /// ロック blob からツリーを戻せる。
+    #[test]
+    fn recovery_restore_does_not_need_the_deleted_backups() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let nodes = t276_setup(&dir, &registry);
+        let marker = t272_begin(&dir, &nodes, &registry);
+        convert_image_folders_for_lock(&dir, &marker.image_folders, &registry).unwrap();
+        for memo in T276_NAMES {
+            t272_encrypt(&dir, &marker, memo, &registry);
+        }
+        t272_write_blob(&dir, &marker, &nodes, &registry);
+        remove_plaintext_residue(&dir, &marker.file_map, true, &registry);
+        assert!(!dir.join(format!("{TAB_META_FILE_NAME}.bak")).exists());
+        assert!(recovery_restore_files(&dir, &marker, &LockKey::new(&T272_KEY), &registry).unwrap());
+        delete_marker(&dir, &registry).unwrap();
+        let (parsed, _) = tree::load_tab_meta_with_recovery(&dir);
+        assert_eq!(parsed.unwrap().tree.unwrap(), nodes);
+        let mut restored = tree::scan_real_memo_names(&dir);
+        restored.sort();
+        let mut want: Vec<String> = T276_NAMES.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(restored, want);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 旧ビルドでロック済みのタブ: アンロック時の削除(`tab_unlock` が呼ぶのと同じ引数)で
+    /// `fileMap` のメモ名に一致する平文 `.bak` と平文メタの `.bak` だけが消え、暗号化済みの
+    /// `<token>.bak`、暗号化形のメタ `.bak`、無関係なファイル、一時ファイルは残る。
+    #[test]
+    fn unlock_cleanup_removes_only_this_tabs_plaintext_backups() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let nodes = t272_setup(&dir, &registry);
+        lock_folder_files(&dir, nodes.clone(), None, "非公開".to_string(), &LockKey::new(&T272_KEY), KdfParams::generate_new(), None, &registry).unwrap();
+        let payload = t272_payload(&dir);
+        let token = payload.file_map[0].token.clone();
+        let token_bak = dir.join(format!("{token}.bak"));
+        std::fs::write(&token_bak, std::fs::read(dir.join(&token)).unwrap()).unwrap();
+        let token_bak_bytes = std::fs::read(&token_bak).unwrap();
+        // 旧ビルドの残骸
+        for memo in T276_NAMES {
+            std::fs::write(dir.join(format!("{memo}.md.bak")), t276_old_body(memo)).unwrap();
+        }
+        let plain_meta = TabMetaFile {
+            schema_version: TAB_META_SCHEMA_VERSION,
+            app_version: "old".to_string(),
+            tree: Some(nodes.clone()),
+            lock: None,
+            last_viewed_memo: None,
+        };
+        let meta_bak = dir.join(format!("{TAB_META_FILE_NAME}.bak"));
+        std::fs::write(&meta_bak, serde_json::to_vec_pretty(&plain_meta).unwrap()).unwrap();
+        std::fs::write(dir.join("無関係.md.bak"), b"keep").unwrap();
+        std::fs::write(dir.join(T276_STRAY), b"keep").unwrap();
+
+        remove_plaintext_residue(&dir, &payload.file_map, false, &registry);
+
+        for memo in T276_NAMES {
+            assert!(!dir.join(format!("{memo}.md.bak")).exists(), "{memo}.md.bak");
+        }
+        assert!(!meta_bak.exists());
+        assert_eq!(std::fs::read(&token_bak).unwrap(), token_bak_bytes);
+        assert!(dir.join("無関係.md.bak").exists());
+        assert!(dir.join(T276_STRAY).exists());
+
+        // 暗号化形のメタ `.bak`(セッション中の保存で出来るもの)は残す
+        std::fs::copy(dir.join(TAB_META_FILE_NAME), &meta_bak).unwrap();
+        remove_plaintext_residue(&dir, &payload.file_map, false, &registry);
+        assert!(meta_bak.exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
