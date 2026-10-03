@@ -29,7 +29,8 @@ Explicit Marker + Resume/Rollback".
 6. Implementation Notes
 7. Image Folders (GitHub Issue #272)
 8. Plaintext Residue (GitHub Issue #276)
-9. Open Items
+9. Image Folders on Permanent Unlock (GitHub Issue #273)
+10. Open Items
 
 ---
 
@@ -230,6 +231,56 @@ Audit (no change needed): session writes only `atomic_write` encrypted `<token>`
 `.tabtreenote.json`, so their `.bak` rotations hold ciphertext only; the marker is written once
 (no `.bak`) and removed with `remove_file`. Known limitation: a memo renamed inside a session after an
 older build left `<old name>.md.bak` is not matched by the current `fileMap`, so that file stays.
+
+## Image Folders on Permanent Unlock (GitHub Issue #273)
+
+Permanent unlock (`tab_permanent_unlock`, `tab-lock-permanent-unlock/PLAN.md` §5) renames each
+lock payload `imageFolders` entry (#271 map; random folders from #272 conversion or from #271
+session pastes) back from `<random>/` to `<memo_name>/` and rewrites that memo's own image links
+`<random>/…` → `<memo_name>/…` (`util/image_link_rewrite.rs`, same rules and limits as #272).
+The map disappears with the lock blob (plain meta has none). Legacy flat images in the tab root
+are untouched. Helpers in `commands/tab_lock.rs`: `plan_unlock_image_folders`,
+`permanent_unlock_restore_all` (forward + recovery Finish), `permanent_unlock_relock_files`
+(recovery Restore lock), `count_image_folders_left_random`; renames reuse #272's
+`rename_image_folder` (#263 guard, never overwrites/merges).
+
+Plan (step 6): a map entry is planned only if its memo is in `fileMap` with the body still
+encrypted, its `<random>/` is a real folder, and `<memo_name>/` is free and valid for the #263
+guard. The planned **random names only** go into the unlock marker as `imageFolders: [..]`
+(no memo names, so the plaintext marker leaks nothing; absent = pre-#273 marker = empty plan).
+
+Left at the random name, with links unchanged (non-fatal; user decision on #273):
+- `<memo_name>/` already exists (e.g. a plain-era folder of a tab locked by a #271-only build),
+  or the name fails the guard — never planned;
+- the rename fails (a file inside is open without delete sharing, a process has its cwd inside
+  the folder) — unlock continues.
+
+Links are rewritten for a memo only when its planned folder is at `<memo_name>/` at the moment its
+body is restored. The command returns `imageFoldersLeftRandom` (planned-or-not map entries whose
+random folder still exists); the frontend (`state/useTabLock.ts`) shows a warning toast
+(`toast.permanentUnlockImageFoldersLeftRandomTemplate`) when it is > 0, also after recovery Finish.
+
+Order and crash points (no plaintext `.md` ever points at a missing folder: every folder rename
+happens while that memo's body is still an encrypted token, and the body is written once, with
+links matching the folder's on-disk name):
+
+| Step | Action | Crash after this step → recovery |
+|---|---|---|
+| 6 | Plan, write unlock marker with `imageFolders` | No `.md`, every planned random folder still present → `tree_open` deletes the marker silently (tab stays locked, unchanged). |
+| 6b | Rename planned `<random>/` → `<memo_name>/` (failures skipped) | No `.md` but a planned random folder is missing → **not** auto-deleted; recovery dialog (password). **Finish**: re-runs 6b for still-encrypted memos, then 7-8. **Restore lock**: renames planned folders found at `<memo_name>/` back to random. |
+| 7 | Per memo: decrypt, rewrite links in memory iff its planned folder is at `<memo_name>/`, write `<memo_name>.md`, remove token | Recovery dialog. **Finish**: 6b only for memos still encrypted (a restored memo's folder is never renamed afterwards, so its links stay valid), then the rest of 7, 8. **Restore lock**: re-encrypt each restored body (links `<memo_name>/` → `<random>/` in memory iff its planned folder is at `<memo_name>/`), remove the `.md`, **then** rename those folders back to random. |
+| 8 | Write plain meta (map dropped) | Existing "already finished" auto-resolve (all folder work was done before step 8). |
+| 9 | Delete marker | — |
+
+Restore lock: if a folder cannot be renamed back, it returns `IMAGE_FOLDER_RENAME_FAILED` and keeps
+the marker; since that folder is not at its random name, the next `tree_open` keeps recovery
+pending (even with zero `.md`), and a retry completes it.
+
+#276 still holds: no new plaintext file is written (link rewrites are in memory before the single
+`.md`/token write; restored `.md` files are new, so no `.md.bak`). Until the unlock completes,
+renamed folders expose memo names — same exposure class as the already-restored `.md` files in
+that window; Restore lock renames them back. Known limitations: those of #272 (UTF-8 bodies, only
+the memo's own links, #266 bare-space links); a percent-encoded link comes back in raw form.
 
 ## Open Items
 
