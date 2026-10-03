@@ -173,12 +173,16 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
         }
 
         let imported = 0;
+        // 見つからなかった相対画像の件数(ドロップ1回分の合計、GitHub issue #265)
+        let missingImages = 0;
         for (const item of queued) {
           // Sequential, awaited one at a time — so a later item's defensive backend re-check sees
           // the previous item's already-committed state (`PLAN.md` §4 step 3).
           const result = await importFile(tabId, parent, item.sourcePath, item.targetName, item.overwrite);
-          if (result.ok) imported += 1;
-          else skipped += 1;
+          if (result.ok) {
+            imported += 1;
+            missingImages += result.value.missingImages;
+          } else skipped += 1;
         }
 
         // No selection/scroll-position side effects (`PLAN.md` §4 step 5) — `refreshTree` only
@@ -189,6 +193,9 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
         setImporting(false);
         if (skipped > 0) {
           toast.pushToast(t("toast.importSummaryTemplate").replace("{imported}", String(imported)).replace("{skipped}", String(skipped)));
+        }
+        if (missingImages > 0) {
+          toast.pushToast(t("toast.importMissingImagesTemplate").replace("{count}", String(missingImages)));
         }
       })();
     },

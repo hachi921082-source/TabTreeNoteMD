@@ -346,6 +346,7 @@ export const en: Record<keyof typeof ja, string> = {
   "toast.autoRelockWarning": "This tab will lock soon due to inactivity",
   "toast.importZeroSkippedTemplate": "Imported 0 item(s) ({count} skipped, non-.md)",
   "toast.importSummaryTemplate": "Imported {imported} item(s) ({skipped} skipped)",
+  "toast.importMissingImagesTemplate": "{count} image(s) could not be found (links were left as-is)",
   "toast.imageFolderRenameFailed": "The memo was renamed, but its image folder could not be renamed (a folder with the same name may already exist). The images remain in the old folder",
   "toast.imageFolderDeleteFailed": "The memo was deleted, but its image folder could not be deleted",
 

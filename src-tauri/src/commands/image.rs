@@ -49,7 +49,12 @@ pub struct SavedImage {
 /// are effectively serialized per-memo (a single desktop user pasting into one editor), so a
 /// freshly computed "one past the max" number is already guaranteed free; this only guards
 /// against looping forever in some unanticipated race (`PLAN.md` §2's collision-retry precedent).
-const MAX_FILENAME_COLLISION_ATTEMPTS: u32 = 10;
+pub(crate) const MAX_FILENAME_COLLISION_ATTEMPTS: u32 = 10;
+
+/// 画像として受け付けるファイル拡張子(小文字)。フロントエンドの `editor/imagePaste.ts` の
+/// `IMAGE_FILE_EXTENSIONS` と同じ集合。フォルダインポート時の相対画像コピー(GitHub issue #265)で
+/// コピー対象かどうかの判定に使う。
+pub(crate) const IMAGE_FILE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
 /// GitHub issue #139: for a **plain** (non-locked) tab, images now live in a per-memo subfolder
 /// (`<tab_folder>/<memo_name>/`) instead of flat/random-hex directly under the tab folder, named
@@ -173,7 +178,7 @@ fn generate_image_filename(ext: &str) -> String {
 
 /// Scans `dir` for filenames whose stem is entirely ASCII digits (any extension), and returns one
 /// past the largest found — or `1` if the folder has none yet (GitHub issue #139).
-fn next_sequence_number(dir: &Path) -> u32 {
+pub(crate) fn next_sequence_number(dir: &Path) -> u32 {
     let max = fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -271,7 +276,7 @@ pub fn image_read_external_file(path: String) -> AppResult<Vec<u8>> {
 
 /// Magic-number sniff first (`image::guess_format`), MIME-hint fallback, `png` default
 /// (`docs/plans/image-handling/PLAN.md` §2).
-fn detect_extension(bytes: &[u8], mime_hint: Option<&str>) -> String {
+pub(crate) fn detect_extension(bytes: &[u8], mime_hint: Option<&str>) -> String {
     if let Ok(format) = image::guess_format(bytes) {
         if let Some(ext) = format.extensions_str().first() {
             return (*ext).to_string();
@@ -299,7 +304,7 @@ fn extension_from_mime(mime_hint: Option<&str>) -> Option<String> {
 /// no prior version to protect against losing, so this reuses `fs/atomic_write.rs`'s crash-safety
 /// technique (write to a temp file in the same directory, then rename into place) minus its
 /// `.bak`-rotation step, which only makes sense for overwriting an *existing* file.
-fn write_image_file(target: &Path, bytes: &[u8], registry: &SelfWriteRegistry) -> io::Result<()> {
+pub(crate) fn write_image_file(target: &Path, bytes: &[u8], registry: &SelfWriteRegistry) -> io::Result<()> {
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
     let temp_path = dir.join(generate_temp_file_name());
     {
@@ -318,7 +323,7 @@ fn write_image_file(target: &Path, bytes: &[u8], registry: &SelfWriteRegistry) -
 /// always exactly `<tab_folder>/<memo_name>` (`fs::path_safety::memo_image_folder_path`) — never
 /// the tab folder itself, its parent, or a path through a symlink/junction already occupying that
 /// name. Errors instead of writing anywhere else.
-fn plain_tab_image_dir(folder: &Path, memo_name: &str) -> Result<PathBuf, ErrorCode> {
+pub(crate) fn plain_tab_image_dir(folder: &Path, memo_name: &str) -> Result<PathBuf, ErrorCode> {
     let dir = memo_image_folder_path(folder, memo_name).ok_or(ErrorCode::NameInvalid)?;
     if let Ok(meta) = fs::symlink_metadata(&dir) {
         // 既存エントリがリンク/ファイルならタブ外への書き込みを防ぐため拒否

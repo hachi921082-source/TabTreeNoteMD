@@ -352,6 +352,7 @@ export const ja = {
   "toast.autoRelockWarning": "まもなく非アクティブのためロックされます",
   "toast.importZeroSkippedTemplate": "0件をインポートしました（{count}件をスキップ、.md以外）",
   "toast.importSummaryTemplate": "{imported}件をインポートしました（{skipped}件をスキップ）",
+  "toast.importMissingImagesTemplate": "見つからなかった画像が{count}件あります（リンクは元のまま残しました）",
   "toast.imageFolderRenameFailed": "メモ名は変更しましたが、画像フォルダの名前を変更できませんでした（同名のフォルダが既に存在する可能性があります）。画像は旧名のフォルダに残っています",
   "toast.imageFolderDeleteFailed": "メモは削除しましたが、画像フォルダを削除できませんでした",
 

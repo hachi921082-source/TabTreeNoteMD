@@ -24,6 +24,19 @@ pub fn rewrite_image_links_for_rename(body: &str, old_name: &str, new_name: &str
     let new_raw = format!("{new_name}/");
     let new_encoded = format!("{}/", percent_encode_segment(new_name));
 
+    rewrite_image_destinations(body, |dest| {
+        let (prefix_len, encoded) = match_prefix(dest, &old_prefix)?;
+        let new_prefix = if encoded { &new_encoded } else { &new_raw };
+        Some(format!("{new_prefix}{}", &dest[prefix_len..]))
+    })
+}
+
+/// 本文中の画像リンク `![alt](dest)` / `![alt](<dest>)` のリンク先を `replace` で置換する
+/// (GitHub issue #265 でインポート時の画像コピーと共用するため #261 の走査部分を汎用化)。
+/// `replace` にはリンク先の生テキスト(山括弧形なら括弧の内側、エスケープ・パーセントエンコードは
+/// 未処理のまま)を渡し、`Some(新リンク先)` ならその範囲だけを置き換える。フェンス・インライン
+/// コード内は対象外。置換が1件も無ければ `None`。
+pub fn rewrite_image_destinations<F: FnMut(&str) -> Option<String>>(body: &str, mut replace: F) -> Option<String> {
     let mut out = String::with_capacity(body.len() + 16);
     let mut changed = false;
     // フェンスの状態: (フェンス文字, 開始フェンスの長さ)
@@ -49,7 +62,7 @@ pub fn rewrite_image_links_for_rename(body: &str, old_name: &str, new_name: &str
             out.push_str(line);
             continue;
         }
-        if rewrite_line(line, &old_prefix, &new_raw, &new_encoded, &mut out) {
+        if rewrite_line(line, &mut replace, &mut out) {
             changed = true;
         }
     }
@@ -85,7 +98,7 @@ fn is_closing_fence(line: &str, ch: char) -> bool {
 }
 
 /// 1行分を走査し、インラインコード外の画像リンク先を書き換えて `out` へ追記する。
-fn rewrite_line(line: &str, old_prefix: &str, new_raw: &str, new_encoded: &str, out: &mut String) -> bool {
+fn rewrite_line<F: FnMut(&str) -> Option<String>>(line: &str, replace: &mut F, out: &mut String) -> bool {
     let bytes = line.as_bytes();
     let mut changed = false;
     let mut i = 0;
@@ -104,11 +117,10 @@ fn rewrite_line(line: &str, old_prefix: &str, new_raw: &str, new_encoded: &str, 
                     i += 1;
                     continue;
                 };
-                let dest_str = &line[dest.start..dest.end];
-                if let Some((prefix_len, encoded)) = match_prefix(dest_str, old_prefix) {
+                if let Some(new_dest) = replace(&line[dest.start..dest.end]) {
                     out.push_str(&line[copied..dest.start]);
-                    out.push_str(if encoded { new_encoded } else { new_raw });
-                    copied = dest.start + prefix_len;
+                    out.push_str(&new_dest);
+                    copied = dest.end;
                     changed = true;
                 }
                 i = dest.end;
@@ -229,6 +241,40 @@ fn match_prefix(dest: &str, old_prefix: &str) -> Option<(usize, bool)> {
     saw_escape.then_some((i, true))
 }
 
+/// リンク先文字列をファイルパスとして解釈できる形に戻す(GitHub issue #265)。CommonMark の
+/// バックスラッシュエスケープを外してからパーセントデコードする。デコード結果が UTF-8 として
+/// 不正なら `None`。
+pub fn decode_destination(dest: &str) -> Option<String> {
+    let mut unescaped = Vec::with_capacity(dest.len());
+    let src = dest.as_bytes();
+    let mut i = 0;
+    while i < src.len() {
+        let b = src[i];
+        if b == b'\\' && src.get(i + 1).is_some_and(|n| n.is_ascii_punctuation()) {
+            unescaped.push(src[i + 1]);
+            i += 2;
+        } else {
+            unescaped.push(b);
+            i += 1;
+        }
+    }
+    let mut decoded = Vec::with_capacity(unescaped.len());
+    let mut i = 0;
+    while i < unescaped.len() {
+        let b = unescaped[i];
+        if b == b'%' {
+            if let (Some(hi), Some(lo)) = (unescaped.get(i + 1).and_then(|&h| hex_val(h)), unescaped.get(i + 2).and_then(|&l| hex_val(l))) {
+                decoded.push(hi << 4 | lo);
+                i += 3;
+                continue;
+            }
+        }
+        decoded.push(b);
+        i += 1;
+    }
+    String::from_utf8(decoded).ok()
+}
+
 fn hex_val(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),
@@ -286,6 +332,14 @@ mod tests {
             got,
             "日記/001.png はテキスト\n`![](日記/001.png)`\n```\n![](日記/001.png)\n```\n![](日記2/003.png)\n"
         );
+    }
+
+    #[test]
+    fn decode_destination_unescapes_and_percent_decodes() {
+        assert_eq!(decode_destination("%E7%94%BB%E5%83%8F/a%20b\\(1\\).png").as_deref(), Some("画像/a b(1).png"));
+        // 不完全な %XX はそのまま残す
+        assert_eq!(decode_destination("100%.png").as_deref(), Some("100%.png"));
+        assert_eq!(decode_destination("%FF.png"), None);
     }
 
     #[test]
