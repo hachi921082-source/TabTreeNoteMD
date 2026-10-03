@@ -19,6 +19,17 @@
 Sources: `docs/detailed-spec.md` §5.9; `docs/DECISIONS.md` "Tab Lock: Crash-Mid-Lock Recovery via
 Explicit Marker + Resume/Rollback".
 
+## Index
+
+1. Context
+2. Marker File Format
+3. Trigger Point
+4. Per-Entry State Check and Finish-vs-Rollback Tie-Break Rule
+5. Frontend
+6. Implementation Notes
+7. Image Folders (GitHub Issue #272)
+8. Open Items
+
 ---
 
 ## Context
@@ -147,6 +158,43 @@ protects against silently discarding a choice about live data).
   `.tabtreenote.json` already has a `lock` field (meaning `PLAN.md` §3 step 8 already succeeded
   before the interruption) rather than trusting the per-entry `renamed`/`not_renamed` counts alone
   to infer that — see `PLAN.md`'s own "Implementation Notes" for why that distinction matters.
+
+## Image Folders (GitHub Issue #272)
+
+Locking a plain tab also converts each memo's `<memo_name>/` image folder (#139; only real
+directories passing the #263 guard `existing_memo_image_folder`) to a fresh random name, so folder
+names no longer leak memo names. Memos without such a folder, and pre-#139 flat images directly
+under the tab folder, are untouched.
+
+Marker: gains an optional `imageFolders: [{ memoName, folder }]` field (the planned map, written
+before anything is renamed; omitted when empty; a pre-#272 marker reads as an empty map —
+`formatVersion` unchanged). The same map is copied into the lock payload's `imageFolders` (#271).
+
+Order inside `tab_lock` (`lock_folder_files`):
+
+| Step | Action | Crash after this step → recovery |
+|---|---|---|
+| 6 | Plan `fileMap` + image-folder map, write marker | Zero progress: `tree_open` silently deletes the marker (nothing renamed). |
+| 6b | Rename every planned `<memo>/` → `<random>/` (plaintext bodies untouched) | Zero `renamed` entries: `tree_open`'s automatic rollback (no password) renames every folder found at its random name back to `<memo>/`, then deletes the marker. The plaintext bodies were never rewritten, so the tab is byte-identical to before. If a folder cannot be renamed back, the marker is kept and the rollback retried on the next `tree_open` (the tab still opens as a plain tab). |
+| 7 | Per memo: rewrite `<memo>/…` image links → `<random>/…` **in memory** and encrypt into the token file, then delete the plaintext | `renamed > 0` → the existing Finish/Restore dialog. **Finish**: idempotently completes step 6b, encrypts the remaining memos with the same in-memory rewrite, writes the lock blob with the marker's `imageFolders` (fixes #271's empty map). **Restore**: decrypts each encrypted memo, rewrites `<random>/…` back to `<memo>/…`, renames every folder back, restores the plain tree. |
+| 8 | Write lock blob (with `imageFolders`) | Finish: no-op (the blob already has the map). Restore: as above, tree taken from the blob. |
+| 9 | Delete marker | — |
+
+Partial failure (user decision on #272): if any step-6b rename fails (e.g. a file inside the folder is
+open in another program, or the destination is occupied), `tab_lock` renames the already-renamed
+folders back, deletes the marker, and returns `IMAGE_FOLDER_RENAME_FAILED` (shown in the lock dialog).
+It never locks with a folder still named after its memo. If even that rollback fails, the marker is
+kept and `tree_open` retries the rollback as in the step-6b row.
+
+Recovery Restore returns `IMAGE_FOLDER_RENAME_FAILED` (marker kept) if memos/metadata were restored
+but some folder could not be renamed back; the next `tree_open` finishes the folder rollback.
+
+Known limitations: link rewriting follows #261's rules (UTF-8 bodies only; only the memo's own
+`![..](<memo>/..)` links — a link from another memo's body into this memo's folder is not
+rewritten; bare destinations containing spaces are not parsed, see #266). On Restore of an
+already-encrypted memo, a percent-encoded link comes back in raw form (`日記/003.png` instead of
+`%E6%97%A5%E8%A8%98/003.png`; same target), because the random hex name is identical in both forms.
+A pre-#272 build ignores the marker's `imageFolders` during its own recovery.
 
 ## Open Items
 

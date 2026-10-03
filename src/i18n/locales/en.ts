@@ -363,6 +363,7 @@ export const en: Record<keyof typeof ja, string> = {
   "errors.TAB_LOCKED": "This operation cannot be performed on a locked tab",
   "errors.ANOMALOUS_FILE_STATE": "A file in an unexpected state was found. Please reopen the tab and run recovery.",
   "errors.MEMO_EDIT_LOCKED": "An edit-locked memo cannot be deleted or renamed",
+  "errors.IMAGE_FOLDER_RENAME_FAILED": "An image folder could not be renamed, so the operation was stopped. Close any program using images in the folder and try again.",
   "errors.UNKNOWN": "An unexpected error occurred",
 
   // ---- validation.* ---------------------------------------------------------------------------

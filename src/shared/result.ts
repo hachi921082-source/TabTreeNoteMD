@@ -26,4 +26,5 @@ export type ErrorCode =
   | "TAB_LOCKED"
   | "ANOMALOUS_FILE_STATE"
   | "MEMO_EDIT_LOCKED"
+  | "IMAGE_FOLDER_RENAME_FAILED"
   | "UNKNOWN";

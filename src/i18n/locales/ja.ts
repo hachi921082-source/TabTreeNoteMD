@@ -369,6 +369,7 @@ export const ja = {
   "errors.TAB_LOCKED": "ロックされたタブには操作できません",
   "errors.ANOMALOUS_FILE_STATE": "想定外の状態のファイルが見つかりました。タブをもう一度開いて復旧処理を行ってください。",
   "errors.MEMO_EDIT_LOCKED": "編集ロック中のメモは削除・名前変更できません",
+  "errors.IMAGE_FOLDER_RENAME_FAILED": "画像フォルダの名前を変更できなかったため、処理を中止しました。フォルダ内の画像を開いているプログラムを閉じてから、もう一度お試しください。",
   "errors.UNKNOWN": "予期しないエラーが発生しました",
 
   // ---- validation.* — `shared/nameSanitize.ts`'s `validateNameStrict` inline field-error reasons --
