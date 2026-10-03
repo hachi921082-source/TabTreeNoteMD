@@ -60,6 +60,16 @@ pub struct FileMapEntry {
     pub token: String,
 }
 
+/// One `imageFolders` entry (GitHub issue #271): a locked tab's memo name -> its per-memo image
+/// folder's random name (`<tab_folder>/<folder>/NNN.ext`). Kept only inside the encrypted
+/// payload so the real memo name is never derivable from the plain filesystem.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageFolderEntry {
+    pub memo_name: String,
+    pub folder: String,
+}
+
 /// The decrypted "lock payload" (`tab-lock/PLAN.md` §2) — never written to disk in this shape,
 /// only its encrypted form (`LockField::ciphertext_b64`) is persisted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -75,6 +85,19 @@ pub struct LockPayload {
     /// existed) still decrypts cleanly, with this defaulting to `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_viewed_memo: Option<String>,
+    /// GitHub issue #271: memo name -> random image-folder name map. スキーマ互換方針:
+    /// - 追加フィールドのみ(`formatVersion` は 1 のまま据え置き)。`#[serde(default)]` により、
+    ///   このフィールドを持たない既存のロック済みタブ(#271 以前に作成)はそのまま復号でき、空の
+    ///   対応表として扱われる(移行処理なし)。
+    /// - 旧ビルドは `formatVersion` を検査せず、payload の未知フィールドも無視して復号する
+    ///   (`deny_unknown_fields` 不使用)ため、新しい blob を開いてもエラーにも破損にもならない。
+    ///   ただし旧ビルドがセッション中に構造変更を保存すると、この対応表は再暗号化時に落ちる
+    ///   (画像フォルダ・画像ファイル・本文中のリンクはそのまま残り、表示も変わらない。失われるのは
+    ///   以後の削除時にフォルダをごみ箱へ送る追跡だけ)。`formatVersion` を上げても旧ビルドは検査
+    ///   しないため防げず、逆に将来の互換判定を複雑にするだけなので上げない。
+    /// 空のときは書き出さない(#271 以前と同じ JSON 形状を保つ)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_folders: Vec<ImageFolderEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -203,6 +226,7 @@ mod tests {
                 token: "9f2c7a1e4b3d0f8c6a5e2d1b0c9a8f7e".to_string(),
             }],
             last_viewed_memo: None,
+            image_folders: vec![],
         }
     }
 
@@ -312,5 +336,60 @@ mod tests {
         };
         let decrypted = decrypt_lock_field(&key, &field).unwrap();
         assert_eq!(decrypted.last_viewed_memo, None);
+    }
+
+    /// GitHub issue #271: 日本語メモ名 -> ランダムフォルダ名の対応表が暗号化 payload を往復する。
+    #[test]
+    fn image_folders_map_round_trips_through_the_encrypted_payload() {
+        let key = LockKey::new(&[3u8; 32]);
+        let mut payload = sample_payload();
+        payload.image_folders = vec![
+            ImageFolderEntry { memo_name: "日記".to_string(), folder: "a3f9c2d4e5f60718".to_string() },
+            ImageFolderEntry { memo_name: "買い物メモ".to_string(), folder: "0123456789abcdef".to_string() },
+        ];
+        let field = encrypt_lock_field(&key, KdfParams::generate_new(), None, &payload).unwrap();
+        // 平文の lock フィールド側には対応表(実メモ名)が一切現れない
+        let plain_json = serde_json::to_string(&field).unwrap();
+        assert!(!plain_json.contains("日記") && !plain_json.contains("imageFolders"));
+        let decrypted = decrypt_lock_field(&key, &field).unwrap();
+        assert_eq!(decrypted.image_folders, payload.image_folders);
+        assert_eq!(decrypted, payload);
+    }
+
+    /// GitHub issue #271: 対応表を持たない既存(旧形式)の payload は空の対応表として復号できる。
+    #[test]
+    fn legacy_payload_without_image_folders_decrypts_as_empty_map() {
+        let key = LockKey::new(&[3u8; 32]);
+        let legacy_json = serde_json::json!({
+            "realTabName": "非公開",
+            "tree": [],
+            "fileMap": [{ "memoName": "日記", "token": "9f2c7a1e4b3d0f8c6a5e2d1b0c9a8f7e" }],
+            "lastViewedMemo": "日記",
+        });
+        let bytes = serde_json::to_vec(&legacy_json).unwrap();
+        let (iv, ciphertext_with_tag) = key.encrypt_bytes(&bytes);
+        let split_at = ciphertext_with_tag.len() - GCM_TAG_LEN;
+        let (ciphertext, tag) = ciphertext_with_tag.split_at(split_at);
+        let field = LockField {
+            format_version: LOCK_FORMAT_VERSION,
+            kdf: KdfParams::generate_new(),
+            cipher: CipherParams {
+                algo: CIPHER_ALGO.to_string(),
+                iv_b64: BASE64.encode(iv),
+                tag_b64: BASE64.encode(tag),
+            },
+            hint: None,
+            ciphertext_b64: BASE64.encode(ciphertext),
+        };
+        let decrypted = decrypt_lock_field(&key, &field).unwrap();
+        assert!(decrypted.image_folders.is_empty());
+        assert_eq!(decrypted.file_map.len(), 1);
+    }
+
+    /// GitHub issue #271: 空の対応表は JSON に書き出さない(#271 以前と同じ形状)。
+    #[test]
+    fn empty_image_folders_map_is_omitted_from_the_plaintext_payload_json() {
+        let json = serde_json::to_value(sample_payload()).unwrap();
+        assert!(json.get("imageFolders").is_none());
     }
 }
