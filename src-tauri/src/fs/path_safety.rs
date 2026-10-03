@@ -166,6 +166,30 @@ pub fn existing_memo_image_folder(tab_folder: &Path, memo_name: &str) -> Option<
     Some(path)
 }
 
+/// GitHub issue #276: `file_name` がタブフォルダ直下の 1 要素で、かつ通常ファイルとして実在する
+/// (シンボリックリンク/ジャンクション・ディレクトリではない)ときだけ `<tab_folder>/<file_name>` を返す。
+/// タブロック時に平文残骸(`<メモ名>.md.bak`、`.tabtreenote.json.bak` など)を完全削除する前の確認用で、
+/// 細工されたメモ名でもタブフォルダ外の削除やリンク追従にならないようにする。先頭空白のメモ名も
+/// 対象にするため `Strict` ではなく `Lenient`。末尾のピリオド/空白は Win32 の正規化で削られ別ファイルを
+/// 指すため常に拒否する。
+pub fn existing_direct_child_file(tab_folder: &Path, file_name: &str) -> Option<PathBuf> {
+    if file_name.is_empty() || file_name == "." || file_name == ".." || file_name.ends_with('.') || file_name.ends_with(' ') {
+        return None;
+    }
+    if validate_name(file_name, ValidationMode::Lenient).is_err() {
+        return None;
+    }
+    let path = tab_folder.join(file_name);
+    if path.parent() != Some(tab_folder) || path.file_name() != Some(std::ffi::OsStr::new(file_name)) {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if is_link_or_reparse_point(&meta) || !meta.is_file() {
+        return None;
+    }
+    Some(path)
+}
+
 /// `true` for a symlink or junction (`symlink_metadata` result). Rust's Windows
 /// `FileType::is_symlink()` already covers both (name-surrogate reparse tags) — same criterion as
 /// `scan_real_memo_names`. Other reparse points (OneDrive Files On-Demand placeholders, dedup,
@@ -244,6 +268,24 @@ mod tests {
         // `.`/`..` はタブフォルダ自身/親フォルダ(実在ディレクトリ)だが対象外
         assert_eq!(existing_memo_image_folder(&tab, "."), None);
         assert_eq!(existing_memo_image_folder(&tab, ".."), None);
+        std::fs::remove_dir_all(&tab).ok();
+    }
+
+    // GitHub issue #276: ロック時の平文残骸削除用の直下ファイル判定
+
+    #[test]
+    fn existing_direct_child_file_requires_a_regular_direct_child_file() {
+        let tab = guard_tempdir();
+        std::fs::write(tab.join("日記.md.bak"), b"x").unwrap();
+        std::fs::write(tab.join(" 先頭空白.md.bak"), b"x").unwrap();
+        std::fs::create_dir_all(tab.join("フォルダ.md.bak")).unwrap();
+        assert_eq!(existing_direct_child_file(&tab, "日記.md.bak"), Some(tab.join("日記.md.bak")));
+        assert_eq!(existing_direct_child_file(&tab, " 先頭空白.md.bak"), Some(tab.join(" 先頭空白.md.bak")));
+        assert_eq!(existing_direct_child_file(&tab, "フォルダ.md.bak"), None);
+        assert_eq!(existing_direct_child_file(&tab, "無い.md.bak"), None);
+        for bad in ["", ".", "..", "a.", "a ", "a/b.md.bak", "a\\b.md.bak", "../日記.md.bak"] {
+            assert_eq!(existing_direct_child_file(&tab, bad), None, "{bad:?} must be rejected");
+        }
         std::fs::remove_dir_all(&tab).ok();
     }
 }
