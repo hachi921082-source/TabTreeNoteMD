@@ -1,96 +1,106 @@
 # Session Handoff
 
-> Written to carry context into a fresh conversation when the previous one has grown too large.
-> Read this once at the start of the new session, then treat it as disposable — once its content is
-> acted on or absorbed into `spec.v1.2.0.md` / `DECISIONS.md` / `RESOLVED-ISSUES.md` / commits, this
-> file can be deleted. Not a permanent part of the documentation set.
+> Written to carry context into a fresh conversation. Read once at the start of the new session,
+> then treat as disposable — delete once acted on / absorbed into `spec.v1.2.0.md` / `DECISIONS.md` /
+> `RESOLVED-ISSUES.md` / commits. Not a permanent part of the documentation set.
 >
 > **Verify against actual state before acting** (`git status`, `git log`, `git branch -a`,
-> `gh issue list`) — this is a snapshot (written 2026-10-03).
+> `gh issue list`) — snapshot written 2026-10-04.
 
 ## Index
 
 1. Where the project stands
-2. Next action: #271 on the integration branch
-3. Image-folder issue series — decisions and order
-4. Merged this session (2026-10-02 / 10-03)
-5. Open issues not in the series
-6. Working conventions confirmed this session
-7. Repo-root clutter
+2. Next action: #262
+3. Other open issues
+4. Done in the previous session (2026-10-03 / 10-04)
+5. Lessons from the previous session
+6. Working conventions
+7. Repo-root clutter / leftover branches
 
 ## 1. Where the project stands
 
-- Current branch `V1.2.0` at `f81677d`, local == origin, nothing in progress on it.
-- Local-only branch `feature/locked-tab-image-folders` (cut from `V1.2.0` @ `f81677d`) — **NOT pushed
-  yet**. User has not yet approved pushing it (asked, pending).
-- Working tree: `src-tauri/Cargo.toml` shows modified, but it is a line-ending-only change from builds
-  (`git diff --ignore-all-space` empty). Never commit it.
+- Branch `V1.2.0` at `b3ccaca` (+ this HANDOFF commit), local == origin, nothing in progress.
+- Image-folder series #264 (#271 → #272 → #276 → #273) is complete and merged into `V1.2.0` via the
+  integration branch `feature/locked-tab-image-folders` (PR #281). All five issues closed,
+  `RESOLVED-ISSUES.md` updated.
+- Working tree: `src-tauri/Cargo.toml` shows modified — line endings only. Never commit it.
 
-## 2. Next action: #271 on the integration branch
+## 2. Next action: #262
 
-1. Ask the user to approve pushing `feature/locked-tab-image-folders` to origin (PR base for #271–#273).
-2. Cut `fix/<slug>` for #271 **from `feature/locked-tab-image-folders`** (not from `V1.2.0`).
-3. developer-lite implements #271 (`gh issue view 271` is the spec). Ask it for a live-test estimate.
-4. reviewer-lite static review → release build (timestamped exe at repo root, delete installers) →
-   user manual test → **ask user about `/security-review`** (tab-lock internals; recommend yes) →
-   PR **into `feature/locked-tab-image-folders`** → merge after user OK.
-5. Repeat for #272, #273. Only after all three are done and verified: merge the integration branch
-   into `V1.2.0` (with user confirmation), then close #264 and the three, add `RESOLVED-ISSUES.md`
-   entries.
+#262 — cross-tab move/copy doesn't carry the memo's image folder, so images break at the destination.
+Remaining item of the original series order (#264 → **#262** → locked-tab import).
 
-## 3. Image-folder issue series — decisions and order
+Decisions already recorded (on the issue / previous HANDOFF):
+- Locked-tab moves are IN scope (Q1).
+- Pre-#139 flat images carried only if cheap, else skipped (Q2).
 
-Background: #139 stores plain-tab images in `<tab>/<memo_name>/NNN.ext`; locked tabs store images flat
-in the tab root with random names, **unencrypted** (tab-lock encrypts `.md` only). A code survey found
-lifecycle holes A–H; A, E/F, H are fixed (§4).
+Must build on the now-final layout:
+- Plain tab: `<memo_name>/NNN.ext`. Locked tab (session): `<random16hex>/NNN.ext`, memo→folder map
+  in encrypted `LockPayload::image_folders` (`commands/tab_lock.rs`).
+- Cross-tab move out of a locked tab already drops the source map entry (#271 fix in
+  `cleanup_session_move_source`) but does NOT move the folder — #262 must.
+- Four combinations (plain/locked × plain/locked) each need folder rename + link rewrite
+  (`util/image_link_rewrite.rs`), #263 path guard, collision handling at destination.
 
-Order (user-confirmed): ~~#261~~ → ~~#263~~ → ~~#265~~ → **#264 (split #271 → #272 → #273)** → #262 →
-locked-tab import (deferred part of #265).
+Flow: `fix/<slug>` from `V1.2.0` → developer-lite → reviewer-lite (static) → release build → user
+manual test → ask `/security-review` (touches tab-lock + paths; recommend yes) → PR → local merge
+after user OK.
 
-| Issue | Content | Key decisions |
+After #262: locked-tab `.md` import (deferred part of #265).
+
+## 3. Other open issues
+
+| Issue | Content |
+|---|---|
+| #274 | Toolbar image insert fails in an unlock session: OS file dialog takes focus → focus-loss auto-relock. User decision: add an exception for the app's own file picker only; D&D from Explorer stays as-is (security); clipboard paste works. |
+| #279 | Split view: editor shorter than rendered preview (big images) → editor hits its end, preview stops at the line-matched position. Proposed: blend to preview end over the editor's last viewport. One-directional sync stays. |
+| #266 | Memo names with spaces produce `![](新 メモ/001.png)` (needs `<...>`); paste and #261 rewrite affected. Full-width space works. |
+| #267 | Renaming the open memo with a pending autosave loses unsaved edits (flush before rename). |
+
+## 4. Done in the previous session (2026-10-03 / 10-04)
+
+| Issue | PR | What |
 |---|---|---|
-| #264 | Umbrella, stays open until #271–#273 land | Branch strategy comment on the issue |
-| #271 | Locked tab: paste saves to per-memo random-name folder; **name→folder map in encrypted metadata** (decision B) | Rename = update map only; delete = trash folder; legacy flat images left as-is; schema versioning needed |
-| #272 | Lock (plain→locked): `<memo_name>/` → random name + link rewrite before encryption | Must integrate with lock-in-progress marker/recovery |
-| #273 | Permanent unlock: random → `<memo_name>/` + link rewrite | Collision → keep random + warning; unlock-in-progress recovery |
-| #262 | Cross-tab move/copy doesn't carry image folder | Locked-tab moves IN scope (Q1); pre-#139 flat images carried only if cheap, else skipped (Q2); depends on #271 layout |
+| #271 | #275 | Locked-tab paste → per-memo random folder; map in encrypted payload |
+| #272 | #277 | Lock converts `<memo>/` → random + link rewrite; rename failure aborts + rolls back |
+| #276 | #278 | Lock removes plaintext `.bak` residue (found during #272 manual test; pre-existing since tab-lock) |
+| #273 | #280 | Permanent unlock restores `<memo>/`; collision / in-use → keep random + warning toast |
+| #264 | #281 | Integration branch merged into `V1.2.0` |
 
-Explicitly deferred by the user: encrypting images (large); an in-app trash (Windows recycle bin stays).
+Crash-recovery order for all three tab-lock paths: `docs/plans/tab-lock/CRASH-RECOVERY.md` §7–§9.
 
-Per-issue confirmation with the user between issues applies to **this series only** (they're
-intertwined) — not a standing rule.
+## 5. Lessons from the previous session
 
-## 4. Merged this session (2026-10-02 / 10-03)
+- Manual-test instructions must state the precondition precisely. Two #273 runs were invalid:
+  a collision folder created before lock (got adopted as the memo's image folder), and `cmd`
+  opened in the tab folder instead of inside the random folder. Paint does NOT hold a file lock;
+  use `cmd` with cwd inside the target folder (Explorer address bar → `cmd`).
+- Test tabs reused across builds accumulate mixed states (e.g. a pre-#273 permanent unlock drops the
+  map, leaving random folders that later can't be restored). Tell the user to use a fresh tab per
+  feature test.
+- User sends screen recordings (`unknown_*.mp4` at repo root). No ffmpeg; extract frames with Python
+  `cv2` (OpenCV installed) into the scratchpad, ~8 frames, 900–1000 px wide.
+- Toasts show bottom-right for 5 s — easy to miss if Explorer overlaps.
 
-All into `V1.2.0`, issues closed, `RESOLVED-ISSUES.md` updated:
+## 6. Working conventions
 
-| Issue | What | PR |
-|---|---|---|
-| #256, #257 | PDF export in release builds (PrintToPdfAsync) + missing images (NavigateToString 2 MB limit) | #258 |
-| #259 | Inserted images still > 1 MB after #82 resize → re-encoded as WebP q0.85 | #260 |
-| #261 | Rename now rewrites the memo's own image links to the new folder name | #268 |
-| #263 | Memo delete trashes the image folder; rename-into-existing-folder warns; **path guard** in `fs/path_safety.rs` (`memo_image_folder_path` / `existing_memo_image_folder`) — review caught `..md`/`...md` stems that could have trashed/deleted the tab's parent folder | #269 |
-| #265 | `.md` import copies relative-path images into `<memo_name>/NNN.ext` (plain tabs only) | #270 |
+- Every user-visible message in Japanese.
+- Heavy live verification → hand the user a manual checklist + timestamped release exe
+  (`TabTreeNoteMD_YYYYMMDD-HHMMSS.exe` at repo root; delete msi/nsis installers).
+- reviewer-lite: static review only (no CDP); user does live tests.
+- `/security-review` check-in before PR on anything touching paths/deletion/tab-lock; run it as a
+  subagent scoped to `git diff <base>...<branch>` (the skill's default diff is vs `V1.0.0`, ~1 MB).
+- `gh pr merge` and branch deletion are blocked by the auto-mode classifier; user chose "merge via
+  local git" (`git merge --no-ff` + push) — PR then shows MERGED automatically. A merge into
+  `V1.2.0` also hit the classifier once; it went through after the user re-confirmed.
+- `gh issue create` / `gh pr create` with long bodies: write body to a scratchpad file and use
+  `--body-file` (PowerShell quoting breaks inline bodies).
 
-## 5. Open issues not in the series
+## 7. Repo-root clutter / leftover branches
 
-- #266 — memo names with spaces produce `![](新 メモ/001.png)` (needs `<...>` destination); paste and #261 rewrite both affected.
-- #267 — renaming the open memo with a pending autosave loses the unsaved edits (flush before rename).
-
-## 6. Working conventions confirmed this session
-
-- Every user-visible message in Japanese (one English slip happened this session).
-- If verification looks live-test heavy, say so up front and hand the user a manual checklist + a
-  timestamped release exe; the user tests by hand. (memory: `feedback_report_heavy_live_testing_user_helps.md`)
-- Before telling the user a test failed, check which exe is actually running
-  (`Get-Process | ? Path -like "*TabTreeNote*"`) — one test this session ran the previous build.
-- Test-file content given in chat gets mangled on copy (`[` → `\[`); write test files directly when
-  the user gives a path.
-- reviewer-lite: static review only (no CDP) for this series; the user does live tests.
-- `/security-review` check-in before PR on anything touching paths/deletion/tab-lock.
-
-## 7. Repo-root clutter
-
-Timestamped test exes (`TabTreeNoteMD_2026100*-*.exe`) and `data/` (the exes' portable data folder,
-contains the user's test tabs `111` / `test`) are untracked. **User manages cleanup — don't offer to
-delete them.**
+- Untracked timestamped exes, `unknown_*.mp4` recordings, and `data/` (portable data; test tabs
+  `111`, `456`, `457`, `888`, `999`). **User manages cleanup — don't offer to delete.**
+- Merged branches not deleted (deletion blocked by classifier; user may delete manually):
+  `feature/locked-tab-image-folders`, `fix/locked-tab-per-memo-image-folder`,
+  `fix/lock-convert-image-folders`, `fix/lock-plaintext-bak-cleanup`,
+  `fix/unlock-restore-image-folders` (local + origin).
