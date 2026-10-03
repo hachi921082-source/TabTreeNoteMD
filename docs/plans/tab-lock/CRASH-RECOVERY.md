@@ -28,7 +28,8 @@ Explicit Marker + Resume/Rollback".
 5. Frontend
 6. Implementation Notes
 7. Image Folders (GitHub Issue #272)
-8. Open Items
+8. Plaintext Residue (GitHub Issue #276)
+9. Open Items
 
 ---
 
@@ -195,6 +196,40 @@ rewritten; bare destinations containing spaces are not parsed, see #266). On Res
 already-encrypted memo, a percent-encoded link comes back in raw form (`日記/003.png` instead of
 `%E6%97%A5%E8%A8%98/003.png`; same target), because the random hex name is identical in both forms.
 A pre-#272 build ignores the marker's `imageFolders` during its own recovery.
+
+## Plaintext Residue (GitHub Issue #276)
+
+`atomic_write` keeps a single-generation `.bak`, so a plain tab normally holds `<memo>.md.bak`
+(previous body) and `.tabtreenote.json.bak` (plain meta, every memo name). Locking used to leave both,
+plus `write_lock_field`'s own `atomic_write` rotated the plain meta into `.bak` at step 8. User
+decision on #276: **permanently delete** them (never trash — the Recycle Bin would keep the
+plaintext); do not encrypt-and-keep (session saves already produce encrypted `<token>.bak`).
+
+`remove_plaintext_residue` (`commands/tab_lock.rs`) deletes, each guarded by
+`fs/path_safety.rs`'s `existing_direct_child_file` (direct child, regular file, no link):
+
+- `<memoName>.md.bak` for every `fileMap` entry;
+- `.tabtreenote.json.bak` unless it parses as the encrypted meta shape (`lock` set, no `tree`);
+- `.tabtreenote.lock-inprogress.bak` (a marker backup lists every memo name);
+- at lock time only: stray `atomic_write` temp files (`.ttn-tmp-*`), which may hold a plaintext body
+  from an earlier interrupted save.
+
+Encrypted `<token>` / `<token>.bak` never match. Best-effort: failures are logged only.
+
+| When | Point | Crash → |
+|---|---|---|
+| `tab_lock` | Step 8b: after the lock blob is written (step 8), before the marker delete (step 9) | Marker still present → recovery. **Finish** runs the same cleanup (both the "blob already written" early return and the normal path). **Restore** does not use any `.bak`: the tree comes from the lock blob (or the still-plain meta if step 8 never ran), bodies from the token files. |
+| Recovery Finish | After its own lock-blob write / when the blob already exists | Re-run on the next Finish. |
+| `tab_unlock` (legacy cleanup) | After the password is verified, before the session starts | Tabs locked by an older build, or whose cleanup failed, are cleaned on the next unlock using the decrypted `fileMap` names. Temp files are not touched here (names cannot be matched to this tab). |
+
+Deleting before step 9 (not after) keeps the cleanup inside the marker-protected window, so an
+interruption is always repaired by Finish rather than depending only on the next unlock. Recovery
+Restore keeps the plain `.md.bak` files (the tab goes back to plain, so they are ordinary backups again).
+
+Audit (no change needed): session writes only `atomic_write` encrypted `<token>` files and the locked
+`.tabtreenote.json`, so their `.bak` rotations hold ciphertext only; the marker is written once
+(no `.bak`) and removed with `remove_file`. Known limitation: a memo renamed inside a session after an
+older build left `<old name>.md.bak` is not matched by the current `fileMap`, so that file stays.
 
 ## Open Items
 
