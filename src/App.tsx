@@ -30,12 +30,13 @@ function App() {
   const treeState = useTree(tabsState.activeTabId);
   const tabView = useTabView(treeState);
   const settingsState = useSettings();
-  const tabLockState = useTabLock(tabsState.activeTabId, tabsState.refresh, treeState.refresh);
   // Single app-wide notification queue (`state/useToast.ts`) — shared by `TreeView`'s folder-import
   // toasts and `useTabLockAutoRelock`'s inactivity warning/auto-relock toasts below, so both render
   // in one stack instead of two independently-positioned ones (`docs/plans/v1.1.0/
-  // tab-lock-auto-relock/PLAN.md` §6).
+  // tab-lock-auto-relock/PLAN.md` §6). Also passed to `useTabLock` for the permanent-unlock
+  // image-folder warning (GitHub issue #273).
   const toastState = useToast();
+  const tabLockState = useTabLock(tabsState.activeTabId, tabsState.refresh, treeState.refresh, toastState);
 
   // Ordinary in-session tab switch (click, `tab.switchNext`/`switchPrev` shortcuts — both funnel
   // through `TabBar`'s own `selectTab` calls) also queues a `restoreTabView` request
