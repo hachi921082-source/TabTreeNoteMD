@@ -17,11 +17,14 @@ use tauri::{AppHandle, Manager};
 
 use crate::commands::editor::{MemoContent, SaveResult};
 use crate::commands::tab::TabInfo;
-use crate::commands::tree::{self, MemoMoveResult, MemoProperties, TreeSnapshot};
+use crate::commands::image::plain_tab_image_dir;
+use crate::commands::tree::{self, MemoMoveResult, MemoMutationResult, MemoMutationWarning, MemoProperties, TreeSnapshot};
 use crate::commands::emit_settings_recovery_event;
 use crate::crypto::kdf::{self, KdfParams};
-use crate::crypto::lock_blob::{self, FileMapEntry, LockField, LockKey, LockPayload};
+use crate::crypto::lock_blob::{self, FileMapEntry, ImageFolderEntry, LockField, LockKey, LockPayload};
 use crate::fs::atomic_write::{atomic_write, bak_path};
+use crate::fs::path_safety::{existing_memo_image_folder, memo_image_folder_path};
+use crate::fs::trash;
 use crate::fs::retry::with_retry;
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::model::app_settings::{AppSettings, EolPolicy};
@@ -449,6 +452,8 @@ pub async fn tab_lock(app: AppHandle, tab_id: String, password: String, hint: Op
         tree: loaded.tree,
         file_map,
         last_viewed_memo: loaded.last_viewed_memo,
+        // 新規ロック直後は対応表なし(平文タブ時代の `<メモ名>/` 画像フォルダの変換は #272 の範囲)
+        image_folders: Vec::new(),
     };
     let field = match lock_blob::encrypt_lock_field(&key, kdf_params, hint, &payload) {
         Ok(f) => f,
@@ -634,6 +639,7 @@ pub async fn tab_unlock(app: AppHandle, tab_id: String, password: String) -> App
             hint: field.hint,
             key: key_bytes,
             last_viewed_memo: payload.last_viewed_memo,
+            image_folders: payload.image_folders,
         },
     );
 
@@ -692,6 +698,7 @@ async fn resolve_key_and_lock_payload(
                 tree: s.tree.clone(),
                 file_map: s.file_map.clone(),
                 last_viewed_memo: s.last_viewed_memo.clone(),
+                image_folders: s.image_folders.clone(),
             },
         )
     }) {
@@ -990,6 +997,7 @@ pub async fn tab_lock_recovery_finish(app: AppHandle, tab_id: String, password: 
             tree: tree_field,
             file_map: marker.file_map.clone(),
             last_viewed_memo,
+            image_folders: Vec::new(),
         };
         let field = match lock_blob::encrypt_lock_field(&key, marker.kdf.clone(), None, &payload) {
             Ok(f) => f,
@@ -1418,13 +1426,22 @@ fn empty_locked_snapshot() -> TreeSnapshot {
 /// parameter besides `session` is taken explicitly (rather than read from `session` itself) so
 /// callers can save a not-yet-committed draft and only write it into `session` once this succeeds
 /// (`commit_session_mutation`, GH #17).
-fn save_lock_blob(folder: &Path, session: &LockSession, tree: &[MetaTreeNode], file_map: &[FileMapEntry], last_viewed_memo: Option<String>, registry: &SelfWriteRegistry) -> std::io::Result<()> {
+fn save_lock_blob(
+    folder: &Path,
+    session: &LockSession,
+    tree: &[MetaTreeNode],
+    file_map: &[FileMapEntry],
+    last_viewed_memo: Option<String>,
+    image_folders: &[ImageFolderEntry],
+    registry: &SelfWriteRegistry,
+) -> std::io::Result<()> {
     let key = LockKey::new(&session.key);
     let payload = LockPayload {
         real_tab_name: session.real_tab_name.clone(),
         tree: tree.to_vec(),
         file_map: file_map.to_vec(),
         last_viewed_memo,
+        image_folders: image_folders.to_vec(),
     };
     let field = lock_blob::encrypt_lock_field(&key, session.kdf.clone(), session.hint.clone(), &payload).map_err(|_| std::io::Error::other("failed to encrypt lock blob"))?;
     write_lock_field(folder, &field, registry)
@@ -1453,16 +1470,30 @@ fn commit_session_mutation(
     tab_id: &str,
     mutate: impl FnOnce(&LockSession, &mut Vec<MetaTreeNode>, &mut Vec<FileMapEntry>) -> Result<(), AppErrorPayload>,
 ) -> Option<Result<(), AppErrorPayload>> {
+    commit_session_mutation_with_images(sessions, registry, folder, tab_id, |session, tree, file_map, _image_folders| mutate(session, tree, file_map))
+}
+
+/// `commit_session_mutation` に画像フォルダ対応表(GitHub issue #271)の下書きも渡す版。対応表も
+/// tree/file_map と同じく、ロック blob の保存成功後にだけ `session` へ反映する(GH #17 の方針)。
+fn commit_session_mutation_with_images(
+    sessions: &LockSessionStore,
+    registry: &SelfWriteRegistry,
+    folder: &Path,
+    tab_id: &str,
+    mutate: impl FnOnce(&LockSession, &mut Vec<MetaTreeNode>, &mut Vec<FileMapEntry>, &mut Vec<ImageFolderEntry>) -> Result<(), AppErrorPayload>,
+) -> Option<Result<(), AppErrorPayload>> {
     sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
         let mut tree = session.tree.clone();
         let mut file_map = session.file_map.clone();
-        mutate(session, &mut tree, &mut file_map)?;
-        save_lock_blob(folder, session, &tree, &file_map, session.last_viewed_memo.clone(), registry).map_err(|err| {
+        let mut image_folders = session.image_folders.clone();
+        mutate(session, &mut tree, &mut file_map, &mut image_folders)?;
+        save_lock_blob(folder, session, &tree, &file_map, session.last_viewed_memo.clone(), &image_folders, registry).map_err(|err| {
             tracing::error!(error = %err, tab_id, "session mutation: failed to save lock blob; in-memory session left unchanged");
             AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
         })?;
         session.tree = tree;
         session.file_map = file_map;
+        session.image_folders = image_folders;
         Ok(())
     })
 }
@@ -1475,7 +1506,7 @@ fn commit_session_mutation(
 /// unchanged if the lock-blob save fails.
 pub(crate) fn session_set_last_viewed(sessions: &LockSessionStore, registry: &SelfWriteRegistry, folder: &Path, tab_id: &str, memo_name: Option<String>) -> AppResult<()> {
     let result = sessions.with_session_mut(tab_id, |session| -> Result<(), AppErrorPayload> {
-        save_lock_blob(folder, session, &session.tree.clone(), &session.file_map.clone(), memo_name.clone(), registry).map_err(|err| {
+        save_lock_blob(folder, session, &session.tree.clone(), &session.file_map.clone(), memo_name.clone(), &session.image_folders.clone(), registry).map_err(|err| {
             tracing::error!(error = %err, tab_id, "session_set_last_viewed: failed to save lock blob; in-memory session left unchanged");
             AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
         })?;
@@ -1532,7 +1563,7 @@ pub(crate) fn session_rename_memo(
     path: &str,
     new_name: &str,
 ) -> AppResult<TreeSnapshot> {
-    let result = commit_session_mutation(sessions, registry, folder, tab_id, |_session, tree, file_map| {
+    let result = commit_session_mutation_with_images(sessions, registry, folder, tab_id, |_session, tree, file_map, image_folders| {
         if tree::find_node(tree, path).is_none() {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
         }
@@ -1546,19 +1577,34 @@ pub(crate) fn session_rename_memo(
         if let Some(entry) = file_map.iter_mut().find(|e| e.memo_name == path) {
             entry.memo_name = new_name.to_string();
         }
+        // GitHub issue #271: 画像フォルダはランダム名なので改名しない。対応表のキーだけ更新し、
+        // 本文中のリンク(`<ランダム名>/NNN.ext`)も書き換え不要。
+        if let Some(entry) = image_folders.iter_mut().find(|e| e.memo_name == path) {
+            entry.memo_name = new_name.to_string();
+        }
         Ok(())
     });
     finish_session_mutation(sessions, tab_id, result)
 }
 
+/// `force_direct` (GitHub issue #271): セッション中メモの画像フォルダ(`<ランダム名>/`)にだけ
+/// 適用する、平文タブ #263 と同じごみ箱/直接削除の切り替え。難読化トークンファイル自体は従来通り
+/// 常に完全削除。
+///
+/// 順序: 先に全メモの画像フォルダを処理し、その後でトークンファイルを削除する。トークンは
+/// ごみ箱に行かず復元不能なので、ごみ箱移動失敗(`TrashFailed` -> 同意ダイアログ -> 直接削除で
+/// 再試行、`[spec §5.8]`)で利用者がキャンセルしても、本文だけ消えてツリーに残る壊れたメモを
+/// 作らないため。直接削除経路でのフォルダ削除失敗は #263 と同じく非致命の警告として返す。
 pub(crate) fn session_delete_memo(
     sessions: &LockSessionStore,
     registry: &SelfWriteRegistry,
     folder: &Path,
     tab_id: &str,
     paths: &[NodePath],
-) -> AppResult<TreeSnapshot> {
-    let result = commit_session_mutation(sessions, registry, folder, tab_id, |_session, tree, file_map| {
+    force_direct: bool,
+) -> AppResult<MemoMutationResult> {
+    let mut warning: Option<MemoMutationWarning> = None;
+    let result = commit_session_mutation_with_images(sessions, registry, folder, tab_id, |_session, tree, file_map, image_folders| {
         let mut all_names: Vec<String> = Vec::new();
         for p in paths {
             if let Some(node) = tree::find_node(tree, p) {
@@ -1573,6 +1619,26 @@ pub(crate) fn session_delete_memo(
         }
         if all_names.is_empty() {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "no matching memo to delete"));
+        }
+
+        // GitHub issue #271: 各メモの画像フォルダ。対応表にあり、かつタブ直下の実ディレクトリに
+        // 解決できるもの(#263 のパスガード)だけを対象にする。
+        for name in &all_names {
+            let Some(entry) = image_folders.iter().find(|e| &e.memo_name == name) else {
+                continue;
+            };
+            let Some(image_folder) = existing_memo_image_folder(folder, &entry.folder) else {
+                continue;
+            };
+            if force_direct {
+                if let Err(err) = trash::delete_dir_directly(&image_folder, registry) {
+                    tracing::warn!(error = %err, "session_delete_memo: failed to delete memo's image folder");
+                    warning = Some(MemoMutationWarning::ImageFolderDeleteFailed);
+                }
+            } else if let Err(code) = trash::trash_file(&image_folder, registry) {
+                tracing::error!(?code, "session_delete_memo: failed to trash memo's image folder");
+                return Err(AppErrorPayload::new(code, "failed to move the memo's image folder to the trash"));
+            }
         }
 
         // Deletion of a locked-session memo's obfuscated file is a permanent delete, not a
@@ -1597,11 +1663,80 @@ pub(crate) fn session_delete_memo(
         for name in &all_names {
             tree::remove_node(tree, name);
             file_map.retain(|e| &e.memo_name != name);
+            image_folders.retain(|e| &e.memo_name != name);
         }
 
         Ok(())
     });
-    finish_session_mutation(sessions, tab_id, result)
+    match finish_session_mutation(sessions, tab_id, result) {
+        AppResult::Ok(snapshot) => AppResult::ok(MemoMutationResult { snapshot, warning }),
+        AppResult::Err(e) => AppResult::err(e),
+    }
+}
+
+/// GitHub issue #271: ロック中タブのセッションで `memo_name` の画像保存先フォルダを返す
+/// (`(<tab_folder>/<ランダム名>, ランダム名)`)。対応表に既にあればそれを使い、無ければ
+/// 推測不能なランダム名を新規に割り当て、対応表をロック blob へ再暗号化保存してから返す
+/// (フォルダ自体の作成は呼び出し側 `image_save_pasted`)。実メモ名はフォルダ名に一切現れない。
+pub(crate) fn session_memo_image_dir(sessions: &LockSessionStore, registry: &SelfWriteRegistry, folder: &Path, tab_id: &str, memo_name: &str) -> Result<(PathBuf, String), AppErrorPayload> {
+    // 既存エントリがあればそれを使う(保存不要なので読み取りのみ)
+    let existing = sessions.with_session(tab_id, |session| {
+        if !session.file_map.iter().any(|e| e.memo_name == memo_name) {
+            return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
+        }
+        Ok(session.image_folders.iter().find(|e| e.memo_name == memo_name).map(|e| e.folder.clone()))
+    });
+    match existing {
+        None => return Err(AppErrorPayload::new(ErrorCode::TabLocked, "no active session for this tab")),
+        Some(Err(e)) => return Err(e),
+        Some(Ok(Some(name))) => {
+            let dir = plain_tab_image_dir(folder, &name).map_err(|code| AppErrorPayload::new(code, "invalid memo image folder"))?;
+            return Ok((dir, name));
+        }
+        Some(Ok(None)) => {}
+    }
+
+    let mut assigned: Option<(PathBuf, String)> = None;
+    let result = commit_session_mutation_with_images(sessions, registry, folder, tab_id, |_session, _tree, _file_map, image_folders| {
+        // with_session と commit の間に別呼び出しが割り当て済みならそれを使う
+        if let Some(entry) = image_folders.iter().find(|e| e.memo_name == memo_name) {
+            let dir = plain_tab_image_dir(folder, &entry.folder).map_err(|code| AppErrorPayload::new(code, "invalid memo image folder"))?;
+            assigned = Some((dir, entry.folder.clone()));
+            return Ok(());
+        }
+        let (dir, name) = generate_unique_image_folder(folder, image_folders).ok_or_else(|| AppErrorPayload::new(ErrorCode::Unknown, "failed to generate a unique image folder name"))?;
+        image_folders.push(ImageFolderEntry {
+            memo_name: memo_name.to_string(),
+            folder: name.clone(),
+        });
+        assigned = Some((dir, name));
+        Ok(())
+    });
+    match result {
+        Some(Ok(())) => assigned.ok_or_else(|| AppErrorPayload::new(ErrorCode::Unknown, "failed to assign an image folder")),
+        Some(Err(e)) => Err(e),
+        None => Err(AppErrorPayload::new(ErrorCode::TabLocked, "no active session for this tab")),
+    }
+}
+
+/// GitHub issue #271: 衝突しないランダム画像フォルダ名を生成する。条件: #263 のパスガード
+/// (`memo_image_folder_path`)を通ること、タブ直下に同名のエントリ(ファイル/フォルダ/リンク)が
+/// 無いこと、対応表の既存フォルダ名と(大文字小文字を無視して)重ならないこと。
+fn generate_unique_image_folder(folder: &Path, image_folders: &[ImageFolderEntry]) -> Option<(PathBuf, String)> {
+    for _ in 0..crate::commands::image::MAX_FILENAME_COLLISION_ATTEMPTS {
+        let name = obfuscated_naming::generate_image_folder_name();
+        let Some(dir) = memo_image_folder_path(folder, &name) else {
+            continue;
+        };
+        if std::fs::symlink_metadata(&dir).is_ok() {
+            continue;
+        }
+        if image_folders.iter().any(|e| e.folder.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        return Some((dir, name));
+    }
+    None
 }
 
 pub(crate) fn session_move_within(
@@ -1955,7 +2090,7 @@ fn cleanup_session_move_source(
     all_names: &[String],
     tokens: &HashMap<String, String>,
 ) -> Result<(), AppErrorPayload> {
-    let result = commit_session_mutation(sessions, registry, source_folder, source_tab_id, |_session, tree, file_map| {
+    let result = commit_session_mutation_with_images(sessions, registry, source_folder, source_tab_id, |_session, tree, file_map, image_folders| {
         for name in all_names {
             if let Some(token) = tokens.get(name) {
                 let token_path = source_folder.join(token);
@@ -1967,6 +2102,9 @@ fn cleanup_session_move_source(
             }
             tree::remove_node(tree, name);
             file_map.retain(|e| &e.memo_name != name);
+            // GitHub issue #271: 移動元の対応表からも外す(残すと同名の新メモが旧フォルダを再利用し、
+            // その削除で移動済みメモの画像までごみ箱へ送られる)。フォルダ自体の移動/コピーは #262 の範囲。
+            image_folders.retain(|e| &e.memo_name != name);
         }
         Ok(())
     });
@@ -2394,6 +2532,7 @@ mod tests {
                 hint: None,
                 key: [7u8; 32],
                 last_viewed_memo: None,
+                image_folders: Vec::new(),
             },
         );
         std::fs::write(dir.join(TAB_META_FILE_NAME), b"placeholder").unwrap();
@@ -2440,6 +2579,7 @@ mod tests {
                 hint: None,
                 key: [7u8; 32],
                 last_viewed_memo: None,
+                image_folders: Vec::new(),
             },
         );
         std::fs::write(dir.join(TAB_META_FILE_NAME), b"placeholder").unwrap();
@@ -2448,7 +2588,7 @@ mod tests {
         let before_tree = sessions.with_session("tab-1", |s| s.tree.clone()).unwrap();
         let before_file_map = sessions.with_session("tab-1", |s| s.file_map.clone()).unwrap();
 
-        match session_delete_memo(&sessions, &registry, &dir, "tab-1", &["Diary".to_string()]) {
+        match session_delete_memo(&sessions, &registry, &dir, "tab-1", &["Diary".to_string()], false) {
             AppResult::Err(err) => assert_eq!(err.code, ErrorCode::Unknown),
             AppResult::Ok(_) => panic!("expected the forced save_lock_blob failure to surface as an error"),
         }
@@ -2484,6 +2624,7 @@ mod tests {
                 hint: None,
                 key: [7u8; 32],
                 last_viewed_memo: None,
+                image_folders: Vec::new(),
             },
         );
 
@@ -2541,6 +2682,7 @@ mod tests {
                 hint: None,
                 key: [7u8; 32],
                 last_viewed_memo: None,
+                image_folders: Vec::new(),
             },
         );
 
@@ -2583,6 +2725,7 @@ mod tests {
                 hint: None,
                 key: [7u8; 32],
                 last_viewed_memo: None,
+                image_folders: Vec::new(),
             },
         );
 
@@ -2657,6 +2800,7 @@ mod tests {
             tree: loaded_tree,
             file_map: file_map.clone(),
             last_viewed_memo: None,
+            image_folders: Vec::new(),
         };
         let field = lock_blob::encrypt_lock_field(&key, kdf_params, Some("my hint".to_string()), &lock_payload).unwrap();
         write_lock_field(&dir, &field, &registry).unwrap();
@@ -2691,6 +2835,7 @@ mod tests {
                 hint: stored_field.hint,
                 key: unlock_key_bytes,
                 last_viewed_memo: decrypted_payload.last_viewed_memo,
+                image_folders: Vec::new(),
             },
         );
         assert!(sessions.has_session("tab-1"));
@@ -2745,10 +2890,10 @@ mod tests {
         assert_eq!(reloaded.text, "milk\neggs\nbread");
 
         // ---- delete within the session ---------------------------------------------------------
-        let snapshot = session_delete_memo(&sessions, &registry, &dir, "tab-1", &["Diary".to_string()]);
+        let snapshot = session_delete_memo(&sessions, &registry, &dir, "tab-1", &["Diary".to_string()], false);
         let AppResult::Ok(snapshot) = snapshot else { panic!("expected Ok") };
-        assert!(tree::find_node(&snapshot.nodes, "Diary").is_none());
-        assert!(tree::find_node(&snapshot.nodes, "Ideas").is_none(), "deleting a node deletes its whole subtree");
+        assert!(tree::find_node(&snapshot.snapshot.nodes, "Diary").is_none());
+        assert!(tree::find_node(&snapshot.snapshot.nodes, "Ideas").is_none(), "deleting a node deletes its whole subtree");
 
         // ---- cross-tab move: session -> plain, then plain -> a second locked session ----------
         // Also exercises `search-index/PLAN.md` §1's rule via each function's own
@@ -2781,6 +2926,7 @@ mod tests {
                 hint: None,
                 key: second_key_bytes,
                 last_viewed_memo: None,
+                image_folders: Vec::new(),
             },
         );
         let move_back = move_cross_tab_plain_to_session("plain-tab", &plain_dir, "Plain Target", "tab-2", &second_dir, &["Shopping list".to_string()], None, 0, false, &registry, &sessions, &search_index);
@@ -3082,6 +3228,7 @@ mod tests {
             tree: tree.clone(),
             file_map: file_map.clone(),
             last_viewed_memo: None,
+            image_folders: Vec::new(),
         };
         let field = lock_blob::encrypt_lock_field(&key, kdf_params, None, &lock_payload).unwrap();
         write_lock_field(&dir, &field, &registry).unwrap();
@@ -3098,6 +3245,7 @@ mod tests {
                 hint: field.hint.clone(),
                 key: key_bytes,
                 last_viewed_memo: lock_payload.last_viewed_memo.clone(),
+                image_folders: Vec::new(),
             },
         );
 
@@ -3149,6 +3297,7 @@ mod tests {
             tree: tree2,
             file_map: file_map2.clone(),
             last_viewed_memo: None,
+            image_folders: Vec::new(),
         };
         let field2 = lock_blob::encrypt_lock_field(&key2, kdf_params2, None, &lock_payload2).unwrap();
         write_lock_field(&dir2, &field2, &registry).unwrap();
@@ -3186,5 +3335,196 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
         std::fs::remove_dir_all(&dir2).ok();
+    }
+
+    // ---- GitHub issue #271: ロック中タブのメモ単位ランダム名画像フォルダ ----------------------
+
+    const IMG_KEY: [u8; 32] = [9u8; 32];
+
+    /// 日本語メモ「日記」(子「日記の続き」)を持つセッションを開始する。
+    fn start_image_session(dir: &Path, sessions: &LockSessionStore, image_folders: Vec<ImageFolderEntry>) {
+        let mut parent = MetaTreeNode::default_for_new_file("日記".to_string());
+        parent.children.push(MetaTreeNode::default_for_new_file("日記の続き".to_string()));
+        let file_map = vec![
+            FileMapEntry { memo_name: "日記".to_string(), token: "tok-nikki".to_string() },
+            FileMapEntry { memo_name: "日記の続き".to_string(), token: "tok-tsuzuki".to_string() },
+        ];
+        for e in &file_map {
+            std::fs::write(dir.join(&e.token), b"encrypted-placeholder").unwrap();
+        }
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: "非公開".to_string(),
+                tree: vec![parent],
+                file_map,
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: IMG_KEY,
+                last_viewed_memo: None,
+                image_folders,
+            },
+        );
+    }
+
+    /// ディスク上のロック blob を復号して対応表を返す。
+    fn persisted_image_folders(dir: &Path) -> Vec<ImageFolderEntry> {
+        let (parsed, _) = tree::load_tab_meta_with_recovery(dir);
+        let field: LockField = serde_json::from_value(parsed.unwrap().lock.unwrap()).unwrap();
+        lock_blob::decrypt_lock_field(&LockKey::new(&IMG_KEY), &field).unwrap().image_folders
+    }
+
+    #[test]
+    fn session_memo_image_dir_assigns_a_random_folder_persists_the_map_and_reuses_it() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        start_image_session(&dir, &sessions, vec![]);
+
+        let (path, name) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記").unwrap();
+        assert_eq!(path, dir.join(&name));
+        assert_eq!(name.len(), 16);
+        assert!(name.chars().all(|c| c.is_ascii_hexdigit()));
+        // #263 のパスガードを通る名前
+        assert_eq!(memo_image_folder_path(&dir, &name), Some(path.clone()));
+        assert_eq!(persisted_image_folders(&dir), vec![ImageFolderEntry { memo_name: "日記".to_string(), folder: name.clone() }]);
+
+        // 2 回目は同じフォルダを再利用(新しい割り当てなし)
+        std::fs::create_dir_all(&path).unwrap();
+        let (_, again) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記").unwrap();
+        assert_eq!(again, name);
+        // 別メモには別フォルダ
+        let (_, other) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記の続き").unwrap();
+        assert_ne!(other, name);
+        assert_eq!(persisted_image_folders(&dir).len(), 2);
+
+        // タブフォルダ直下の名前に実メモ名が現れない
+        for entry in std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()) {
+            assert!(!entry.file_name().to_string_lossy().contains("日記"));
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn session_memo_image_dir_rejects_unknown_memo_and_unsafe_stored_folder_names() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        std::fs::write(dir.join("0123456789abcdef"), b"x").unwrap();
+        start_image_session(
+            &dir,
+            &sessions,
+            vec![
+                ImageFolderEntry { memo_name: "日記".to_string(), folder: "..".to_string() },
+                ImageFolderEntry { memo_name: "日記の続き".to_string(), folder: "0123456789abcdef".to_string() },
+            ],
+        );
+        // 存在しないメモ
+        assert_eq!(session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "無いメモ").unwrap_err().code, ErrorCode::NotFound);
+        // `..`(タブの親)やファイルが居座る名前は拒否し、タブ外/ファイルへは書かない
+        assert_eq!(session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記").unwrap_err().code, ErrorCode::NameInvalid);
+        assert_eq!(session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記の続き").unwrap_err().code, ErrorCode::NameInvalid);
+        // セッションなし
+        assert_eq!(session_memo_image_dir(&sessions, &registry, &dir, "tab-x", "日記").unwrap_err().code, ErrorCode::TabLocked);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn generate_unique_image_folder_avoids_existing_entries_and_map_names() {
+        let dir = tempdir();
+        let taken = vec![ImageFolderEntry { memo_name: "日記".to_string(), folder: "ABCDEF0123456789".to_string() }];
+        for _ in 0..200 {
+            let (path, name) = generate_unique_image_folder(&dir, &taken).unwrap();
+            assert_eq!(memo_image_folder_path(&dir, &name), Some(path.clone()));
+            assert!(std::fs::symlink_metadata(&path).is_err());
+            assert!(!name.eq_ignore_ascii_case("abcdef0123456789"));
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn session_rename_memo_updates_the_image_folder_map_key_only() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        start_image_session(&dir, &sessions, vec![]);
+        let (path, name) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記").unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("001.png"), b"img").unwrap();
+
+        let AppResult::Ok(_) = session_rename_memo(&sessions, &registry, &dir, "tab-1", "日記", "旅行記") else { panic!("expected Ok") };
+
+        // フォルダは改名しない
+        assert!(path.join("001.png").exists());
+        let expected = vec![ImageFolderEntry { memo_name: "旅行記".to_string(), folder: name.clone() }];
+        assert_eq!(sessions.with_session("tab-1", |s| s.image_folders.clone()).unwrap(), expected);
+        assert_eq!(persisted_image_folders(&dir), expected);
+        // 新しい名前で引くと同じフォルダ
+        let (_, again) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "旅行記").unwrap();
+        assert_eq!(again, name);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn session_delete_memo_force_direct_removes_subtree_image_folders_and_drops_entries() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        start_image_session(&dir, &sessions, vec![]);
+        let mut paths = Vec::new();
+        for memo in ["日記", "日記の続き"] {
+            let (path, _) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", memo).unwrap();
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("001.png"), b"img").unwrap();
+            paths.push(path);
+        }
+        // 対応表に無い既存のフラット画像(#271 以前)はそのまま残る
+        std::fs::write(dir.join("img_0011223344556677.png"), b"old").unwrap();
+
+        let AppResult::Ok(result) = session_delete_memo(&sessions, &registry, &dir, "tab-1", &["日記".to_string()], true) else { panic!("expected Ok") };
+        assert!(result.warning.is_none());
+        for path in &paths {
+            assert!(!path.exists(), "subtree memo image folders must be deleted");
+        }
+        assert!(!dir.join("tok-nikki").exists() && !dir.join("tok-tsuzuki").exists());
+        assert!(dir.join("img_0011223344556677.png").exists());
+        assert!(sessions.with_session("tab-1", |s| s.image_folders.clone()).unwrap().is_empty());
+        assert!(persisted_image_folders(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn session_delete_memo_without_image_folder_is_not_an_error() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        // 対応表にはあるがフォルダ未作成(作成前に失敗した等)
+        start_image_session(&dir, &sessions, vec![ImageFolderEntry { memo_name: "日記".to_string(), folder: "fedcba9876543210".to_string() }]);
+        let AppResult::Ok(result) = session_delete_memo(&sessions, &registry, &dir, "tab-1", &["日記".to_string()], false) else { panic!("expected Ok") };
+        assert!(result.warning.is_none());
+        assert!(persisted_image_folders(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cleanup_session_move_source_drops_moved_memos_from_the_image_folder_map() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        start_image_session(&dir, &sessions, vec![]);
+        let (path, _) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記の続き").unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("001.png"), b"img").unwrap();
+
+        // 「日記」とその子「日記の続き」を移動した後の後始末
+        let names = vec!["日記".to_string(), "日記の続き".to_string()];
+        let tokens: HashMap<String, String> = [("日記", "tok-nikki"), ("日記の続き", "tok-tsuzuki")].iter().map(|(n, t)| (n.to_string(), t.to_string())).collect();
+        cleanup_session_move_source(&sessions, &registry, &dir, "tab-1", &names, &tokens).unwrap();
+
+        assert!(sessions.with_session("tab-1", |s| s.image_folders.clone()).unwrap().is_empty());
+        assert!(persisted_image_folders(&dir).is_empty());
+        // フォルダ自体は触らない(#262 の範囲)
+        assert!(path.join("001.png").exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
