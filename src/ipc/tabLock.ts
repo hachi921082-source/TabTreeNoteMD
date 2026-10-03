@@ -5,7 +5,7 @@
 // component.
 import { invoke } from "@tauri-apps/api/core";
 import type { Result } from "../shared/result";
-import type { PermanentUnlockRecoveryStatus, RecoveryStatus, TabInfo } from "../shared/models";
+import type { PermanentUnlockRecoveryStatus, PermanentUnlockResult, RecoveryStatus, TabInfo } from "../shared/models";
 
 /** `hint` omitted (or `undefined`) means no hint was set for this lock. */
 export async function tabLock(tabId: string, password: string, hint?: string): Promise<Result<TabInfo>> {
@@ -42,16 +42,16 @@ export async function tabLockRecoveryRestore(tabId: string, password: string): P
 
 /** `password` omitted/`undefined` for entry point (a) (an active unlock session supplies the
  * key); given for entry point (b) (directly from the locked, no-session state). */
-export async function tabPermanentUnlock(tabId: string, password?: string): Promise<Result<TabInfo>> {
-  return invoke<Result<TabInfo>>("tab_permanent_unlock", { tabId, password: password ?? null });
+export async function tabPermanentUnlock(tabId: string, password?: string): Promise<Result<PermanentUnlockResult>> {
+  return invoke<Result<PermanentUnlockResult>>("tab_permanent_unlock", { tabId, password: password ?? null });
 }
 
 export async function tabPermanentUnlockRecoveryStatus(tabId: string, password?: string): Promise<Result<PermanentUnlockRecoveryStatus>> {
   return invoke<Result<PermanentUnlockRecoveryStatus>>("tab_permanent_unlock_recovery_status", { tabId, password: password ?? null });
 }
 
-export async function tabPermanentUnlockRecoveryFinish(tabId: string, password?: string): Promise<Result<TabInfo>> {
-  return invoke<Result<TabInfo>>("tab_permanent_unlock_recovery_finish", { tabId, password: password ?? null });
+export async function tabPermanentUnlockRecoveryFinish(tabId: string, password?: string): Promise<Result<PermanentUnlockResult>> {
+  return invoke<Result<PermanentUnlockResult>>("tab_permanent_unlock_recovery_finish", { tabId, password: password ?? null });
 }
 
 export async function tabPermanentUnlockRecoveryRestore(tabId: string, password?: string): Promise<Result<TabInfo>> {
