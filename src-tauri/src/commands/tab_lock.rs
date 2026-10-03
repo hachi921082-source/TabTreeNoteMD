@@ -100,6 +100,10 @@ const UNLOCK_MARKER_FORMAT_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase")]
 struct UnlockInProgressMarker {
     format_version: u32,
+    /// GitHub issue #273: 完全解除で `<メモ名>/` へ戻す予定の画像フォルダのランダム名(計画)。
+    /// 何かを改名する前に書く。ランダム名だけなのでメモ名は漏れない。#273 以前のマーカーは空として読む。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    image_folders: Vec<String>,
 }
 
 fn unlock_marker_path(folder: &Path) -> PathBuf {
@@ -290,16 +294,19 @@ pub(crate) fn check_unlock_marker_on_tree_open(
     search_index: &SearchIndex,
     tab_id: &str,
 ) -> UnlockMarkerCheck {
-    if load_unlock_marker(folder).is_none() {
+    let Some(marker) = load_unlock_marker(folder) else {
         return UnlockMarkerCheck::NoMarker;
-    }
+    };
 
     // Case "zero restored" (§3.2): token files have no `.md` extension by construction, so the
     // presence of any `.md` file directly under the tab folder is a cheap, password-free proxy
     // for "at least one entry may already be restored." A false "not zero" classification merely
     // costs the user a password prompt that turns out not to have been strictly necessary — this
     // branch only ever deletes the marker, touching no other file.
-    if tree::scan_real_memo_names(folder).is_empty() {
+    // #273: 計画した画像フォルダが 1 つでもランダム名から消えていれば(`<メモ名>/` へ改名済みの
+    // 可能性)、自動削除せずパスワード付きの復旧へ回す(暗号化本文のリンクはランダム名を指すため)。
+    let no_folder_renamed = marker.image_folders.iter().all(|random| existing_memo_image_folder(folder, random).is_some());
+    if tree::scan_real_memo_names(folder).is_empty() && no_folder_renamed {
         if let Err(err) = delete_unlock_marker(folder, registry) {
             tracing::error!(error = %err, "check_unlock_marker_on_tree_open: failed to delete a zero-progress in-progress marker");
             return UnlockMarkerCheck::RecoveryPending;
@@ -992,13 +999,22 @@ async fn resolve_key_and_lock_payload(
 /// plaintext -> remove token), plus a new best-effort `.bak`-companion cleanup (`DECISIONS.md`'s
 /// follow-up review: "same residue class as the already-fixed GitHub issue #18"). Scoped to this
 /// new code path only — `tab_lock_recovery_restore`'s own existing loop is left untouched.
-fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, key: &LockKey, registry: &SelfWriteRegistry) -> Result<(), AppErrorPayload> {
+///
+/// `image_folder`: GitHub issue #273 - `Some(<random>)` when this memo's image folder has already
+/// been renamed back to `<memo>/`; the decrypted body's `<random>/...` links are then rewritten to
+/// `<memo>/...` in memory before the single plaintext write (the `.md` never points at a missing folder).
+fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, image_folder: Option<&str>, key: &LockKey, registry: &SelfWriteRegistry) -> Result<(), AppErrorPayload> {
     let token_path = folder.join(&entry.token);
     let bytes = std::fs::read(&token_path).map_err(|err| {
         tracing::error!(error = %err, path = %token_path.display(), "failed to read an obfuscated memo file while permanently unlocking this tab");
         AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while unlocking this tab")
     })?;
-    let plaintext = lock_blob::decrypt_memo_body(key, &bytes).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "incorrect password"))?;
+    let mut plaintext = lock_blob::decrypt_memo_body(key, &bytes).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "incorrect password"))?;
+    if let Some(random) = image_folder {
+        if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, random, &entry.memo_name) {
+            plaintext = rewritten;
+        }
+    }
     let real_path = folder.join(format!("{}.md", entry.memo_name));
     atomic_write(&real_path, &plaintext, registry).map_err(|err| {
         tracing::error!(error = %err, path = %real_path.display(), "failed to restore a plaintext memo file while permanently unlocking this tab");
@@ -1020,10 +1036,163 @@ fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, key: 
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// GitHub issue #273: random-name image folders -> `<memo>/` on permanent unlock
+// (`docs/plans/tab-lock/CRASH-RECOVERY.md` "Image Folders on Permanent Unlock")
+// ---------------------------------------------------------------------------
+
+/// Result of `tab_permanent_unlock` / `tab_permanent_unlock_recovery_finish`: the usual `TabInfo`
+/// plus how many image folders were left under their random name (an existing `<memo>/` folder,
+/// folder in use, name rejected by the #263 guard) - a non-fatal warning.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermanentUnlockResult {
+    #[serde(flatten)]
+    pub tab: TabInfo,
+    pub image_folders_left_random: usize,
+}
+
+fn unlock_file_map_entry<'a>(payload: &'a LockPayload, memo_name: &str) -> Option<&'a FileMapEntry> {
+    payload.file_map.iter().find(|e| e.memo_name == memo_name)
+}
+
+/// 完全解除の計画: 対応表のうち、本文がまだ暗号化のままで、フォルダがランダム名で実在し、
+/// `<メモ名>/` 側が空いているもののランダム名。`<メモ名>/` が既にある(衝突)・名前がガードを
+/// 通らない・フォルダが無いものは計画に入れず、ランダム名のまま残す。
+fn plan_unlock_image_folders(folder: &Path, payload: &LockPayload) -> Vec<String> {
+    payload
+        .image_folders
+        .iter()
+        .filter(|e| unlock_file_map_entry(payload, &e.memo_name).map(|fm| classify_unlock_entry(folder, fm) == UnlockEntryState::NotRestored).unwrap_or(false))
+        .filter(|e| image_folder_state(folder, e) == ImageFolderState::AtRandomName)
+        .map(|e| e.folder.clone())
+        .collect()
+}
+
+/// 計画済みで、かつ今 `<メモ名>/` にある(=改名済み)フォルダの対応表エントリ。本文のリンクを
+/// 書き換えるのはこの時だけ(改名できなかったメモのリンクは触らない)。
+fn planned_folder_at_memo_name<'a>(folder: &Path, payload: &'a LockPayload, planned: &[String], memo_name: &str) -> Option<&'a ImageFolderEntry> {
+    payload
+        .image_folders
+        .iter()
+        .find(|e| e.memo_name == memo_name && planned.contains(&e.folder))
+        .filter(|e| image_folder_state(folder, e) == ImageFolderState::AtMemoName)
+}
+
+/// 完全解除の後でランダム名のまま残った画像フォルダの数(警告用)。
+fn count_image_folders_left_random(folder: &Path, payload: &LockPayload) -> usize {
+    payload
+        .image_folders
+        .iter()
+        .filter(|e| unlock_file_map_entry(payload, &e.memo_name).is_some() && existing_memo_image_folder(folder, &e.folder).is_some())
+        .count()
+}
+
+/// `tab_permanent_unlock` steps 6b-8 (also the crash recovery's "Finish"; idempotent):
+/// 6b. rename each planned folder `<random>/` -> `<memo>/` while its body is still encrypted
+///     (failure = keep the random name and continue - user decision on #273);
+/// 7.  restore every remaining body, rewriting `<random>/` -> `<memo>/` links in memory only when
+///     that folder is now at `<memo>/`;
+/// 8.  write the plain metadata (the image-folder map goes away with the lock blob).
+fn permanent_unlock_restore_all(folder: &Path, payload: &LockPayload, planned: &[String], key: &LockKey, registry: &SelfWriteRegistry) -> Result<(), AppErrorPayload> {
+    for e in &payload.image_folders {
+        if !planned.contains(&e.folder) {
+            continue;
+        }
+        // 本文を復元済みのメモは、そのリンクに合わせてフォルダ名を据え置く(改名しない)
+        let Some(fm) = unlock_file_map_entry(payload, &e.memo_name) else { continue };
+        if classify_unlock_entry(folder, fm) != UnlockEntryState::NotRestored {
+            continue;
+        }
+        if image_folder_state(folder, e) == ImageFolderState::AtRandomName {
+            if let Err(err) = rename_image_folder(folder, &e.folder, &e.memo_name, registry) {
+                tracing::warn!(error = %err, "permanent unlock: an image folder could not be renamed back to its memo name; it keeps its random name");
+            }
+        }
+    }
+
+    for entry_fm in &payload.file_map {
+        match classify_unlock_entry(folder, entry_fm) {
+            UnlockEntryState::Restored => continue,
+            // Abort without rolling back; the marker stays for crash recovery (`CRASH-RECOVERY.md`).
+            UnlockEntryState::Anomalous => {
+                tracing::error!(memo_name = %entry_fm.memo_name, "permanent unlock: encountered an anomalous entry; aborting, marker left for crash recovery");
+                return Err(AppErrorPayload::new(ErrorCode::AnomalousFileState, "an unexpected file state was found while permanently unlocking this tab"));
+            }
+            UnlockEntryState::NotRestored => {
+                let image_folder = planned_folder_at_memo_name(folder, payload, planned, &entry_fm.memo_name).map(|e| e.folder.as_str());
+                restore_one_permanent_unlock_entry(folder, entry_fm, image_folder, key, registry).map_err(|err| {
+                    tracing::error!(?err, "permanent unlock: failed mid-way through restoring memo files; marker left for crash recovery");
+                    err
+                })?;
+            }
+        }
+    }
+
+    tree::save_tab_meta(folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, payload.last_viewed_memo.clone(), registry).map_err(|err| {
+        tracing::error!(error = %err, "permanent unlock: failed to save plain tab metadata");
+        AppErrorPayload::new(ErrorCode::Unknown, "failed to save tab metadata")
+    })
+}
+
+/// Crash recovery "Restore lock" file work (`CRASH-RECOVERY.md`): re-encrypt every restored body
+/// (rewriting `<memo>/` -> `<random>/` links in memory when its planned folder is at `<memo>/`),
+/// then rename those planned folders back to their random names. Bodies first, so no plaintext
+/// `.md` ever points at a folder that was already renamed away. A folder that cannot be renamed
+/// back -> `ImageFolderRenameFailed`, marker kept (`tree_open` keeps the recovery pending).
+fn permanent_unlock_relock_files(folder: &Path, payload: &LockPayload, planned: &[String], key: &LockKey, registry: &SelfWriteRegistry) -> Result<(), AppErrorPayload> {
+    for entry_fm in &payload.file_map {
+        match classify_unlock_entry(folder, entry_fm) {
+            // Already back in token form.
+            UnlockEntryState::NotRestored => continue,
+            UnlockEntryState::Anomalous => {
+                tracing::error!(memo_name = %entry_fm.memo_name, "tab_permanent_unlock_recovery_restore: encountered an anomalous entry; aborting");
+                return Err(AppErrorPayload::new(ErrorCode::AnomalousFileState, "an unexpected file state was found while restoring this tab's lock"));
+            }
+            UnlockEntryState::Restored => {
+                let real_path = folder.join(format!("{}.md", entry_fm.memo_name));
+                let mut plaintext = std::fs::read(&real_path).map_err(|err| {
+                    tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to read a plaintext memo file");
+                    AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while restoring this tab's lock")
+                })?;
+                if let Some(e) = planned_folder_at_memo_name(folder, payload, planned, &entry_fm.memo_name) {
+                    if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, &e.memo_name, &e.folder) {
+                        plaintext = rewritten;
+                    }
+                }
+                let encrypted = lock_blob::encrypt_memo_body(key, &plaintext);
+                let token_path = folder.join(&entry_fm.token);
+                atomic_write(&token_path, &encrypted, registry).map_err(|err| {
+                    tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to write an obfuscated memo file");
+                    AppErrorPayload::new(ErrorCode::Unknown, "failed to restore an obfuscated memo file")
+                })?;
+                registry.register(&real_path);
+                if let Err(err) = with_retry(|| std::fs::remove_file(&real_path)) {
+                    tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to remove a plaintext memo file after re-encrypting it");
+                }
+            }
+        }
+    }
+
+    let mut folders_ok = true;
+    for e in &payload.image_folders {
+        if planned.contains(&e.folder) && image_folder_state(folder, e) == ImageFolderState::AtMemoName {
+            if let Err(err) = rename_image_folder(folder, &e.memo_name, &e.folder, registry) {
+                tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to rename an image folder back to its random name");
+                folders_ok = false;
+            }
+        }
+    }
+    if !folders_ok {
+        return Err(AppErrorPayload::new(ErrorCode::ImageFolderRenameFailed, "some image folders could not be renamed back to their random names"));
+    }
+    Ok(())
+}
+
 /// `docs/plans/tab-lock-permanent-unlock/PLAN.md` §5. `password: None` for entry point (a) (an
 /// active session supplies the key); `Some(pw)` for entry point (b).
 #[tauri::command]
-pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
+pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<PermanentUnlockResult> {
     let store = app.state::<AppSettingsStore>();
     let registry = app.state::<Arc<SelfWriteRegistry>>();
     let sessions = app.state::<LockSessionStore>();
@@ -1066,44 +1235,22 @@ pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Opti
         Err(err) => return AppResult::err(err),
     };
 
-    // Step 6: write the marker before touching any file.
+    // Step 6: plan the image-folder renames (#273) and write the marker before touching any file.
+    let planned = plan_unlock_image_folders(&folder, &payload);
     let marker = UnlockInProgressMarker {
         format_version: UNLOCK_MARKER_FORMAT_VERSION,
+        image_folders: planned.clone(),
     };
     if let Err(err) = write_unlock_marker(&folder, &marker, &registry) {
         tracing::error!(error = %err, "tab_permanent_unlock: failed to write in-progress marker");
         return AppResult::err_code(ErrorCode::Unknown, "failed to start permanently unlocking this tab");
     }
 
-    // Step 7: restore loop, in any order.
-    for entry_fm in &payload.file_map {
-        match classify_unlock_entry(&folder, entry_fm) {
-            // Idempotent; not reachable on a fresh call, relevant only if this exact call is
-            // somehow retried.
-            UnlockEntryState::Restored => continue,
-            // Abort the entire operation immediately: do not process further entries, do not
-            // roll back already-restored entries, leave the marker in place. The next
-            // tab-folder access runs the crash-recovery flow, which classifies this exact same
-            // state (`CRASH-RECOVERY.md`).
-            UnlockEntryState::Anomalous => {
-                tracing::error!(memo_name = %entry_fm.memo_name, "tab_permanent_unlock: encountered an anomalous entry; aborting the whole operation, marker left for crash recovery");
-                return AppResult::err_code(ErrorCode::AnomalousFileState, "an unexpected file state was found while permanently unlocking this tab");
-            }
-            UnlockEntryState::NotRestored => {
-                if let Err(err) = restore_one_permanent_unlock_entry(&folder, entry_fm, &key, &registry) {
-                    tracing::error!(?err, "tab_permanent_unlock: failed mid-way through restoring memo files; marker left for crash recovery");
-                    return AppResult::err(err);
-                }
-            }
-        }
+    // Steps 6b-8: image folders back to `<memo>/`, restore loop, plain metadata.
+    if let Err(err) = permanent_unlock_restore_all(&folder, &payload, &planned, &key, &registry) {
+        return AppResult::err(err);
     }
-
-    // Step 8: rewrite metadata — plain `tree` field, real names. Only reached once step 7
-    // completed with zero anomalous entries.
-    if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, payload.last_viewed_memo.clone(), &registry) {
-        tracing::error!(error = %err, "tab_permanent_unlock: failed to save plain tab metadata");
-        return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
-    }
+    let image_folders_left_random = count_image_folders_left_random(&folder, &payload);
 
     // Step 9: delete the marker — sole success signal recovery relies on.
     if let Err(err) = delete_unlock_marker(&folder, &registry) {
@@ -1132,11 +1279,14 @@ pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Opti
         }
     }
 
-    AppResult::ok(TabInfo {
-        id: tab_id,
-        name: payload.real_tab_name,
-        locked: false,
-        lock_label,
+    AppResult::ok(PermanentUnlockResult {
+        tab: TabInfo {
+            id: tab_id,
+            name: payload.real_tab_name,
+            locked: false,
+            lock_label,
+        },
+        image_folders_left_random,
     })
 }
 
@@ -1521,7 +1671,7 @@ pub async fn tab_permanent_unlock_recovery_status(app: AppHandle, tab_id: String
 /// `CRASH-RECOVERY.md` §4.2 "Finish": with the resolved key, restore every remaining
 /// `NotRestored` entry, then resume `PLAN.md` §5 steps 8-12.
 #[tauri::command]
-pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<TabInfo> {
+pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String, password: Option<String>) -> AppResult<PermanentUnlockResult> {
     let store = app.state::<AppSettingsStore>();
     let registry = app.state::<Arc<SelfWriteRegistry>>();
     let sessions = app.state::<LockSessionStore>();
@@ -1536,42 +1686,28 @@ pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
-    if load_unlock_marker(&folder).is_none() {
+    let Some(marker) = load_unlock_marker(&folder) else {
         return AppResult::err_code(ErrorCode::NotFound, "no interrupted permanent-unlock attempt found for this tab");
-    }
+    };
 
     let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&folder);
     let already_has_tree_field = parsed.as_ref().map(|m| m.tree.is_some()).unwrap_or(false);
 
-    let real_tab_name: Option<String> = if already_has_tree_field {
-        // Case B reached here defensively: metadata already rewritten, nothing left to decrypt.
-        sessions.with_session(&tab_id, |s| s.real_tab_name.clone())
+    let (real_tab_name, image_folders_left_random): (Option<String>, usize) = if already_has_tree_field {
+        // Case B reached here defensively: metadata already rewritten, nothing left to decrypt
+        // (every image folder was already handled before step 8; no payload to count them).
+        (sessions.with_session(&tab_id, |s| s.real_tab_name.clone()), 0)
     } else {
-        let payload = match resolve_key_and_lock_payload(&folder, &sessions, &tab_id, password).await {
-            Ok((key, payload)) => {
-                for entry_fm in &payload.file_map {
-                    match classify_unlock_entry(&folder, entry_fm) {
-                        UnlockEntryState::Restored => continue,
-                        UnlockEntryState::Anomalous => {
-                            tracing::error!(memo_name = %entry_fm.memo_name, "tab_permanent_unlock_recovery_finish: encountered an anomalous entry; aborting");
-                            return AppResult::err_code(ErrorCode::AnomalousFileState, "an unexpected file state was found while finishing this tab's unlock");
-                        }
-                        UnlockEntryState::NotRestored => {
-                            if let Err(err) = restore_one_permanent_unlock_entry(&folder, entry_fm, &key, &registry) {
-                                return AppResult::err(err);
-                            }
-                        }
-                    }
-                }
-                payload
-            }
+        let (key, payload) = match resolve_key_and_lock_payload(&folder, &sessions, &tab_id, password).await {
+            Ok(v) => v,
             Err(err) => return AppResult::err(err),
         };
-        if let Err(err) = tree::save_tab_meta(&folder, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &payload.tree, payload.last_viewed_memo.clone(), &registry) {
-            tracing::error!(error = %err, "tab_permanent_unlock_recovery_finish: failed to save plain tab metadata");
-            return AppResult::err_code(ErrorCode::Unknown, "failed to save tab metadata");
+        // #273: マーカーの計画(ランダム名)に沿って、フォルダ改名 -> 本文復元 -> メタ を冪等に再開
+        if let Err(err) = permanent_unlock_restore_all(&folder, &payload, &marker.image_folders, &key, &registry) {
+            return AppResult::err(err);
         }
-        Some(payload.real_tab_name)
+        let left = count_image_folders_left_random(&folder, &payload);
+        (Some(payload.real_tab_name), left)
     };
 
     if let Err(err) = delete_unlock_marker(&folder, &registry) {
@@ -1599,11 +1735,14 @@ pub async fn tab_permanent_unlock_recovery_finish(app: AppHandle, tab_id: String
         }
     }
 
-    AppResult::ok(TabInfo {
-        id: tab_id,
-        name: real_tab_name.unwrap_or(current_name),
-        locked: false,
-        lock_label,
+    AppResult::ok(PermanentUnlockResult {
+        tab: TabInfo {
+            id: tab_id,
+            name: real_tab_name.unwrap_or(current_name),
+            locked: false,
+            lock_label,
+        },
+        image_folders_left_random,
     })
 }
 
@@ -1628,9 +1767,9 @@ pub async fn tab_permanent_unlock_recovery_restore(app: AppHandle, tab_id: Strin
     let folder = PathBuf::from(&entry.folder_path);
     drop(settings);
 
-    if load_unlock_marker(&folder).is_none() {
+    let Some(marker) = load_unlock_marker(&folder) else {
         return AppResult::err_code(ErrorCode::NotFound, "no interrupted permanent-unlock attempt found for this tab");
-    }
+    };
 
     let (parsed, _recovery) = tree::load_tab_meta_with_recovery(&folder);
     if parsed.as_ref().map(|m| m.tree.is_some()).unwrap_or(false) {
@@ -1642,35 +1781,10 @@ pub async fn tab_permanent_unlock_recovery_restore(app: AppHandle, tab_id: Strin
         Err(err) => return AppResult::err(err),
     };
 
-    for entry_fm in &payload.file_map {
-        match classify_unlock_entry(&folder, entry_fm) {
-            // Already back in token form.
-            UnlockEntryState::NotRestored => continue,
-            UnlockEntryState::Anomalous => {
-                tracing::error!(memo_name = %entry_fm.memo_name, "tab_permanent_unlock_recovery_restore: encountered an anomalous entry; aborting");
-                return AppResult::err_code(ErrorCode::AnomalousFileState, "an unexpected file state was found while restoring this tab's lock");
-            }
-            UnlockEntryState::Restored => {
-                let real_path = folder.join(format!("{}.md", entry_fm.memo_name));
-                let plaintext = match std::fs::read(&real_path) {
-                    Ok(b) => b,
-                    Err(err) => {
-                        tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to read a plaintext memo file");
-                        return AppResult::err_code(ErrorCode::Unknown, "failed to read a memo file while restoring this tab's lock");
-                    }
-                };
-                let encrypted = lock_blob::encrypt_memo_body(&key, &plaintext);
-                let token_path = folder.join(&entry_fm.token);
-                if let Err(err) = atomic_write(&token_path, &encrypted, &registry) {
-                    tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to write an obfuscated memo file");
-                    return AppResult::err_code(ErrorCode::Unknown, "failed to restore an obfuscated memo file");
-                }
-                registry.register(&real_path);
-                if let Err(err) = with_retry(|| std::fs::remove_file(&real_path)) {
-                    tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to remove a plaintext memo file after re-encrypting it");
-                }
-            }
-        }
+    // #273: 本文を再暗号化してから、`<メモ名>/` へ戻した画像フォルダをランダム名へ戻す。
+    // 戻せないフォルダがあればマーカーを残し、次回の復旧で再試行する。
+    if let Err(err) = permanent_unlock_relock_files(&folder, &payload, &marker.image_folders, &key, &registry) {
+        return AppResult::err(err);
     }
 
     if let Err(err) = delete_unlock_marker(&folder, &registry) {
@@ -3302,6 +3416,7 @@ mod tests {
 
         let marker = UnlockInProgressMarker {
             format_version: UNLOCK_MARKER_FORMAT_VERSION,
+            image_folders: Vec::new(),
         };
         write_unlock_marker(&dir, &marker, &registry).unwrap();
 
@@ -3328,6 +3443,7 @@ mod tests {
 
         let marker = UnlockInProgressMarker {
             format_version: UNLOCK_MARKER_FORMAT_VERSION,
+            image_folders: Vec::new(),
         };
         write_unlock_marker(&dir, &marker, &registry).unwrap();
 
@@ -3420,7 +3536,7 @@ mod tests {
         // A leftover `.bak` companion, orphaned from an earlier write.
         std::fs::write(dir.join("tok456.bak"), b"stale encrypted leftover").unwrap();
 
-        restore_one_permanent_unlock_entry(&dir, &entry, &key, &registry).unwrap();
+        restore_one_permanent_unlock_entry(&dir, &entry, None, &key, &registry).unwrap();
 
         assert!(!dir.join("tok456").exists());
         assert!(!dir.join("tok456.bak").exists(), "the orphaned .bak companion must also be cleaned up");
@@ -3458,6 +3574,7 @@ mod tests {
 
         let marker = UnlockInProgressMarker {
             format_version: UNLOCK_MARKER_FORMAT_VERSION,
+            image_folders: Vec::new(),
         };
         write_unlock_marker(&dir, &marker, &registry).unwrap();
 
@@ -3471,7 +3588,7 @@ mod tests {
                     break;
                 }
                 UnlockEntryState::NotRestored => {
-                    restore_one_permanent_unlock_entry(&dir, entry_fm, &key, &registry).unwrap();
+                    restore_one_permanent_unlock_entry(&dir, entry_fm, None, &key, &registry).unwrap();
                 }
             }
         }
@@ -3552,6 +3669,7 @@ mod tests {
         let (resolved_key, resolved_payload) = resolve_key_and_lock_payload(&dir, &sessions, "tab-1", None).await.unwrap();
         let unlock_marker = UnlockInProgressMarker {
             format_version: UNLOCK_MARKER_FORMAT_VERSION,
+            image_folders: Vec::new(),
         };
         write_unlock_marker(&dir, &unlock_marker, &registry).unwrap();
         for entry_fm in &resolved_payload.file_map {
@@ -3559,7 +3677,7 @@ mod tests {
                 UnlockEntryState::Restored => continue,
                 UnlockEntryState::Anomalous => panic!("no anomalous entry expected"),
                 UnlockEntryState::NotRestored => {
-                    restore_one_permanent_unlock_entry(&dir, entry_fm, &resolved_key, &registry).unwrap();
+                    restore_one_permanent_unlock_entry(&dir, entry_fm, None, &resolved_key, &registry).unwrap();
                 }
             }
         }
@@ -3615,11 +3733,12 @@ mod tests {
 
         let unlock_marker2 = UnlockInProgressMarker {
             format_version: UNLOCK_MARKER_FORMAT_VERSION,
+            image_folders: Vec::new(),
         };
         write_unlock_marker(&dir2, &unlock_marker2, &registry).unwrap();
         for entry_fm in &resolved_payload2.file_map {
             if classify_unlock_entry(&dir2, entry_fm) == UnlockEntryState::NotRestored {
-                restore_one_permanent_unlock_entry(&dir2, entry_fm, &resolved_key2, &registry).unwrap();
+                restore_one_permanent_unlock_entry(&dir2, entry_fm, None, &resolved_key2, &registry).unwrap();
             }
         }
         tree::save_tab_meta(&dir2, TAB_META_SCHEMA_VERSION, env!("CARGO_PKG_VERSION").to_string(), &resolved_payload2.tree, resolved_payload2.last_viewed_memo.clone(), &registry).unwrap();
@@ -4312,5 +4431,324 @@ mod tests {
         remove_plaintext_residue(&dir, &payload.file_map, false, &registry);
         assert!(meta_bak.exists());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // GitHub issue #273: 完全解除でランダム名画像フォルダを `<メモ名>/` へ戻しリンクを書き換える
+    // -----------------------------------------------------------------------
+
+    /// t272_setup の平文タブを #272 の手順でロックし、ツリーとロック前のスナップショットを返す。
+    fn t273_locked(dir: &Path, registry: &SelfWriteRegistry) -> (Vec<MetaTreeNode>, std::collections::BTreeMap<String, Vec<u8>>) {
+        let nodes = t272_setup(dir, registry);
+        let before = t272_snapshot(dir);
+        lock_folder_files(dir, nodes.clone(), None, "非公開".to_string(), &LockKey::new(&T272_KEY), KdfParams::generate_new(), None, registry).unwrap();
+        (nodes, before)
+    }
+
+    /// `tab_permanent_unlock` の step 5-6(復号した payload で計画し、マーカーを書く)。
+    fn t273_begin(dir: &Path, registry: &SelfWriteRegistry) -> (LockPayload, Vec<String>) {
+        let payload = t272_payload(dir);
+        let planned = plan_unlock_image_folders(dir, &payload);
+        let marker = UnlockInProgressMarker {
+            format_version: UNLOCK_MARKER_FORMAT_VERSION,
+            image_folders: planned.clone(),
+        };
+        write_unlock_marker(dir, &marker, registry).unwrap();
+        (payload, planned)
+    }
+
+    /// `tab_permanent_unlock` の step 5-9(ファイル操作部分)を通しで行い、ランダム名のまま残った数を返す。
+    fn t273_unlock(dir: &Path, registry: &SelfWriteRegistry) -> usize {
+        let (payload, planned) = t273_begin(dir, registry);
+        permanent_unlock_restore_all(dir, &payload, &planned, &LockKey::new(&T272_KEY), registry).unwrap();
+        let left = count_image_folders_left_random(dir, &payload);
+        delete_unlock_marker(dir, registry).unwrap();
+        left
+    }
+
+    /// `tree_open` の step 0(完全解除マーカー)。設定ファイルに触れる「完了済み」分岐には入らない状態でだけ呼ぶ。
+    fn t273_tree_open_pending(dir: &Path, registry: &SelfWriteRegistry) -> bool {
+        let store = AppSettingsStore::new();
+        let sessions = LockSessionStore::new();
+        let search_index = SearchIndex::new();
+        matches!(check_unlock_marker_on_tree_open(dir, registry, &store, &sessions, &search_index, "tab-273"), UnlockMarkerCheck::RecoveryPending)
+    }
+
+    /// 完全解除後: フォルダは `<メモ名>/`、本文リンクは `<メモ名>/…`(パーセントエンコード形は生の形)、
+    /// メタは平文ツリー(対応表は消える)、トークン・マーカー無し。
+    fn t273_assert_unlocked(dir: &Path, nodes: &[MetaTreeNode], before: &std::collections::BTreeMap<String, Vec<u8>>) {
+        let mut want = before.clone();
+        want.insert("日記.md".to_string(), T272_NIKKI.replace("%E6%97%A5%E8%A8%98/", "日記/").into_bytes());
+        assert_eq!(t272_snapshot(dir), want);
+        let (parsed, _) = tree::load_tab_meta_with_recovery(dir);
+        let parsed = parsed.unwrap();
+        assert!(parsed.lock.is_none());
+        assert_eq!(parsed.tree.unwrap(), nodes);
+        assert!(!unlock_marker_path(dir).exists());
+    }
+
+    /// ロック中の「日記」の復号本文(ランダム名リンク)。
+    fn t273_locked_body(dir: &Path, payload: &LockPayload, memo: &str) -> Vec<u8> {
+        let tok = &payload.file_map.iter().find(|e| e.memo_name == memo).unwrap().token;
+        lock_blob::decrypt_memo_body(&LockKey::new(&T272_KEY), &std::fs::read(dir.join(tok)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn permanent_unlock_renames_image_folders_back_rewrites_links_and_drops_map() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let (nodes, before) = t273_locked(&dir, &registry);
+        assert_eq!(t273_unlock(&dir, &registry), 0);
+        // 親子(日記 / 日記の続き)・空白入り名・フラット画像(img_old.png)を含めて元どおり
+        t273_assert_unlocked(&dir, &nodes, &before);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn permanent_unlock_keeps_random_name_when_memo_folder_already_exists() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let (_nodes, _before) = t273_locked(&dir, &registry);
+        let payload = t272_payload(&dir);
+        let random = image_folder_for(&payload.image_folders, "日記").unwrap().to_string();
+        let locked_body = t273_locked_body(&dir, &payload, "日記");
+        // 同名の `<メモ名>/` が既にある(マージ・上書きしない)
+        std::fs::create_dir_all(dir.join("日記")).unwrap();
+        std::fs::write(dir.join("日記").join("other.png"), b"other").unwrap();
+
+        assert_eq!(t273_unlock(&dir, &registry), 1);
+        assert_eq!(std::fs::read(dir.join("日記.md")).unwrap(), locked_body, "links keep pointing at the random folder");
+        assert!(dir.join(&random).join("001.png").exists());
+        let names: Vec<String> = std::fs::read_dir(dir.join("日記")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+        assert_eq!(names, vec!["other.png".to_string()]);
+        // 他のメモは通常どおり戻る
+        assert!(dir.join("日記の続き").join("001.png").exists());
+        assert_eq!(std::fs::read(dir.join("日記の続き.md")).unwrap(), T272_TSUZUKI.as_bytes());
+        assert_eq!(std::fs::read(dir.join("新 メモ.md")).unwrap(), T272_SPACE.as_bytes());
+        assert!(tree::load_tab_meta_with_recovery(&dir).0.unwrap().lock.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 実際の失敗要因(フォルダ内ファイルを共有なしで開いている / フォルダをカレントにしたプロセス)
+    /// でも完全解除は続行し、そのメモだけランダム名・リンクそのままで残る。
+    #[cfg(windows)]
+    #[test]
+    fn permanent_unlock_continues_when_a_folder_is_in_use() {
+        use std::os::windows::fs::OpenOptionsExt;
+        for use_cwd in [false, true] {
+            let dir = tempdir();
+            let registry = SelfWriteRegistry::new();
+            let (_nodes, _before) = t273_locked(&dir, &registry);
+            let payload = t272_payload(&dir);
+            let random = image_folder_for(&payload.image_folders, "新 メモ").unwrap().to_string();
+            let locked_body = t273_locked_body(&dir, &payload, "新 メモ");
+
+            let mut child = None;
+            let mut handle = None;
+            if use_cwd {
+                child = Some(std::process::Command::new("cmd").args(["/c", "ping -n 60 127.0.0.1 >nul"]).current_dir(dir.join(&random)).spawn().unwrap());
+            } else {
+                handle = Some(std::fs::OpenOptions::new().read(true).share_mode(0).open(dir.join(&random).join("001.png")).unwrap());
+            }
+            let left = t273_unlock(&dir, &registry);
+            drop(handle);
+            if let Some(mut c) = child {
+                c.kill().ok();
+                c.wait().ok();
+            }
+
+            assert_eq!(left, 1, "use_cwd={use_cwd}");
+            assert_eq!(std::fs::read(dir.join("新 メモ.md")).unwrap(), locked_body);
+            assert!(dir.join(&random).join("001.png").exists());
+            assert!(std::fs::symlink_metadata(dir.join("新 メモ")).is_err());
+            assert!(dir.join("日記").join("001.png").exists());
+            assert_eq!(std::fs::read(dir.join("日記の続き.md")).unwrap(), T272_TSUZUKI.as_bytes());
+            assert!(tree::load_tab_meta_with_recovery(&dir).0.unwrap().lock.is_none());
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// 中断点ごとの復旧: (0) マーカー直後 (1) フォルダ 1 つ改名後 (2) 全フォルダ改名 + 本文 1 件復元後
+    /// (3) メタ書き込み後(マーカー削除前)。どの時点でも平文 `.md` のリンク先フォルダは実在する。
+    #[test]
+    fn permanent_unlock_interrupted_at_each_point_recovers() {
+        let key = LockKey::new(&T272_KEY);
+        for point in 0..4 {
+            for finish in [true, false] {
+                let dir = tempdir();
+                let registry = SelfWriteRegistry::new();
+                let (nodes, before) = t273_locked(&dir, &registry);
+                let (payload, planned) = t273_begin(&dir, &registry);
+                assert_eq!(planned.len(), 3);
+                if point >= 1 {
+                    let e = payload.image_folders.iter().find(|e| e.folder == planned[0]).unwrap();
+                    rename_image_folder(&dir, &e.folder, &e.memo_name, &registry).unwrap();
+                }
+                if point >= 2 {
+                    for e in payload.image_folders.iter().filter(|e| e.folder != planned[0]) {
+                        rename_image_folder(&dir, &e.folder, &e.memo_name, &registry).unwrap();
+                    }
+                    let fm = unlock_file_map_entry(&payload, "日記").unwrap();
+                    let from = planned_folder_at_memo_name(&dir, &payload, &planned, "日記").map(|e| e.folder.as_str());
+                    restore_one_permanent_unlock_entry(&dir, fm, from, &key, &registry).unwrap();
+                    // 復元済みの本文は既に存在するフォルダ(日記/)を指す
+                    assert_eq!(std::fs::read(dir.join("日記.md")).unwrap(), T272_NIKKI.replace("%E6%97%A5%E8%A8%98/", "日記/").into_bytes());
+                }
+                if point == 3 {
+                    permanent_unlock_restore_all(&dir, &payload, &planned, &key, &registry).unwrap();
+                    // 「完了済み」(メタが平文ツリー): tree_open はマーカーを消すだけ。ファイルは既に最終状態。
+                    std::fs::remove_file(unlock_marker_path(&dir)).unwrap();
+                    t273_assert_unlocked(&dir, &nodes, &before);
+                    std::fs::remove_dir_all(&dir).ok();
+                    continue;
+                }
+
+                if point == 0 {
+                    // 何も改名していない: パスワード無しでマーカーを消し、ロック状態のまま
+                    assert!(!t273_tree_open_pending(&dir, &registry));
+                    assert!(!unlock_marker_path(&dir).exists());
+                    t272_assert_locked(&dir);
+                    std::fs::remove_dir_all(&dir).ok();
+                    continue;
+                }
+                // `.md` が 0 件でもフォルダを改名済みならパスワード付きの復旧へ回す
+                assert!(t273_tree_open_pending(&dir, &registry), "point={point}");
+                let marker = load_unlock_marker(&dir).unwrap();
+                assert_eq!(marker.image_folders, planned);
+                let payload = t272_payload(&dir);
+                if finish {
+                    permanent_unlock_restore_all(&dir, &payload, &marker.image_folders, &key, &registry).unwrap();
+                    assert_eq!(count_image_folders_left_random(&dir, &payload), 0);
+                    delete_unlock_marker(&dir, &registry).unwrap();
+                    t273_assert_unlocked(&dir, &nodes, &before);
+                } else {
+                    permanent_unlock_relock_files(&dir, &payload, &marker.image_folders, &key, &registry).unwrap();
+                    delete_unlock_marker(&dir, &registry).unwrap();
+                    t272_assert_locked(&dir);
+                }
+                std::fs::remove_dir_all(&dir).ok();
+            }
+        }
+    }
+
+    /// 「ロックに戻す」で本文の再暗号化後にフォルダを戻せない -> エラー・マーカー保持。`.md` は 0 件でも
+    /// tree_open は自動削除せず復旧待ちのまま。再試行で完了する。
+    #[cfg(windows)]
+    #[test]
+    fn permanent_unlock_relock_keeps_marker_when_a_folder_cannot_be_renamed_back() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let key = LockKey::new(&T272_KEY);
+        let (_nodes, _before) = t273_locked(&dir, &registry);
+        let (payload, planned) = t273_begin(&dir, &registry);
+        for e in &payload.image_folders {
+            rename_image_folder(&dir, &e.folder, &e.memo_name, &registry).unwrap();
+        }
+        let fm = unlock_file_map_entry(&payload, "日記").unwrap();
+        let from = planned_folder_at_memo_name(&dir, &payload, &planned, "日記").map(|e| e.folder.as_str());
+        restore_one_permanent_unlock_entry(&dir, fm, from, &key, &registry).unwrap();
+
+        let handle = std::fs::OpenOptions::new().read(true).share_mode(0).open(dir.join("日記").join("001.png")).unwrap();
+        let err = permanent_unlock_relock_files(&dir, &payload, &planned, &key, &registry).unwrap_err();
+        drop(handle);
+        assert_eq!(err.code, ErrorCode::ImageFolderRenameFailed);
+        assert!(tree::scan_real_memo_names(&dir).is_empty());
+        assert!(t273_tree_open_pending(&dir, &registry));
+        assert!(unlock_marker_path(&dir).exists());
+
+        let marker = load_unlock_marker(&dir).unwrap();
+        permanent_unlock_relock_files(&dir, &payload, &marker.image_folders, &key, &registry).unwrap();
+        delete_unlock_marker(&dir, &registry).unwrap();
+        t272_assert_locked(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #271 だけのビルドでロックしたタブ: `<メモ名>/` は変換されず残り、セッション中の貼り付けで
+    /// ランダム名フォルダが対応表に載っている。ランダム名フォルダは戻し、同名の旧フォルダがあるメモは
+    /// ランダム名のまま。フラット画像は触らない。
+    #[test]
+    fn permanent_unlock_handles_a_tab_locked_by_a_271_only_build() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let key = LockKey::new(&T272_KEY);
+        let r_nikki = "0123456789abcdef";
+        let r_space = "fedcba9876543210";
+        let r_child = "00112233aabbccdd";
+        for r in [r_nikki, r_space, r_child] {
+            std::fs::create_dir_all(dir.join(r)).unwrap();
+            std::fs::write(dir.join(r).join("010.png"), b"png").unwrap();
+        }
+        // 「日記の続き」は #271 以前からの `<メモ名>/` も持つ(衝突)
+        std::fs::create_dir_all(dir.join("日記の続き")).unwrap();
+        std::fs::write(dir.join("日記の続き").join("001.png"), b"old").unwrap();
+        std::fs::write(dir.join("img_old.png"), b"flat").unwrap();
+        let bodies = [
+            ("日記", format!("![]({r_nikki}/010.png)\n![](img_old.png)\n")),
+            ("日記の続き", format!("![](日記の続き/001.png)\n![]({r_child}/010.png)\n")),
+            ("新 メモ", format!("![](<{r_space}/010.png>)\n")),
+        ];
+        let mut file_map = Vec::new();
+        for (memo, body) in &bodies {
+            std::fs::write(dir.join(format!("{memo}.md")), body).unwrap();
+            let entry = FileMapEntry { memo_name: memo.to_string(), token: obfuscated_naming::generate_unique_token(&dir) };
+            rename_and_encrypt_entry(&dir, &entry, None, &key, &registry).unwrap();
+            file_map.push(entry);
+        }
+        let mut parent = MetaTreeNode::default_for_new_file("日記".to_string());
+        parent.children.push(MetaTreeNode::default_for_new_file("日記の続き".to_string()));
+        let nodes = vec![parent, MetaTreeNode::default_for_new_file("新 メモ".to_string())];
+        let payload = LockPayload {
+            real_tab_name: "非公開".to_string(),
+            tree: nodes.clone(),
+            file_map,
+            last_viewed_memo: None,
+            image_folders: vec![
+                ImageFolderEntry { memo_name: "日記".to_string(), folder: r_nikki.to_string() },
+                ImageFolderEntry { memo_name: "新 メモ".to_string(), folder: r_space.to_string() },
+                ImageFolderEntry { memo_name: "日記の続き".to_string(), folder: r_child.to_string() },
+            ],
+        };
+        let field = lock_blob::encrypt_lock_field(&key, KdfParams::generate_new(), None, &payload).unwrap();
+        write_lock_field(&dir, &field, &registry).unwrap();
+
+        assert_eq!(t273_unlock(&dir, &registry), 1);
+        assert_eq!(std::fs::read_to_string(dir.join("日記.md")).unwrap(), "![](日記/010.png)\n![](img_old.png)\n");
+        assert_eq!(std::fs::read_to_string(dir.join("新 メモ.md")).unwrap(), "![](<新 メモ/010.png>)\n");
+        assert_eq!(std::fs::read_to_string(dir.join("日記の続き.md")).unwrap(), bodies[1].1);
+        assert!(dir.join("日記").join("010.png").exists());
+        assert!(dir.join("新 メモ").join("010.png").exists());
+        assert!(dir.join(r_child).join("010.png").exists());
+        assert_eq!(std::fs::read(dir.join("日記の続き").join("001.png")).unwrap(), b"old");
+        assert_eq!(std::fs::read(dir.join("img_old.png")).unwrap(), b"flat");
+        let parsed = tree::load_tab_meta_with_recovery(&dir).0.unwrap();
+        assert!(parsed.lock.is_none());
+        assert_eq!(parsed.tree.unwrap(), nodes);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #273 以前の完全解除マーカー(`imageFolders` 無し)は空の計画として読め、`.md` 0 件なら従来どおり自動削除。
+    #[test]
+    fn pre_273_unlock_marker_without_image_folders_still_parses() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(unlock_marker_path(&dir), br#"{"formatVersion":1}"#).unwrap();
+        assert!(load_unlock_marker(&dir).unwrap().image_folders.is_empty());
+        std::fs::write(dir.join("tok123"), b"encrypted").unwrap();
+        assert!(!t273_tree_open_pending(&dir, &registry));
+        assert!(!unlock_marker_path(&dir).exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn permanent_unlock_result_serializes_flat_camel_case() {
+        let value = serde_json::to_value(PermanentUnlockResult {
+            tab: TabInfo { id: "t".to_string(), name: "非公開".to_string(), locked: false, lock_label: None },
+            image_folders_left_random: 2,
+        })
+        .unwrap();
+        assert_eq!(value["name"], "非公開");
+        assert_eq!(value["imageFoldersLeftRandom"], 2);
+        assert_eq!(value["lockLabel"], serde_json::Value::Null);
     }
 }
