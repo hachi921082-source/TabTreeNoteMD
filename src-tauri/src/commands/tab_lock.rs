@@ -2090,7 +2090,7 @@ fn cleanup_session_move_source(
     all_names: &[String],
     tokens: &HashMap<String, String>,
 ) -> Result<(), AppErrorPayload> {
-    let result = commit_session_mutation(sessions, registry, source_folder, source_tab_id, |_session, tree, file_map| {
+    let result = commit_session_mutation_with_images(sessions, registry, source_folder, source_tab_id, |_session, tree, file_map, image_folders| {
         for name in all_names {
             if let Some(token) = tokens.get(name) {
                 let token_path = source_folder.join(token);
@@ -2102,6 +2102,9 @@ fn cleanup_session_move_source(
             }
             tree::remove_node(tree, name);
             file_map.retain(|e| &e.memo_name != name);
+            // GitHub issue #271: 移動元の対応表からも外す(残すと同名の新メモが旧フォルダを再利用し、
+            // その削除で移動済みメモの画像までごみ箱へ送られる)。フォルダ自体の移動/コピーは #262 の範囲。
+            image_folders.retain(|e| &e.memo_name != name);
         }
         Ok(())
     });
@@ -3500,6 +3503,28 @@ mod tests {
         let AppResult::Ok(result) = session_delete_memo(&sessions, &registry, &dir, "tab-1", &["日記".to_string()], false) else { panic!("expected Ok") };
         assert!(result.warning.is_none());
         assert!(persisted_image_folders(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cleanup_session_move_source_drops_moved_memos_from_the_image_folder_map() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        start_image_session(&dir, &sessions, vec![]);
+        let (path, _) = session_memo_image_dir(&sessions, &registry, &dir, "tab-1", "日記の続き").unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("001.png"), b"img").unwrap();
+
+        // 「日記」とその子「日記の続き」を移動した後の後始末
+        let names = vec!["日記".to_string(), "日記の続き".to_string()];
+        let tokens: HashMap<String, String> = [("日記", "tok-nikki"), ("日記の続き", "tok-tsuzuki")].iter().map(|(n, t)| (n.to_string(), t.to_string())).collect();
+        cleanup_session_move_source(&sessions, &registry, &dir, "tab-1", &names, &tokens).unwrap();
+
+        assert!(sessions.with_session("tab-1", |s| s.image_folders.clone()).unwrap().is_empty());
+        assert!(persisted_image_folders(&dir).is_empty());
+        // フォルダ自体は触らない(#262 の範囲)
+        assert!(path.join("001.png").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 }
