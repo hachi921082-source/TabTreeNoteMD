@@ -303,6 +303,7 @@ mod tests {
             hint: None,
             key: [0u8; 32],
             last_viewed_memo: None,
+            image_folders: Vec::new(),
         }
     }
 
