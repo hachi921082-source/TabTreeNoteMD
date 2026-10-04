@@ -359,7 +359,8 @@ export function TreeView({ tree, tabLock, appSettings, toast }: TreeViewProps) {
             const paths = drag.paths;
             const copy = e.ctrlKey;
             void (async () => {
-              const outcome = await tree.moveCrossTab(paths, targetTabId, null, Number.MAX_SAFE_INTEGER, copy);
+              // #286: TAB_LOCKED は下でダイアログに変換するため、エラーバナーを抑止
+              const outcome = await tree.moveCrossTab(paths, targetTabId, null, Number.MAX_SAFE_INTEGER, copy, true);
               // Dropping onto a locked (no-session) tab (`docs/plans/tab-lock/PLAN.md` §5): show
               // the password dialog at the moment of drop instead of surfacing the raw
               // `TAB_LOCKED` error — the source memo is untouched (the move never ran).

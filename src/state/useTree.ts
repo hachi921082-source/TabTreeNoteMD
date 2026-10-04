@@ -164,7 +164,9 @@ export interface UseTreeResult {
   renameMemo: (path: string, newName: string) => Promise<TreeMutationOutcome>;
   deleteMemo: (paths: string[], forceDirect?: boolean) => Promise<TreeMutationOutcome>;
   moveWithinTab: (paths: string[], newParent: string | null, index: number) => Promise<TreeMutationOutcome>;
-  moveCrossTab: (paths: string[], targetTabId: string, newParent: string | null, index: number, copy: boolean) => Promise<TreeMutationOutcome>;
+  /** `suppressLockedError`: 呼び出し側が `TAB_LOCKED` をロック解除ダイアログで処理する場合に true。
+   * その場合 `TAB_LOCKED` ではエラーバナー(`lastErrorCode`)を設定しない(#286)。他のエラーは常に設定 */
+  moveCrossTab: (paths: string[], targetTabId: string, newParent: string | null, index: number, copy: boolean, suppressLockedError?: boolean) => Promise<TreeMutationOutcome>;
   setExpanded: (path: string, expanded: boolean) => Promise<void>;
   setLabel: (path: string, color: LabelColor | null) => Promise<void>;
   setEditorOverride: (path: string, editor: MemoEditorSettings | null) => Promise<void>;
@@ -554,7 +556,7 @@ export function useTree(
   );
 
   const moveCrossTab = useCallback(
-    async (paths: string[], targetTabId: string, newParent: string | null, index: number, copy: boolean): Promise<TreeMutationOutcome> => {
+    async (paths: string[], targetTabId: string, newParent: string | null, index: number, copy: boolean, suppressLockedError = false): Promise<TreeMutationOutcome> => {
       if (!tabId) return { ok: false, code: "UNKNOWN", message: "no active tab" };
       const target: MoveTarget = { kind: "otherTab", targetTabId, newParent, index, copy };
       // #267: 開いているメモ(またはその祖先)を別タブへ移動する場合、移動前に保留中の保存を確定。
@@ -569,7 +571,10 @@ export function useTree(
         applySnapshot(result.value.source);
         return { ok: true };
       }
-      setLastErrorCode(result.error.code);
+      // #286: 呼び出し側がロック解除ダイアログを出す場合、TAB_LOCKED のバナーは出さない
+      if (!(suppressLockedError && result.error.code === "TAB_LOCKED")) {
+        setLastErrorCode(result.error.code);
+      }
       return { ok: false, code: result.error.code, message: result.error.message };
     },
     [tabId, applySnapshot, flushIfOpenMemoAffected, subtreesContain],
