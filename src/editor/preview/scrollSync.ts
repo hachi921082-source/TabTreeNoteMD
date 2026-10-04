@@ -13,6 +13,56 @@ export function scrollPreviewToLine(container: HTMLElement, targetLine: number):
   best?.scrollIntoView({ block: "start" });
 }
 
+// GitHub issue #279 / spec.v1.2.0 §12: エディタ末尾側スクロール時のプレビュー追従用の純関数群。
+// エディタの最後の1ビューポート分 (max(0, maxScroll - viewportHeight) .. maxScroll) を
+// 0..1 のブレンド係数に写像する。区間外は 0 (=従来の行合わせのみ)。
+// エディタがスクロール不能 (maxScroll <= 0) なら常に 0 で、プレビューを末尾へ強制しない。
+export function computeEndBlendFactor(scrollTop: number, maxScroll: number, viewportHeight: number): number {
+  if (maxScroll <= 0) return 0;
+  // 区間開始は maxScroll を超えない (viewportHeight <= 0 の異常値でも zoneStart <= maxScroll)
+  const zoneStart = Math.min(maxScroll, Math.max(0, maxScroll - Math.max(0, viewportHeight)));
+  const span = maxScroll - zoneStart;
+  if (span <= 0) return scrollTop >= maxScroll ? 1 : 0;
+  return Math.min(1, Math.max(0, (scrollTop - zoneStart) / span));
+}
+
+// 行合わせ位置 matched からプレビュー末尾 previewMax へ係数 t で線形補間した scrollTop を返す。
+// previewMax < matched (行合わせ位置が既に末尾を超える) の場合は末尾へクランプし、
+// 補間で逆方向 (上方向) へ引き戻すことはしない。結果は常に 0..previewMax に収める。
+export function blendPreviewScrollTarget(matched: number, previewMax: number, t: number): number {
+  const max = Math.max(0, previewMax);
+  const base = Math.min(max, Math.max(0, matched));
+  return base + (max - base) * Math.min(1, Math.max(0, t));
+}
+
+// エディタ→プレビュー同期の本体 (一方向のまま)。ブレンド区間外では従来どおり
+// scrollPreviewToLine (行合わせ) と同一の動作。区間内のみ行合わせ位置とプレビュー末尾を補間する。
+export function syncPreviewToEditorScroll(
+  contentContainer: HTMLElement,
+  scrollContainer: HTMLElement,
+  targetLine: number,
+  editorScrollDOM: HTMLElement,
+): void {
+  const editorMax = editorScrollDOM.scrollHeight - editorScrollDOM.clientHeight;
+  const t = computeEndBlendFactor(editorScrollDOM.scrollTop, editorMax, editorScrollDOM.clientHeight);
+  if (t <= 0) {
+    scrollPreviewToLine(contentContainer, targetLine);
+    return;
+  }
+  const blocks = contentContainer.querySelectorAll<HTMLElement>("[data-source-line]");
+  let best: HTMLElement | null = null;
+  for (const el of blocks) {
+    if (Number(el.dataset.sourceLine) <= targetLine) best = el;
+    else break;
+  }
+  // 行合わせ位置: scrollIntoView({ block: "start" }) が到達する scrollTop 相当
+  const matched = best
+    ? scrollContainer.scrollTop + (best.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top)
+    : 0;
+  const previewMax = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+  scrollContainer.scrollTop = blendPreviewScrollTarget(matched, previewMax, t);
+}
+
 // Inverse of the editor->preview sync above: reads the preview's OWN scroll state (`docs/plans/
 // v1.2.0/preview-scroll-fix/PLAN.md` §2) rather than driving it, for the save-path half of that
 // plan's `paneMode === "preview"` scroll-position persistence fix -- the one-directional design
