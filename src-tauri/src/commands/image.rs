@@ -209,9 +209,23 @@ pub fn image_repair_legacy_links(
     AppResult::ok(repair_legacy_links(&body, &folder))
 }
 
-/// `image_repair_legacy_links` の本体。通常のリンクはそのまま返す(置換結果が同一なら変更なし扱い)。
+/// `image_repair_legacy_links` の本体。実在確認が通ったレガシーリンクだけを置き換え、それ以外の
+/// リンクは1バイトも変えない(`replace` は直前に実在確認が通ったパスにだけ `Some` を返す)。
 fn repair_legacy_links(body: &str, folder: &Path) -> Option<String> {
-    let repaired = rewrite_image_destinations_with_legacy(body, |dest| Some(dest.to_string()), |path| decode_destination(path).is_some_and(|rel| regular_file_without_links(folder, &rel)));
+    let accepted: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+    let repaired = rewrite_image_destinations_with_legacy(
+        body,
+        |dest| {
+            // レガシー分岐で実在確認が通った直後の呼び出しのみ対象(通常リンクは None で素通し)
+            let path = accepted.borrow_mut().take()?;
+            (path == dest).then(|| dest.to_string())
+        },
+        |path| {
+            let ok = decode_destination(path).is_some_and(|rel| regular_file_without_links(folder, &rel));
+            *accepted.borrow_mut() = ok.then(|| path.to_string());
+            ok
+        },
+    );
     repaired.filter(|s| s != body)
 }
 
@@ -546,12 +560,18 @@ mod tests {
         let dir = tempdir();
         std::fs::create_dir_all(dir.join("新 メモ")).unwrap();
         std::fs::write(dir.join("新 メモ").join("001.png"), ONE_PX_PNG).unwrap();
-        let body = "![](新 メモ/001.png) ![](新 メモ/002.png) ![](日記/001.png)
-";
-        assert_eq!(repair_legacy_links(body, &dir).as_deref(), Some("![](<新 メモ/001.png>) ![](新 メモ/002.png) ![](日記/001.png)
-"));
-        assert_eq!(repair_legacy_links("![](<新 メモ/001.png>)
-", &dir), None);
+        let body = "![](新 メモ/001.png) ![](新 メモ/002.png) ![](日記/001.png)\n";
+        assert_eq!(repair_legacy_links(body, &dir).as_deref(), Some("![](<新 メモ/001.png>) ![](新 メモ/002.png) ![](日記/001.png)\n"));
+        assert_eq!(repair_legacy_links("![](<新 メモ/001.png>)\n", &dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn repair_legacy_links_leaves_unresolved_candidates_byte_identical() {
+        // ファイルが無いレガシー候補は通常経路に落ちても山括弧を付けない(開いただけで本文を変えない)
+        let dir = tempdir();
+        let body = "![](メモ(1 2)/001.png)\n";
+        assert_eq!(repair_legacy_links(body, &dir), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
