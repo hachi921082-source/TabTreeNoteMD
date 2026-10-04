@@ -701,6 +701,8 @@ relocks the tab before a file is chosen, so the save fails with `TabLocked`.
 - Focus loss while the app's own toolbar image-insert file dialog is open does not relock.
 - The exception lasts only from opening the dialog until it closes (file chosen, cancelled, or focus
   returns to the window — whichever comes first); it never stays active after the dialog closes.
+- If the app window is not focused at the moment the exception ends (e.g. the user switched to another
+  app while the dialog was open), the suppressed focus-loss relock is applied then.
 - Every other focus loss is unchanged — including OS drag-and-drop from Explorer (focus genuinely
   leaves the app) and the app's other native dialogs (PDF export save dialog, tab-add folder picker).
 - The inactivity timer and all other relock triggers are unchanged.
