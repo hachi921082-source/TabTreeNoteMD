@@ -77,6 +77,9 @@ Keep this in sync whenever a section is added, renamed, or moved below.
   `[spec §4.1]` Tab Lock. Supersedes `[spec §4.1]`'s "bare 🔒 glyph, no accompanying text" placeholder
   as the *only* option: an optional, user-authored, per-tab label, set/edited any time via a new tab
   right-click context-menu item, falling back to the bare glyph when unset. Decided.
+- **§11 Auto-Relock Focus-Loss Exception for the Image-Insert File Picker (Modifies `[spec v1.1.0 §5.2]`
+  — GitHub issue #274, added 2026-10-04)** — focus loss while the app's own toolbar image-insert file
+  dialog is open no longer relocks. Decided.
 - **Open Questions for User**
 
 ---
@@ -687,6 +690,25 @@ Decided 2026-08-22 (GitHub issue #202 and its comment thread); no open points.
 
 ---
 
+## 11. Auto-Relock Focus-Loss Exception for the Image-Insert File Picker (Modifies `[spec v1.1.0 §5.2]` — GitHub issue #274, added 2026-10-04)
+
+**Problem**: in a locked tab's unlock session, the toolbar "Image insert" button opens the OS file
+dialog, which takes OS focus away from the app window; `[spec v1.1.0 §5.2]`'s focus-loss trigger then
+relocks the tab before a file is chosen, so the save fails with `TabLocked`.
+
+**Decided exception** (user, 2026-10-03):
+
+- Focus loss while the app's own toolbar image-insert file dialog is open does not relock.
+- The exception lasts only from opening the dialog until it closes (file chosen, cancelled, or focus
+  returns to the window — whichever comes first); it never stays active after the dialog closes.
+- Every other focus loss is unchanged — including OS drag-and-drop from Explorer (focus genuinely
+  leaves the app) and the app's other native dialogs (PDF export save dialog, tab-add folder picker).
+- The inactivity timer and all other relock triggers are unchanged.
+
+Decided 2026-10-03 (GitHub issue #274); no open points.
+
+---
+
 ## Open Questions for User
 
-None. All ten items (§1–§10) are fully decided.
+None. All eleven items (§1–§11) are fully decided.
