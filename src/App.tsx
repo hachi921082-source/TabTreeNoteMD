@@ -2,7 +2,7 @@
 // `docs/plans/memo-tree/PLAN.md`'s TreeView, `docs/plans/editor-save/PLAN.md`'s EditorPane, and
 // `docs/plans/tab-lock/PLAN.md`'s lock/unlock session state (see
 // docs/plans/project-architecture/PLAN.md).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTabs } from "./state/useTabs";
 import { useTree } from "./state/useTree";
 import { useTabView } from "./state/useTabView";
@@ -27,7 +27,18 @@ const DEFAULT_TREE_WIDTH = 260;
 
 function App() {
   const tabsState = useTabs();
-  const treeState = useTree(tabsState.activeTabId);
+  const editorRef = useRef<EditorPaneHandle>(null);
+  // #267: 開いているメモの改名/タブ間移動の前に保留中の保存を確定させる(エディタ未表示なら何もしない)
+  const flushOpenMemoSave = useCallback(async () => (await editorRef.current?.flushSaveNow()) ?? true, []);
+  // #267 追補: 開いているメモの削除時は保留中の保存を書かずに止め、削除成功で破棄する
+  const pendingSaveControl = useMemo(
+    () => ({
+      suspend: () => editorRef.current?.suspendPendingSave(),
+      discard: () => editorRef.current?.discardPendingEdits(),
+    }),
+    [],
+  );
+  const treeState = useTree(tabsState.activeTabId, flushOpenMemoSave, pendingSaveControl);
   const tabView = useTabView(treeState);
   const settingsState = useSettings();
   // Single app-wide notification queue (`state/useToast.ts`) — shared by `TreeView`'s folder-import
@@ -53,8 +64,6 @@ function App() {
   );
   useWindowGeometry(settingsState.settings, settingsState.patch);
   useAppearance(settingsState.settings);
-
-  const editorRef = useRef<EditorPaneHandle>(null);
 
   // `docs/plans/tab-lock/PLAN.md` §3 `tab_lock` step 2: "If any memo in this tab ... is
   // currently open with unsaved changes, the frontend must force a save-confirm (auto-save-and-

@@ -146,7 +146,12 @@ export interface EditorPaneProps {
  * calling this command", when the tab being locked is the active tab with an open memo. Distinct
  * from `useEditor`'s own switch-away flush (fire-and-forget, not awaitable from outside). */
 export interface EditorPaneHandle {
-  flushSaveNow: () => Promise<void>;
+  /** `false` = unsaved edits remain (save failed / conflict) — see `useEditor`'s `flushSaveNow`.
+   * Also awaited before renaming / cross-tab-moving the open memo (GitHub issue #267). */
+  flushSaveNow: () => Promise<boolean>;
+  /** Used around deleting the open memo (GitHub issue #267 follow-up) — see `useEditor`. */
+  suspendPendingSave: () => void;
+  discardPendingEdits: () => void;
   /** Double-click-active-tab jump-to-start toggle (`docs/plans/v1.2.0/tab-double-click-jump/
    * PLAN.md` §2) — invoked from `App.tsx` when `TabBar.tsx` reports a double-click on the
    * already-active tab. No-op if no memo is currently open. */
@@ -174,7 +179,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 ) {
   const t = useT();
   const ed = useEditor(tabId, memoName, appSettings, isMemoEditLocked);
-  useImperativeHandle(ref, () => ({ flushSaveNow: ed.flushSaveNow, toggleJumpToStart, jumpToAnchor }));
+  useImperativeHandle(ref, () => ({
+    flushSaveNow: ed.flushSaveNow,
+    suspendPendingSave: ed.suspendPendingSave,
+    discardPendingEdits: ed.discardPendingEdits,
+    toggleJumpToStart,
+    jumpToAnchor,
+  }));
   const search = useSearch();
 
   const containerRef = useRef<HTMLDivElement>(null);
