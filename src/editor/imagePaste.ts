@@ -108,6 +108,34 @@ async function readFileBytes(file: File): Promise<number[]> {
   return Array.from(new Uint8Array(buffer));
 }
 
+/** 画像リンク先を Markdown に書ける形にする(GitHub issue #266)。CommonMark は半角スペース・
+ * ASCII 制御文字・対応の取れない丸括弧を含む裸形リンク先を認めない(メモ名 `新 メモ` だと
+ * `![](新 メモ/001.png)` は画像にならない)ため、その場合は山括弧形 `<新 メモ/001.png>` で書く。
+ * それ以外(全角スペースを含む)は裸形のまま。Rust 側 `util::image_link_rewrite::needs_angle_brackets`
+ * と同じ判定。メモ名は Windows のファイル名規則で `<` `>` `\` を含められないためエスケープ不要。 */
+export function toMarkdownImageDestination(path: string): string {
+  let depth = 0;
+  let needsBrackets = false;
+  for (const ch of path) {
+    const code = ch.charCodeAt(0);
+    // 半角スペース・ASCII 制御文字は裸形に書けない
+    if (ch === " " || code < 0x20 || code === 0x7f) {
+      needsBrackets = true;
+      break;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      // 対応の取れない閉じ括弧
+      if (depth === 0) {
+        needsBrackets = true;
+        break;
+      }
+      depth--;
+    }
+  }
+  return needsBrackets || depth !== 0 ? `<${path}>` : path;
+}
+
 /** Core save-then-insert logic shared by the paste handler, the toolbar's file-picker
  * (`docs/plans/image-handling/PLAN.md` §6 steps 2-4), and the right-click context menu's Paste
  * item (`textCommands.ts`'s `pasteCommand`, GitHub issue #203 — reused rather than duplicated so
@@ -126,7 +154,7 @@ export async function saveAndInsertImage(view: EditorView, tabId: string, memoNa
     onError(result.error.code);
     return;
   }
-  const markup = `![](${result.value.relativePath})`;
+  const markup = `![](${toMarkdownImageDestination(result.value.relativePath)})`;
   const pos = Math.min(insertPos, view.state.doc.length);
   view.dispatch({
     changes: { from: pos, to: pos, insert: markup },
