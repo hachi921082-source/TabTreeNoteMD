@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use image::GenericImageView;
 use tauri::ipc::Response;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::commands::emit_settings_recovery_event;
 use crate::commands::tab_lock::{resolve_tab_access, session_memo_image_dir, TabAccess};
@@ -190,15 +190,13 @@ pub(crate) fn next_sequence_number(dir: &Path) -> u32 {
 /// 直した本文を返す。参照先がタブフォルダ基準で実在する通常ファイル(途中にリンク/リパースポイントを
 /// 含まない、`..`・絶対パス不可)の場合のみ修復する。修復が無ければ `None`。ファイルには書き込まない
 /// (フロントエンドが通常の保存経路で保存する — `.bak`・ロックセッションの暗号化もそのまま効く)。
+/// メモを開くたびに呼ばれるため、メインスレッドを止めないよう async コマンドにする(`tab_lock` と
+/// 同じく State は `app.state()` で取得)。
 #[tauri::command]
-pub fn image_repair_legacy_links(
-    app: AppHandle,
-    tab_id: String,
-    body: String,
-    store: State<AppSettingsStore>,
-    registry: State<Arc<SelfWriteRegistry>>,
-    sessions: State<LockSessionStore>,
-) -> AppResult<Option<String>> {
+pub async fn image_repair_legacy_links(app: AppHandle, tab_id: String, body: String) -> AppResult<Option<String>> {
+    let store = app.state::<AppSettingsStore>();
+    let registry = app.state::<Arc<SelfWriteRegistry>>();
+    let sessions = app.state::<LockSessionStore>();
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
     let folder = match resolve_tab_access(&settings, &sessions, &tab_id) {
