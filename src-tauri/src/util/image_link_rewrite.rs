@@ -392,6 +392,10 @@ fn legacy_candidates(line: &str, start: usize) -> Vec<(std::ops::Range<usize>, u
         if bytes[k] != b')' || (k > start && bytes[k - 1] == b'\\') {
             continue;
         }
+        // 後続のリンク・インラインコードにまたがる候補は除外(以降の `)` も同様なので打ち切る)
+        if ["`", "](", "!["].iter().any(|s| line[start..k].contains(s)) {
+            break;
+        }
         let inner = line[start..k].trim_end_matches([' ', '\t']);
         let mut push = |len: usize| {
             let path = line[start..start + len].trim_end_matches([' ', '\t']);
@@ -648,6 +652,20 @@ mod tests {
         let only_title_split = |rest: &str| rest == "001.png";
         let got = rewrite_image_links_for_rename("![](新 メモ/001.png 'x y')\n", "新 メモ", "日記", only_title_split).unwrap();
         assert_eq!(got, "![](日記/001.png 'x y')\n");
+    }
+
+    #[test]
+    fn legacy_candidate_does_not_span_following_link() {
+        // 1つ目だけがレガシー。候補が2つ目のリンクや後続のコードスパンにまたがらないこと
+        let mut seen = Vec::new();
+        let body = "![](新 メモ/001.png) ![](新 メモ/002.png) `x)`\n";
+        let got = rewrite_image_links_for_rename(body, "新 メモ", "日記", |rest| {
+            seen.push(rest.to_string());
+            rest == "001.png"
+        })
+        .unwrap();
+        assert_eq!(got, "![](日記/001.png) ![](新 メモ/002.png) `x)`\n");
+        assert!(seen.iter().all(|r| !r.contains("](") && !r.contains('`')), "{seen:?}");
     }
 
     #[test]
