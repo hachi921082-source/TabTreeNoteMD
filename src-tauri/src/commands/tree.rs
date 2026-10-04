@@ -731,6 +731,14 @@ fn delete_memo_files(folder: &Path, names: &[String], force_direct: bool, regist
             }
         }
 
+        // GitHub issue #282: `<メモ名>.md.bak` も `.md` と同じ経路(ごみ箱/直接削除)で消す。
+        // ベストエフォート: `.bak` のごみ箱移動失敗だけで TRASH_FAILED にはせず、直接削除に切り替える。
+        if let Some(bak) = existing_direct_child_file(folder, &format!("{name}.md.bak")) {
+            if force_direct || trash::trash_file(&bak, registry).is_err() {
+                remove_bak_file(&bak, registry);
+            }
+        }
+
         // 画像フォルダが無いメモ(添付なし)はスキップ。`name` は未検証のディスク上の stem でありうる
         // (`..md` → `.` 等)ため、タブ直下の実ディレクトリに解決できるものだけを対象にする。
         let Some(image_folder) = existing_memo_image_folder(folder, name) else {
@@ -2185,5 +2193,25 @@ mod tests {
         assert_eq!(std::fs::read_dir(&target_dir).unwrap().count(), 0);
         std::fs::remove_dir_all(&source_dir).ok();
         std::fs::remove_dir_all(&target_dir).ok();
+    }
+
+    #[test]
+    fn delete_memo_files_also_removes_backups_of_every_memo_in_the_subtree() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let names = vec!["日記　その1".to_string(), "子メモ".to_string()];
+        for name in &names {
+            std::fs::write(dir.join(format!("{name}.md")), b"body").unwrap();
+            std::fs::write(dir.join(format!("{name}.md.bak")), b"old").unwrap();
+        }
+        // 削除対象外のメモの `.bak` は残る
+        std::fs::write(dir.join("無関係.md.bak"), b"keep").unwrap();
+        assert!(matches!(delete_memo_files(&dir, &names, true, &registry), Ok(None)));
+        for name in &names {
+            assert!(!dir.join(format!("{name}.md")).exists());
+            assert!(!dir.join(format!("{name}.md.bak")).exists(), "{name}.md.bak");
+        }
+        assert!(dir.join("無関係.md.bak").exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
