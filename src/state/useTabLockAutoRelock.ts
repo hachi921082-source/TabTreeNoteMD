@@ -15,6 +15,7 @@ import type { AppSettings } from "../shared/models";
 import type { UseTabLockResult } from "./useTabLock";
 import type { UseToastResult } from "./useToast";
 import { isModalActive } from "../shared/modalActivityGate";
+import { isFilePickerActive } from "../shared/filePickerGate";
 import { useT } from "../i18n";
 
 /** `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §3 (`[detailed-spec v1.1.0 §1.4]`) — fixed,
@@ -163,7 +164,9 @@ export function useTabLockAutoRelock({ activeTabId, tabLockState, settings, toas
     let cancelled = false;
     void appWindow
       .onFocusChanged(({ payload: focused }) => {
-        if (!focused) void teardown(tabId, false);
+        // 例外 (#274, `[spec v1.2.0 §11]`): アプリ自身の画像挿入ファイル選択ダイアログ表示中の
+        // フォーカス喪失では再ロックしない。他のフォーカス喪失(エクスプローラーからの D&D 等)は従来どおり。
+        if (!focused && !isFilePickerActive()) void teardown(tabId, false);
       })
       .then((un) => {
         if (cancelled) un();
