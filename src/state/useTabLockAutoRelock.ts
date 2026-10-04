@@ -15,7 +15,7 @@ import type { AppSettings } from "../shared/models";
 import type { UseTabLockResult } from "./useTabLock";
 import type { UseToastResult } from "./useToast";
 import { isModalActive } from "../shared/modalActivityGate";
-import { isFilePickerActive } from "../shared/filePickerGate";
+import { isFilePickerActive, onFilePickerExit } from "../shared/filePickerGate";
 import { useT } from "../i18n";
 
 /** `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §3 (`[detailed-spec v1.1.0 §1.4]`) — fixed,
@@ -172,9 +172,19 @@ export function useTabLockAutoRelock({ activeTabId, tabLockState, settings, toas
         if (cancelled) un();
         else unlisten = un;
       });
+    // 例外終了時の補完 (#274): ダイアログ表示中に別アプリへ切り替えたまま閉じた場合など、例外が
+    // 終わった時点でウィンドウが非フォーカスなら、抑止していたフォーカス喪失再ロックをここで適用する。
+    // フォーカス復帰経路では isFocused() が true なので何もしない。
+    const unsubscribePickerExit = onFilePickerExit(() => {
+      void appWindow.isFocused().then((focused) => {
+        if (cancelled || focused || isFilePickerActive()) return;
+        void teardown(tabId, false);
+      });
+    });
     return () => {
       cancelled = true;
       unlisten?.();
+      unsubscribePickerExit();
     };
   }, [hasSession, activeTabId, teardown]);
 }
