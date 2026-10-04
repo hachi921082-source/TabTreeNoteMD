@@ -2059,6 +2059,11 @@ pub(crate) fn session_delete_memo(
                 continue;
             };
             let token_path = folder.join(&entry.token);
+            // GitHub issue #282: セッション中の保存で出来た `<token>.bak` もトークンファイルと同じく
+            // 完全削除する(ベストエフォート、無ければ何もしない)
+            if let Some(bak) = existing_direct_child_file(folder, &format!("{}.bak", entry.token)) {
+                tree::remove_bak_file(&bak, registry);
+            }
             if !token_path.exists() {
                 continue;
             }
@@ -2515,6 +2520,11 @@ fn cleanup_session_move_source(
                     tracing::error!(error = %err, "cross-tab move: failed to remove obfuscated source file after move");
                     return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to remove one or more source memo files"));
                 }
+                // GitHub issue #282: セッション中の保存で出来た `<token>.bak`(暗号化済み本文の旧版)は
+                // 移動先では意味を持たないので運ばず、移動元から削除する(ベストエフォート)
+                if let Some(bak) = existing_direct_child_file(source_folder, &format!("{token}.bak")) {
+                    tree::remove_bak_file(&bak, registry);
+                }
             }
             tree::remove_node(tree, name);
             file_map.retain(|e| &e.memo_name != name);
@@ -2680,6 +2690,8 @@ pub(crate) fn move_cross_tab_plain_to_session(
             if let Err(err) = with_retry(|| std::fs::remove_file(&path)) {
                 tracing::error!(error = %err, "move_cross_tab_plain_to_session: failed to remove source memo file after move");
             }
+            // GitHub issue #282: 平文の `<メモ名>.md.bak` はロック中タブへ運ばず、移動元から完全削除する
+            tree::remove_memo_bak(source_folder, name, registry);
         }
         for p in paths {
             tree::remove_node(&mut source_loaded.tree, p);
@@ -5007,5 +5019,77 @@ mod tests {
             std::fs::remove_dir_all(&src).ok();
             std::fs::remove_dir_all(&dst).ok();
         }
+    }
+
+    // ---- GitHub issue #282: ロック中タブが絡むタブ間移動では移動元の `.bak` を運ばず削除する ----
+
+    #[test]
+    fn locked_involved_cross_tab_moves_delete_source_backups_instead_of_carrying() {
+        for copy in [false, true] {
+            // 平文 -> ロック中: 平文の `<メモ名>.md.bak` を移動元から消し、ロック中タブへは何も持ち込まない
+            let (src, dst) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            let sessions = LockSessionStore::new();
+            t262_plain(&src, &registry);
+            t262_session(&dst, &sessions, "tab-2", false, &registry);
+            for name in [T262_PARENT, T262_CHILD] {
+                std::fs::write(src.join(format!("{name}.md.bak")), "平文の旧版").unwrap();
+            }
+            let result = move_cross_tab_plain_to_session("tab-1", &src, "元", "tab-2", &dst, &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions, &SearchIndex::new());
+            assert!(matches!(result, AppResult::Ok(_)), "copy={copy}");
+            for name in [T262_PARENT, T262_CHILD] {
+                assert_eq!(src.join(format!("{name}.md.bak")).exists(), copy, "copy={copy}");
+                assert!(!dst.join(format!("{name}.md.bak")).exists());
+            }
+            std::fs::remove_dir_all(&src).ok();
+            std::fs::remove_dir_all(&dst).ok();
+
+            // ロック中 -> 平文 / ロック中 -> ロック中: 移動元の `<token>.bak` を消し、移動先へは運ばない
+            for to_locked in [false, true] {
+                let (src, dst) = (tempdir(), tempdir());
+                let registry = SelfWriteRegistry::new();
+                let sessions = LockSessionStore::new();
+                t262_session(&src, &sessions, "tab-1", true, &registry);
+                for token in ["tok0", "tok1"] {
+                    std::fs::write(src.join(format!("{token}.bak")), b"encrypted old").unwrap();
+                }
+                let result = if to_locked {
+                    t262_session(&dst, &sessions, "tab-2", false, &registry);
+                    move_cross_tab_session_to_session("tab-1", &src, "tab-2", &dst, &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions)
+                } else {
+                    move_cross_tab_session_to_plain("tab-1", &src, "tab-2", &dst, "先", &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions, &SearchIndex::new())
+                };
+                assert!(matches!(result, AppResult::Ok(_)), "copy={copy} to_locked={to_locked}");
+                for token in ["tok0", "tok1"] {
+                    assert_eq!(src.join(format!("{token}.bak")).exists(), copy, "copy={copy} to_locked={to_locked}");
+                    assert!(!dst.join(format!("{token}.bak")).exists());
+                }
+                for name in [T262_PARENT, T262_CHILD] {
+                    assert!(!dst.join(format!("{name}.md.bak")).exists());
+                }
+                std::fs::remove_dir_all(&src).ok();
+                std::fs::remove_dir_all(&dst).ok();
+            }
+        }
+    }
+
+    #[test]
+    fn session_delete_removes_token_backups_of_the_deleted_subtree() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        t262_session(&dir, &sessions, "tab-1", true, &registry);
+        for token in ["tok0", "tok1"] {
+            std::fs::write(dir.join(format!("{token}.bak")), b"encrypted old").unwrap();
+        }
+        std::fs::write(dir.join("other.bak"), b"keep").unwrap();
+        let result = session_delete_memo(&sessions, &registry, &dir, "tab-1", &[T262_PARENT.to_string()], true);
+        assert!(matches!(result, AppResult::Ok(_)));
+        for token in ["tok0", "tok1"] {
+            assert!(!dir.join(token).exists());
+            assert!(!dir.join(format!("{token}.bak")).exists(), "{token}.bak");
+        }
+        assert!(dir.join("other.bak").exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

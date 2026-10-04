@@ -24,7 +24,7 @@ use crate::commands::tab_lock;
 use crate::commands::{emit_meta_recovered, emit_settings_recovery_event};
 use crate::fs::atomic_write::{atomic_write, bak_path};
 use crate::fs::image_folder_transfer::{transfer_all, undo_transfers, FolderTransfer};
-use crate::fs::path_safety::{existing_memo_image_folder, memo_image_folder_path, validate_name, ValidationMode};
+use crate::fs::path_safety::{direct_child_file_path, existing_direct_child_file, existing_memo_image_folder, memo_image_folder_path, validate_name, ValidationMode};
 use crate::fs::retry::{is_lock_class_error, with_retry};
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::fs::trash;
@@ -457,6 +457,9 @@ pub fn memo_rename(
         return AppResult::err_code(code, "failed to rename memo file");
     }
 
+    // GitHub issue #282: `<旧名>.md.bak` も新名へ運ぶ(ベストエフォート)
+    carry_memo_bak(&folder, &path, &folder, trimmed, &registry);
+
     let warning = follow_rename_image_folder(&folder, &path, trimmed, &new_path, &registry);
 
     if let Some(node) = find_node_mut(&mut loaded.tree, &path) {
@@ -551,6 +554,66 @@ fn rewrite_renamed_memo_image_links(memo_path: &Path, old_name: &str, new_name: 
     registry.register(memo_path);
     if let Err(err) = atomic_write(memo_path, &out, registry) {
         tracing::warn!(error = %err, "memo_rename: failed to write rewritten image links");
+    }
+}
+
+/// GitHub issue #282: `atomic_write` の 1 世代バックアップ `<src_name>.md.bak`(`src_folder` 直下)を、
+/// 改名/タブ間移動したメモに合わせて `<dst_folder>/<dst_name>.md.bak` へ運ぶ。ベストエフォート:
+/// `.md` の操作は成功済みなので、ここでの失敗はログのみで戻さない。
+/// - 移動元の `.bak` が無い(または直下の通常ファイルでない)なら何もしない
+/// - 移動先の名前がパスガードを通らない、または移動先に既に何かあるなら上書きせず、移動元の
+///   `.bak` を削除する(ただのバックアップなので、旧名で残すより消す)
+/// - 大文字小文字だけの改名(全角・非 ASCII を含む)は移動先が移動元自身として見えるので、名前ではなく
+///   ファイルの実体(`canonicalize` の結果)で同一と判定し、そのまま改名する
+/// - 改名に失敗したら(別ボリューム等)コピー + 削除で運ぶ
+pub(crate) fn carry_memo_bak(src_folder: &Path, src_name: &str, dst_folder: &Path, dst_name: &str, registry: &SelfWriteRegistry) {
+    let Some(src) = existing_direct_child_file(src_folder, &format!("{src_name}.md.bak")) else {
+        return;
+    };
+    let Some(dst) = direct_child_file_path(dst_folder, &format!("{dst_name}.md.bak")) else {
+        tracing::warn!("memo .bak: destination name is not usable; removing the source backup instead");
+        remove_bak_file(&src, registry);
+        return;
+    };
+    if std::fs::symlink_metadata(&dst).is_ok() && !is_same_existing_file(&src, &dst) {
+        tracing::warn!(path = %dst.display(), "memo .bak: destination backup already exists; removing the source backup instead");
+        remove_bak_file(&src, registry);
+        return;
+    }
+    registry.register(&src);
+    registry.register(&dst);
+    let result = with_retry(|| std::fs::rename(&src, &dst)).or_else(|_| {
+        std::fs::copy(&src, &dst)?;
+        std::fs::remove_file(&src)
+    });
+    if let Err(err) = result {
+        tracing::warn!(error = %err, "memo .bak: failed to carry the backup file along (best-effort, not fatal)");
+    }
+}
+
+/// `a` と `b` が同じ実体ファイルを指すなら `true`。Windows の `canonicalize` は
+/// `GetFinalPathNameByHandle` でディスク上の実際の名前(大文字小文字を含む)を返すため、NTFS が
+/// 同一視する大文字小文字違い(全角 `ａ`/`Ａ`、`é`/`É` など)も一致する。解決できなければ別物扱い。
+fn is_same_existing_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// GitHub issue #282: `<name>.md.bak`(`folder` 直下の通常ファイルのみ)をベストエフォートで完全削除する。
+/// ロック中タブが絡むタブ間移動で、移動元の平文バックアップを運ばずに消す用。
+pub(crate) fn remove_memo_bak(folder: &Path, name: &str, registry: &SelfWriteRegistry) {
+    if let Some(path) = existing_direct_child_file(folder, &format!("{name}.md.bak")) {
+        remove_bak_file(&path, registry);
+    }
+}
+
+/// `.bak` の完全削除(失敗はログのみ)。
+pub(crate) fn remove_bak_file(path: &Path, registry: &SelfWriteRegistry) {
+    registry.register(path);
+    if let Err(err) = with_retry(|| std::fs::remove_file(path)) {
+        tracing::warn!(error = %err, path = %path.display(), "memo .bak: failed to remove a backup file (best-effort, not fatal)");
     }
 }
 
@@ -675,6 +738,14 @@ fn delete_memo_files(folder: &Path, names: &[String], force_direct: bool, regist
             if let Err(code) = result {
                 tracing::error!(?code, path = %file_path.display(), "memo_delete: failed to delete memo file");
                 return Err(code);
+            }
+        }
+
+        // GitHub issue #282: `<メモ名>.md.bak` も `.md` と同じ経路(ごみ箱/直接削除)で消す。
+        // ベストエフォート: `.bak` のごみ箱移動失敗だけで TRASH_FAILED にはせず、直接削除に切り替える。
+        if let Some(bak) = existing_direct_child_file(folder, &format!("{name}.md.bak")) {
+            if force_direct || trash::trash_file(&bak, registry).is_err() {
+                remove_bak_file(&bak, registry);
             }
         }
 
@@ -909,6 +980,10 @@ fn memo_move_cross_tab(
             // 本文をまだ運べていないメモ(このメモ以降)の画像フォルダは元へ戻す
             undo_transfers(&image_transfers_for(&image_transfers, &all_names[i..]), copy, registry);
             return AppResult::err_code(ErrorCode::Unknown, "failed to move memo file between tabs");
+        }
+        // GitHub issue #282: 移動なら `<メモ名>.md.bak` も移動先へ運ぶ(コピーでは運ばない)
+        if !copy {
+            carry_memo_bak(source_folder, name, target_folder, name, registry);
         }
     }
 
@@ -2064,5 +2139,103 @@ mod tests {
             std::fs::remove_dir_all(&source_dir).ok();
             std::fs::remove_dir_all(&target_dir).ok();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // GitHub issue #282: `<メモ名>.md.bak` が改名/タブ間移動に追従する
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn carry_memo_bak_renames_the_backup_with_the_memo() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(dir.join("メモ　一.md.bak"), b"old body").unwrap();
+        carry_memo_bak(&dir, "メモ　一", &dir, "メモ　二", &registry);
+        assert!(!dir.join("メモ　一.md.bak").exists());
+        assert_eq!(std::fs::read(dir.join("メモ　二.md.bak")).unwrap(), b"old body");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn memo_move_cross_tab_plain_to_plain_carries_bak_only_on_move() {
+        for copy in [false, true] {
+            let (source_dir, target_dir) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            t262_plain_source(&source_dir, &registry);
+            for name in ["日記　その1", "子メモ"] {
+                std::fs::write(source_dir.join(format!("{name}.md.bak")), format!("旧版 {name}")).unwrap();
+            }
+            assert!(matches!(t262_move(&source_dir, &target_dir, copy, &registry), AppResult::Ok(_)), "copy={copy}");
+            for name in ["日記　その1", "子メモ"] {
+                // 移動なら移動先へ運ばれ、コピーなら移動元にそのまま残り移動先には作らない
+                assert_eq!(source_dir.join(format!("{name}.md.bak")).exists(), copy, "copy={copy}");
+                assert_eq!(target_dir.join(format!("{name}.md.bak")).exists(), !copy, "copy={copy}");
+                if !copy {
+                    assert_eq!(std::fs::read_to_string(target_dir.join(format!("{name}.md.bak"))).unwrap(), format!("旧版 {name}"));
+                }
+            }
+            std::fs::remove_dir_all(&source_dir).ok();
+            std::fs::remove_dir_all(&target_dir).ok();
+        }
+    }
+
+    #[test]
+    fn carry_memo_bak_never_overwrites_an_existing_destination_backup() {
+        let (source_dir, target_dir) = (tempdir(), tempdir());
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(source_dir.join("日記　その1.md.bak"), b"source").unwrap();
+        std::fs::write(target_dir.join("日記　その1.md.bak"), b"destination").unwrap();
+        carry_memo_bak(&source_dir, "日記　その1", &target_dir, "日記　その1", &registry);
+        assert!(!source_dir.join("日記　その1.md.bak").exists(), "source backup is removed instead");
+        assert_eq!(std::fs::read(target_dir.join("日記　その1.md.bak")).unwrap(), b"destination");
+        std::fs::remove_dir_all(&source_dir).ok();
+        std::fs::remove_dir_all(&target_dir).ok();
+    }
+
+    #[test]
+    fn carry_and_remove_memo_bak_are_no_ops_without_a_backup() {
+        let (source_dir, target_dir) = (tempdir(), tempdir());
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(source_dir.join("日記　その1.md"), b"body").unwrap();
+        carry_memo_bak(&source_dir, "日記　その1", &target_dir, "日記　その2", &registry);
+        remove_memo_bak(&source_dir, "日記　その1", &registry);
+        assert!(source_dir.join("日記　その1.md").exists());
+        assert_eq!(std::fs::read_dir(&target_dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(&source_dir).ok();
+        std::fs::remove_dir_all(&target_dir).ok();
+    }
+
+    #[test]
+    fn delete_memo_files_also_removes_backups_of_every_memo_in_the_subtree() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let names = vec!["日記　その1".to_string(), "子メモ".to_string()];
+        for name in &names {
+            std::fs::write(dir.join(format!("{name}.md")), b"body").unwrap();
+            std::fs::write(dir.join(format!("{name}.md.bak")), b"old").unwrap();
+        }
+        // 削除対象外のメモの `.bak` は残る
+        std::fs::write(dir.join("無関係.md.bak"), b"keep").unwrap();
+        assert!(matches!(delete_memo_files(&dir, &names, true, &registry), Ok(None)));
+        for name in &names {
+            assert!(!dir.join(format!("{name}.md")).exists());
+            assert!(!dir.join(format!("{name}.md.bak")).exists(), "{name}.md.bak");
+        }
+        assert!(dir.join("無関係.md.bak").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 全角など非 ASCII の大文字小文字だけの改名でも、移動先を「既存の別ファイル」と誤認して
+    /// 唯一の `.bak` を消さず、新名で残す。
+    #[test]
+    fn carry_memo_bak_keeps_the_backup_on_a_non_ascii_case_only_rename() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(dir.join("ｍｅｍｏ.md.bak"), b"old body").unwrap();
+        carry_memo_bak(&dir, "ｍｅｍｏ", &dir, "Ｍｅｍｏ", &registry);
+        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec!["Ｍｅｍｏ.md.bak".to_string()]);
+        assert_eq!(std::fs::read(dir.join("Ｍｅｍｏ.md.bak")).unwrap(), b"old body");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
