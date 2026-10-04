@@ -182,7 +182,19 @@ export interface UseTreeResult {
 /** `flushOpenMemoSave`: awaits the open memo's pending autosave (`EditorPane`'s `flushSaveNow`);
  * `false` = unsaved edits remain. Called before renaming / cross-tab-moving the open memo so its
  * pending edits aren't flushed against the old (already gone) name afterward (GitHub issue #267). */
-export function useTree(tabId: string | null, flushOpenMemoSave?: () => Promise<boolean>): UseTreeResult {
+/** `pendingSaveControl`: used by `deleteMemo` when the open memo (or an ancestor) is deleted —
+ * suspend the pending save before `memo_delete`, discard it on success, re-save on failure
+ * (GitHub issue #267 follow-up). */
+export interface PendingSaveControl {
+  suspend: () => void;
+  discard: () => void;
+}
+
+export function useTree(
+  tabId: string | null,
+  flushOpenMemoSave?: () => Promise<boolean>,
+  pendingSaveControl?: PendingSaveControl,
+): UseTreeResult {
   const [perTab, setPerTab] = useState<PerTabState>(makeEmptyPerTab);
   const [loading, setLoading] = useState(true);
   const [lastErrorCode, setLastErrorCode] = useState<ErrorCode | null>(null);
@@ -201,6 +213,18 @@ export function useTree(tabId: string | null, flushOpenMemoSave?: () => Promise<
   // #267: 開いているメモの改名/タブ間移動の直前に保留中の保存を確定させるための参照
   const flushOpenMemoSaveRef = useRef(flushOpenMemoSave);
   flushOpenMemoSaveRef.current = flushOpenMemoSave;
+  const pendingSaveControlRef = useRef(pendingSaveControl);
+  pendingSaveControlRef.current = pendingSaveControl;
+
+  /** `paths` (with their whole subtrees, as the backend moves/deletes them) contains `open`. */
+  const subtreesContain = useCallback(
+    (paths: string[], open: string) =>
+      paths.some((p) => {
+        const node = findNode(nodesRef.current, p);
+        return node ? subtreeNames(node).includes(open) : p === open;
+      }),
+    [],
+  );
   const openMemoNameRef = useRef<string | null>(openMemoName);
   openMemoNameRef.current = openMemoName;
   const nodesRef = useRef<TreeNode[]>(nodes);
@@ -489,7 +513,16 @@ export function useTree(tabId: string | null, flushOpenMemoSave?: () => Promise<
   const deleteMemo = useCallback(
     async (paths: string[], forceDirect = false): Promise<TreeMutationOutcome> => {
       if (!tabId) return { ok: false, code: "UNKNOWN", message: "no active tab" };
+      // #267 追補: 開いているメモ(またはその祖先)を削除する場合、保留中の保存は書かずに止める。
+      // 削除成功で破棄、失敗時は通常どおり保存し直す(編集内容を残す)
+      const open = openMemoNameRef.current;
+      const openAffected = open !== null && subtreesContain(paths, open);
+      if (openAffected) pendingSaveControlRef.current?.suspend();
       const result = await memoDelete(tabId, paths, forceDirect);
+      if (openAffected) {
+        if (result.ok) pendingSaveControlRef.current?.discard();
+        else void flushOpenMemoSaveRef.current?.();
+      }
       if (result.ok) {
         applySnapshot(result.value);
         applyIfCurrent((prev) => ({
@@ -502,7 +535,7 @@ export function useTree(tabId: string | null, flushOpenMemoSave?: () => Promise<
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
     },
-    [tabId, applySnapshot, applyIfCurrent],
+    [tabId, applySnapshot, applyIfCurrent, subtreesContain],
   );
 
   const moveWithinTab = useCallback(
@@ -527,12 +560,7 @@ export function useTree(tabId: string | null, flushOpenMemoSave?: () => Promise<
       // #267: 開いているメモ(またはその祖先)を別タブへ移動する場合、移動前に保留中の保存を確定。
       // 失敗時は移動を中止。コピーは元ファイルが残るため対象外
       if (!copy) {
-        const movedNames = (open: string) =>
-          paths.some((p) => {
-            const node = findNode(nodesRef.current, p);
-            return node ? subtreeNames(node).includes(open) : p === open;
-          });
-        if (!(await flushIfOpenMemoAffected(movedNames))) {
+        if (!(await flushIfOpenMemoAffected((open) => subtreesContain(paths, open)))) {
           return { ok: false, code: "UNKNOWN", message: "pending save of the open memo failed" };
         }
       }
@@ -544,7 +572,7 @@ export function useTree(tabId: string | null, flushOpenMemoSave?: () => Promise<
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
     },
-    [tabId, applySnapshot],
+    [tabId, applySnapshot, flushIfOpenMemoAffected, subtreesContain],
   );
 
   const setExpanded = useCallback(
