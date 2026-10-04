@@ -5,102 +5,101 @@
 > `RESOLVED-ISSUES.md` / commits. Not a permanent part of the documentation set.
 >
 > **Verify against actual state before acting** (`git status`, `git log`, `git branch -a`,
-> `gh issue list`) — snapshot written 2026-10-04.
+> `gh issue list`) — snapshot written 2026-10-04 (afternoon).
 
 ## Index
 
 1. Where the project stands
-2. Next action: #262
-3. Other open issues
-4. Done in the previous session (2026-10-03 / 10-04)
-5. Lessons from the previous session
-6. Working conventions
-7. Repo-root clutter / leftover branches
+2. Next action
+3. Done in this session (2026-10-04)
+4. Decisions made this session
+5. Known stale text in other docs
+6. Lessons from this session
+7. Working conventions
+8. Repo-root clutter / leftover branches
 
 ## 1. Where the project stands
 
-- Branch `V1.2.0` at `b3ccaca` (+ this HANDOFF commit), local == origin, nothing in progress.
-- Image-folder series #264 (#271 → #272 → #276 → #273) is complete and merged into `V1.2.0` via the
-  integration branch `feature/locked-tab-image-folders` (PR #281). All five issues closed,
-  `RESOLVED-ISSUES.md` updated.
+- Branch `V1.2.0`, local == origin, nothing in progress.
+- **No open GitHub issues.**
 - Working tree: `src-tauri/Cargo.toml` shows modified — line endings only. Never commit it.
 
-## 2. Next action: #262
+## 2. Next action
 
-#262 — cross-tab move/copy doesn't carry the memo's image folder, so images break at the destination.
-Remaining item of the original series order (#264 → **#262** → locked-tab import).
+None queued. Ask the user what to do next. Do not pick up anything Claude itself deferred in an
+earlier doc/issue without the user asking (see §6).
 
-Decisions already recorded (on the issue / previous HANDOFF):
-- Locked-tab moves are IN scope (Q1).
-- Pre-#139 flat images carried only if cheap, else skipped (Q2).
-
-Must build on the now-final layout:
-- Plain tab: `<memo_name>/NNN.ext`. Locked tab (session): `<random16hex>/NNN.ext`, memo→folder map
-  in encrypted `LockPayload::image_folders` (`commands/tab_lock.rs`).
-- Cross-tab move out of a locked tab already drops the source map entry (#271 fix in
-  `cleanup_session_move_source`) but does NOT move the folder — #262 must.
-- Four combinations (plain/locked × plain/locked) each need folder rename + link rewrite
-  (`util/image_link_rewrite.rs`), #263 path guard, collision handling at destination.
-
-Flow: `fix/<slug>` from `V1.2.0` → developer-lite → reviewer-lite (static) → release build → user
-manual test → ask `/security-review` (touches tab-lock + paths; recommend yes) → PR → local merge
-after user OK.
-
-After #262: locked-tab `.md` import (deferred part of #265).
-
-## 3. Other open issues
-
-| Issue | Content |
-|---|---|
-| #274 | Toolbar image insert fails in an unlock session: OS file dialog takes focus → focus-loss auto-relock. User decision: add an exception for the app's own file picker only; D&D from Explorer stays as-is (security); clipboard paste works. |
-| #279 | Split view: editor shorter than rendered preview (big images) → editor hits its end, preview stops at the line-matched position. Proposed: blend to preview end over the editor's last viewport. One-directional sync stays. |
-| #266 | Memo names with spaces produce `![](新 メモ/001.png)` (needs `<...>`); paste and #261 rewrite affected. Full-width space works. |
-| #267 | Renaming the open memo with a pending autosave loses unsaved edits (flush before rename). |
-
-## 4. Done in the previous session (2026-10-03 / 10-04)
+## 3. Done in this session (2026-10-04)
 
 | Issue | PR | What |
 |---|---|---|
-| #271 | #275 | Locked-tab paste → per-memo random folder; map in encrypted payload |
-| #272 | #277 | Lock converts `<memo>/` → random + link rewrite; rename failure aborts + rolls back |
-| #276 | #278 | Lock removes plaintext `.bak` residue (found during #272 manual test; pre-existing since tab-lock) |
-| #273 | #280 | Permanent unlock restores `<memo>/`; collision / in-use → keep random + warning toast |
-| #264 | #281 | Integration branch merged into `V1.2.0` |
+| #262 | #283 | Cross-tab move/copy carries the memo's image folder (plain/locked × plain/locked) |
+| #267 | #285 | Open memo rename / cross-tab move flush pending autosave first; delete discards it (no stale NOT_FOUND banner) |
+| #282 | #287 | `.md.bak` follows rename and plain→plain move; deleted on locked-involved moves and on memo delete |
+| #266 | #288 | Spaced memo names → `![](<新 メモ/001.png>)`; legacy broken links auto-repaired (rewrite ops + on open) when the file exists |
+| #274 | #289 | Unlock session: app's own image file picker doesn't trigger focus-loss relock (2-min cap, fail closed) — spec §11 |
+| #279 | #290 | Split view: preview blends to its end over the editor's last viewport — spec §12 |
+| #291 | #292 | Split view preview was one line ahead (1- vs 0-indexed); editor top → preview 0 |
+| #286 | #293 | No stale 「ロックされたタブには操作できません」 banner when dropping onto a locked tab |
+| #284 | — | Closed **not planned** (see §4) |
 
-Crash-recovery order for all three tab-lock paths: `docs/plans/tab-lock/CRASH-RECOVERY.md` §7–§9.
+All entries are in `RESOLVED-ISSUES.md`.
 
-## 5. Lessons from the previous session
+## 4. Decisions made this session
 
-- Manual-test instructions must state the precondition precisely. Two #273 runs were invalid:
-  a collision folder created before lock (got adopted as the memo's image folder), and `cmd`
-  opened in the tab folder instead of inside the random folder. Paint does NOT hold a file lock;
-  use `cmd` with cwd inside the target folder (Explorer address bar → `cmd`).
-- Test tabs reused across builds accumulate mixed states (e.g. a pre-#273 permanent unlock drops the
-  map, leaving random folders that later can't be restored). Tell the user to use a fresh tab per
-  feature test.
-- User sends screen recordings (`unknown_*.mp4` at repo root). No ffmpeg; extract frames with Python
-  `cv2` (OpenCV installed) into the scratchpad, ~8 frames, 900–1000 px wide.
-- Toasts show bottom-right for 5 s — easy to miss if Explorer overlaps.
+- **#284 not planned:** locked-tab session relocks on app focus loss (security), so Explorer D&D
+  import into a locked tab is unreachable by design. Workaround: import into a plain tab (#265
+  carries images), then move into the locked tab (#262 carries the folder).
+- **#262:** pre-#139 flat-root images are NOT carried on cross-tab move.
+- **#282:** carry `.bak` (not delete) on plain rename/move; locked-involved moves delete it.
+- **#266:** legacy repair in both places (rewrite ops and on open); edit-locked memos untouched on open.
+- **#274:** exception only for the toolbar image picker; PDF save / folder picker / Explorer D&D
+  still relock. 2-minute cap per picker opening.
+- Ctrl+Shift+P pane toggle is session-local by design (reverts on memo switch); per-memo preview
+  lock (#149) persists.
 
-## 6. Working conventions
+## 5. Known stale text in other docs
+
+- `RESOLVED-ISSUES.md` #265 entry ends with "ロック中タブへの取り込みは#264の保存方式確定後に対応" —
+  superseded by #284 (not planned). Not yet edited (user hasn't asked).
+
+## 6. Lessons from this session
+
+- "次へ" after listing several candidates is ambiguous — ask which. Claude-recorded deferrals are
+  not user requests; before implementing one, confirm the user wants it AND that the UI can reach
+  it (#284 was fully built before discovering it was unreachable).
+- Write manual-test pass criteria only after checking real OS behaviour: closing a native file
+  dialog returns focus to the owner window, so "cancel → expect relock" (#274 step 3) was wrong.
+- When the user tests by hand, a CDP monitor script (`scratchpad/mon274.mjs` pattern: wrap
+  `__TAURI_INTERNALS__.invoke`, log focus/blur, picker open/change/cancel, UI state via
+  `console.log('[MON]')` → file) gives exact event order without asking the user to describe it.
+- The app is single-instance: a running copy (user's own, possibly in the tray) blocks test
+  launches. Don't kill a process Claude didn't start — ask the user.
+- Cross-tab tree drag is app-internal (document mouse events), so CDP drag tests are faithful;
+  only Explorer↔app D&D and native dialogs need the user's hands.
+- Shrunk test windows let the floating toolbar overlap click targets — check `elementFromPoint`
+  before scripted clicks (a test once typed `~~~~` into a fixture memo this way).
+- User instruction: Claude may run live tests itself at human-realistic speed; ask before testing
+  abnormal/racy timings.
+
+## 7. Working conventions
 
 - Every user-visible message in Japanese.
-- Heavy live verification → hand the user a manual checklist + timestamped release exe
-  (`TabTreeNoteMD_YYYYMMDD-HHMMSS.exe` at repo root; delete msi/nsis installers).
-- reviewer-lite: static review only (no CDP); user does live tests.
-- `/security-review` check-in before PR on anything touching paths/deletion/tab-lock; run it as a
-  subagent scoped to `git diff <base>...<branch>` (the skill's default diff is vs `V1.0.0`, ~1 MB).
-- `gh pr merge` and branch deletion are blocked by the auto-mode classifier; user chose "merge via
-  local git" (`git merge --no-ff` + push) — PR then shows MERGED automatically. A merge into
-  `V1.2.0` also hit the classifier once; it went through after the user re-confirmed.
-- `gh issue create` / `gh pr create` with long bodies: write body to a scratchpad file and use
-  `--body-file` (PowerShell quoting breaks inline bodies).
+- Flow per issue: `fix/<slug>` from `V1.2.0` → developer-lite → reviewer-lite (static) → release
+  build → live test (Claude via isolated scratchpad copy, or user for native dialogs/Explorer D&D)
+  → ask `/security-review` if paths/deletion/tab-lock → ask before PR/merge → PR → local
+  `git merge --no-ff` + push → close issue → `RESOLVED-ISSUES.md` entry → delete branch (local +
+  origin) once the user approves.
+- Live tests: copy the timestamped exe into `scratchpad/<name>/` and run it there (its portable
+  `data/` stays isolated); confirm empty tab list before mutating; report every created/deleted file.
+- `/security-review`: run as a subagent scoped to `git diff V1.2.0...<branch>`.
+- `gh issue create` / `gh pr create`: write the body to a scratchpad file and use `--body-file`.
+- Commit messages: no file-path prefix, Japanese body, one file per commit.
 
-## 7. Repo-root clutter / leftover branches
+## 8. Repo-root clutter / leftover branches
 
-- Untracked timestamped exes, `unknown_*.mp4` recordings, and `data/` (portable data; test tabs
-  `111`, `456`, `457`, `888`, `999`). **User manages cleanup — don't offer to delete.**
-- Merged branches not deleted (deletion blocked by classifier; user may delete manually):
-  `feature/locked-tab-image-folders`, `fix/locked-tab-per-memo-image-folder`,
-  `fix/lock-convert-image-folders`, `fix/lock-plaintext-bak-cleanup`,
-  `fix/unlock-restore-image-folders` (local + origin).
+- Untracked timestamped exes and `data/` (portable data). **User manages cleanup — don't offer to delete.**
+- This session's branches are all deleted. Older merged branches remain locally/on origin
+  (e.g. `feature/locked-tab-image-folders`, `fix/lock-convert-image-folders`,
+  `fix/lock-plaintext-bak-cleanup`, `fix/locked-tab-per-memo-image-folder`,
+  `fix/unlock-restore-image-folders`, many older `fix/*`) — user may delete manually.
