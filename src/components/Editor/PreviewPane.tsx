@@ -24,7 +24,7 @@ import type { EditorView } from "@codemirror/view";
 import { renderMarkdownToHtml } from "../../editor/preview/previewRenderer";
 import { attachPreviewInteractions } from "../../editor/preview/previewInteractions";
 import type { PreviewInteractionsConfig } from "../../editor/preview/previewInteractions";
-import { scrollPreviewToLine } from "../../editor/preview/scrollSync";
+import { syncPreviewToEditorScroll } from "../../editor/preview/scrollSync";
 import { getOrLoadImage } from "../../editor/imageLoader";
 import { computeTopVisibleLine } from "../../editor/textCommands";
 import type { AppSettings, ExternalLinkKind, PaneMode } from "../../shared/models";
@@ -255,7 +255,11 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
       raf = window.requestAnimationFrame(() => {
         raf = 0;
         const container = containerRef.current;
-        if (container) scrollPreviewToLine(container, computeTopVisibleLine(view));
+        const scrollContainer = scrollContainerRef.current;
+        // エディタ末尾の1ビューポート分ではプレビュー末尾へ補間 (GitHub issue #279)
+        if (container && scrollContainer) {
+          syncPreviewToEditorScroll(container, scrollContainer, computeTopVisibleLine(view), view.scrollDOM);
+        }
       });
     };
     view.scrollDOM.addEventListener("scroll", handler);
