@@ -6,18 +6,30 @@
 // `modalActivityGate.ts` と同じくモジュールレベルのカウンタ。加えて、例外が終わった瞬間に
 // ウィンドウが非フォーカスなら抑止した再ロックを適用できるよう、終了通知の購読口を持つ。
 // imagePaste.ts を再ロックフックの内部に結合させないための仕組み。
+//
+// 例外は 1 回の表示につき最長 2 分 (`FILE_PICKER_MAX_MS`)。ダイアログを開いたまま離席した場合に
+// 例外が残り続けないよう、上限到達で終了扱いにする(終了通知経由で、非フォーカスなら再ロック)。
 let count = 0;
 const exitListeners = new Set<() => void>();
 
-/** `input.click()` の直前に呼ぶ。 */
-export function enterFilePicker(): void {
-  count += 1;
-}
+/** 例外の時間上限(2 分)。 */
+const FILE_PICKER_MAX_MS = 2 * 60 * 1000;
 
-/** ダイアログ終了時(change / cancel / フォーカス復帰のいずれか)に 1 回だけ呼ぶ。`enterFilePicker` と 1:1。 */
-export function exitFilePicker(): void {
-  count = Math.max(0, count - 1);
-  if (count === 0) for (const listener of exitListeners) listener();
+/** `input.click()` の直前に呼ぶ。戻り値はその表示専用の終了関数(冪等)。ダイアログ終了時
+ * (change / cancel / フォーカス復帰)に呼ぶ。上限時間到達時は自動で呼ばれ、その後の呼び出しは
+ * 何もしない — 新しい別の表示のカウントには影響しない。 */
+export function enterFilePicker(): () => void {
+  count += 1;
+  let done = false;
+  const exit = () => {
+    if (done) return;
+    done = true;
+    window.clearTimeout(timer);
+    count = Math.max(0, count - 1);
+    if (count === 0) for (const listener of exitListeners) listener();
+  };
+  const timer = window.setTimeout(exit, FILE_PICKER_MAX_MS);
+  return exit;
 }
 
 /** 例外が終わった(カウンタが 0 になった)ときに呼ばれるリスナーを登録。戻り値で解除。 */
