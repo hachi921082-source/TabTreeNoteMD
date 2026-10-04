@@ -19,9 +19,24 @@
 //! Limitation: processing is per line, so an image whose `![alt](dest)` syntax is split across
 //! lines, or an inline code span spanning lines, is not recognised (the app itself always emits
 //! single-line `![](relativePath)` markup — `editor/imagePaste.ts`).
+//!
+//! Legacy repair (GitHub issue #266): links written before the angle-bracket fix as a bare
+//! destination containing a half-width space (`![](新 メモ/001.png)`, not a link per CommonMark)
+//! are also recognised, but only when the caller confirms the referenced file exists; they are
+//! then rewritten in bracketed form. Indented code blocks are not excluded (same as before).
+
+use std::path::{Component, Path};
+
+use crate::fs::path_safety::{is_link_or_reparse_point, resolve_relative_within_base, AbsolutePathPolicy};
 
 /// Returns the rewritten body, or `None` when no image link needed rewriting.
-pub fn rewrite_image_links_for_rename(body: &str, old_name: &str, new_name: &str) -> Option<String> {
+///
+/// `legacy_exists`: GitHub issue #266 — called for a legacy broken link (`![](<old> 名/001.png)`
+/// style bare destination with a half-width space, see `rewrite_image_destinations_with_legacy`)
+/// whose path starts with `<old>/`, with the decoded remainder after that prefix (e.g. `001.png`).
+/// Only when it returns `true` (the image file really exists in the memo's image folder at this
+/// moment) is the link rewritten (to `<new>/…`, bracketed when needed).
+pub fn rewrite_image_links_for_rename<L: FnMut(&str) -> bool>(body: &str, old_name: &str, new_name: &str, mut legacy_exists: L) -> Option<String> {
     if old_name.is_empty() || old_name == new_name {
         return None;
     }
@@ -29,11 +44,45 @@ pub fn rewrite_image_links_for_rename(body: &str, old_name: &str, new_name: &str
     let new_raw = format!("{new_name}/");
     let new_encoded = format!("{}/", percent_encode_segment(new_name));
 
-    rewrite_image_destinations(body, |dest| {
-        let (prefix_len, encoded) = match_prefix(dest, &old_prefix)?;
-        let new_prefix = if encoded { &new_encoded } else { &new_raw };
-        Some(format!("{new_prefix}{}", &dest[prefix_len..]))
-    })
+    rewrite_image_destinations_with_legacy(
+        body,
+        |dest| {
+            let (prefix_len, encoded) = match_prefix(dest, &old_prefix)?;
+            let new_prefix = if encoded { &new_encoded } else { &new_raw };
+            Some(format!("{new_prefix}{}", &dest[prefix_len..]))
+        },
+        |path| {
+            // 旧フォルダ配下を指すレガシーリンクのみ、実在確認できたら対象にする
+            let Some((prefix_len, _)) = match_prefix(path, &old_prefix) else { return false };
+            decode_destination(&path[prefix_len..]).is_some_and(|rest| !rest.is_empty() && legacy_exists(&rest))
+        },
+    )
+}
+
+/// `base`(タブフォルダ等)からの相対パス `rel` が、リンク/リパースポイントを一切経由せずに到達できる
+/// 通常ファイルか(GitHub issue #266 のレガシーリンク修復の実在確認)。絶対パス・`..`・ルート付きは
+/// `resolve_relative_within_base`(#263 と同じガード)で拒否する。`base` 自体は検査しない。
+pub fn regular_file_without_links(base: &Path, rel: &str) -> bool {
+    if resolve_relative_within_base(rel, Some(base), AbsolutePathPolicy::Reject).is_err() {
+        return false;
+    }
+    let names: Vec<_> = Path::new(rel).components().filter(|c| !matches!(c, Component::CurDir)).collect();
+    let mut cur = base.to_path_buf();
+    for (idx, comp) in names.iter().enumerate() {
+        let Component::Normal(name) = comp else { return false };
+        cur.push(name);
+        let Ok(meta) = std::fs::symlink_metadata(&cur) else { return false };
+        if is_link_or_reparse_point(&meta) {
+            return false;
+        }
+        if idx + 1 == names.len() {
+            return meta.is_file();
+        }
+        if !meta.is_dir() {
+            return false;
+        }
+    }
+    false
 }
 
 /// 本文中の画像リンク `![alt](dest)` / `![alt](<dest>)` のリンク先を `replace` で置換する
@@ -42,7 +91,22 @@ pub fn rewrite_image_links_for_rename(body: &str, old_name: &str, new_name: &str
 /// 未処理のまま)を渡し、`Some(新リンク先)` ならその範囲だけを置き換える。新リンク先は山括弧なしで
 /// 返す: 元が山括弧形ならそのまま括弧内に、元が裸形で空白等を含むなら `<...>` で囲んで書く
 /// (GitHub issue #266)。フェンス・インラインコード内は対象外。置換が1件も無ければ `None`。
-pub fn rewrite_image_destinations<F: FnMut(&str) -> Option<String>>(body: &str, mut replace: F) -> Option<String> {
+/// レガシーリンク(#266 以前の空白入り裸形)は扱わない — `rewrite_image_destinations_with_legacy` 参照。
+pub fn rewrite_image_destinations<F: FnMut(&str) -> Option<String>>(body: &str, replace: F) -> Option<String> {
+    rewrite_image_destinations_with_legacy(body, replace, |_| false)
+}
+
+/// `rewrite_image_destinations` に加え、#266 以前に書かれた「半角スペース入りの裸形リンク先」
+/// (`![](新 メモ/001.png)` — CommonMark ではリンクにならない)も認識する(GitHub issue #266)。
+/// 同じ行の `![alt](` から `)` までを、リンク先パス(+ 任意の `"…"` / `'…'` / `(…)` タイトル)と
+/// みなし、半角スペースを含むパス候補を `legacy_exists` に渡す(生テキスト、未デコード)。
+/// 最初に `true` となった候補を採用し、`replace` の結果で置き換える(必要なら山括弧形)。
+/// どの候補も実在しなければ触らない。
+pub fn rewrite_image_destinations_with_legacy<F, L>(body: &str, mut replace: F, mut legacy_exists: L) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+    L: FnMut(&str) -> bool,
+{
     let mut out = String::with_capacity(body.len() + 16);
     let mut changed = false;
     // フェンスの状態: (フェンス文字, 開始フェンスの長さ)
@@ -68,7 +132,7 @@ pub fn rewrite_image_destinations<F: FnMut(&str) -> Option<String>>(body: &str, 
             out.push_str(line);
             continue;
         }
-        if rewrite_line(line, &mut replace, &mut out) {
+        if rewrite_line(line, &mut replace, &mut legacy_exists, &mut out) {
             changed = true;
         }
     }
@@ -104,7 +168,11 @@ fn is_closing_fence(line: &str, ch: char) -> bool {
 }
 
 /// 1行分を走査し、インラインコード外の画像リンク先を書き換えて `out` へ追記する。
-fn rewrite_line<F: FnMut(&str) -> Option<String>>(line: &str, replace: &mut F, out: &mut String) -> bool {
+fn rewrite_line<F, L>(line: &str, replace: &mut F, legacy_exists: &mut L, out: &mut String) -> bool
+where
+    F: FnMut(&str) -> Option<String>,
+    L: FnMut(&str) -> bool,
+{
     let bytes = line.as_bytes();
     let mut changed = false;
     let mut i = 0;
@@ -119,11 +187,35 @@ fn rewrite_line<F: FnMut(&str) -> Option<String>>(line: &str, replace: &mut F, o
                 i = find_closing_backticks(bytes, i + run, run).unwrap_or(i + run);
             }
             b'!' if bytes.get(i + 1) == Some(&b'[') => {
-                let Some(dest) = parse_image_destination(bytes, i + 1) else {
+                let Some(parsed) = parse_image_destination(bytes, i + 1) else {
                     i += 1;
                     continue;
                 };
-                let (range, bracketed) = dest;
+                if !parsed.valid {
+                    // #266: 空白入り裸形のレガシーリンク。実在するパス候補が見つかれば修復する
+                    let found = legacy_candidates(line, parsed.dest.start).into_iter().find(|(range, _)| legacy_exists(&line[range.clone()]));
+                    if let Some((range, close)) = found {
+                        if let Some(new_dest) = replace(&line[range.clone()]) {
+                            out.push_str(&line[copied..range.start]);
+                            if needs_angle_brackets(&new_dest) {
+                                out.push('<');
+                                out.push_str(&new_dest);
+                                out.push('>');
+                            } else {
+                                out.push_str(&new_dest);
+                            }
+                            copied = range.end;
+                            changed = true;
+                        }
+                        i = close + 1;
+                        continue;
+                    }
+                    if parsed.dest.is_empty() {
+                        i += 1;
+                        continue;
+                    }
+                }
+                let ParsedImage { dest: range, bracketed, .. } = parsed;
                 if let Some(new_dest) = replace(&line[range.start..range.end]) {
                     out.push_str(&line[copied..range.start]);
                     if !bracketed && needs_angle_brackets(&new_dest) {
@@ -189,8 +281,8 @@ pub fn needs_angle_brackets(dest: &str) -> bool {
     depth != 0
 }
 
-/// `[` 位置から `[alt](dest ...)` を解析し、(リンク先の範囲(山括弧の内側), 山括弧形か) を返す。
-fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<(std::ops::Range<usize>, bool)> {
+/// `[` 位置から `[alt](dest ...)` を解析する。
+fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<ParsedImage> {
     // alt テキストの対応する `]` を探す(ネスト・バックスラッシュエスケープ対応)
     let mut depth = 0usize;
     let mut i = open_bracket;
@@ -220,7 +312,13 @@ fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<(std::op
         let mut j = start;
         loop {
             match *bytes.get(j)? {
-                b'>' => return Some((start..j, true)),
+                b'>' => {
+                    return Some(ParsedImage {
+                        dest: start..j,
+                        bracketed: true,
+                        valid: true,
+                    })
+                }
                 b'\n' | b'<' => return None,
                 b'\\' => j += 2,
                 _ => j += 1,
@@ -245,7 +343,87 @@ fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<(std::op
         j += 1;
     }
     let end = j.min(bytes.len());
-    (end > start).then_some((start..end, false))
+    Some(ParsedImage {
+        dest: start..end,
+        bracketed: false,
+        valid: end > start && valid_link_tail(bytes, end),
+    })
+}
+
+/// 裸形リンク先の直後が CommonMark のリンク終端(空白 + 任意のタイトル + `)`)になっているか。
+/// なっていなければ CommonMark 上は画像リンクではない(#266 のレガシーリンク候補)。
+fn valid_link_tail(bytes: &[u8], mut i: usize) -> bool {
+    let skip_ws = |mut i: usize| {
+        while matches!(bytes.get(i), Some(b' ' | b'\t')) {
+            i += 1;
+        }
+        i
+    };
+    i = skip_ws(i);
+    let close = match bytes.get(i) {
+        Some(b')') => return true,
+        Some(b'"') => b'"',
+        Some(b'\'') => b'\'',
+        Some(b'(') => b')',
+        _ => return false,
+    };
+    let open = bytes[i];
+    i += 1;
+    loop {
+        match bytes.get(i) {
+            None | Some(b'\n') => return false,
+            Some(b'\\') => i += 2,
+            // `(…)` タイトル内の未エスケープ `(` は不可
+            Some(&c) if open == b'(' && c == b'(' => return false,
+            Some(&c) if c == close => break,
+            _ => i += 1,
+        }
+    }
+    bytes.get(skip_ws(i + 1)) == Some(&b')')
+}
+
+/// レガシーリンク(#266)のパス候補を返す: `start` 以降の各 `)` までの内側について、全体をパスと
+/// みなす候補と、末尾の `"…"` / `'…'` / `(…)` をタイトルとして除いた候補(右から順)。
+/// (パス範囲, その `)` の位置) の列。半角スペースを含まないパス・`<` で始まるパスは除外。
+fn legacy_candidates(line: &str, start: usize) -> Vec<(std::ops::Range<usize>, usize)> {
+    let bytes = line.as_bytes();
+    let mut out = Vec::new();
+    for k in start..bytes.len() {
+        if bytes[k] != b')' || (k > start && bytes[k - 1] == b'\\') {
+            continue;
+        }
+        let inner = line[start..k].trim_end_matches([' ', '\t']);
+        let mut push = |len: usize| {
+            let path = line[start..start + len].trim_end_matches([' ', '\t']);
+            if !path.is_empty() && path.contains(' ') && !path.starts_with('<') && !path.contains('\n') {
+                out.push((start..start + path.len(), k));
+            }
+        };
+        push(inner.len());
+        let ib = inner.as_bytes();
+        let opener = match ib.last() {
+            Some(b'"') => Some(b'"'),
+            Some(b'\'') => Some(b'\''),
+            Some(b')') => Some(b'('),
+            _ => None,
+        };
+        if let Some(opener) = opener {
+            for q in (1..ib.len().saturating_sub(1)).rev() {
+                if ib[q] == opener && matches!(ib[q - 1], b' ' | b'\t') {
+                    push(q);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 画像リンクの解析結果。`dest` はリンク先の範囲(山括弧形なら括弧の内側)、`valid` は CommonMark
+/// 上も画像リンクとして成立しているか(裸形の場合のみ偽になりうる)。
+struct ParsedImage {
+    dest: std::ops::Range<usize>,
+    bracketed: bool,
+    valid: bool,
 }
 
 /// `dest` が `old_prefix` で始まるか判定する。生の形・パーセントエンコード形(大小文字不問、
@@ -339,10 +517,15 @@ fn percent_encode_segment(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// レガシーリンクの実在確認なし(常に偽)の改名書き換え
+    fn rename_no_legacy(body: &str, old: &str, new: &str) -> Option<String> {
+        rewrite_image_links_for_rename(body, old, new, |_| false)
+    }
+
     #[test]
     fn rewrites_raw_japanese_image_link() {
         let body = "前文\n![](日記/001.png)\n![図](<日記/002.png>)\n";
-        let got = rewrite_image_links_for_rename(body, "日記", "日記2").unwrap();
+        let got = rename_no_legacy(body, "日記", "日記2").unwrap();
         assert_eq!(got, "前文\n![](日記2/001.png)\n![図](<日記2/002.png>)\n");
     }
 
@@ -350,7 +533,7 @@ mod tests {
     fn rewrites_percent_encoded_link_keeping_encoded_form() {
         // 日記 = E6 97 A5 / E8 A8 98 (小文字16進も受け付ける)
         let body = "![](%E6%97%A5%e8%a8%98/001.png)\r\n";
-        let got = rewrite_image_links_for_rename(body, "日記", "日記2").unwrap();
+        let got = rename_no_legacy(body, "日記", "日記2").unwrap();
         assert_eq!(got, "![](%E6%97%A5%E8%A8%982/001.png)\r\n");
     }
 
@@ -358,13 +541,13 @@ mod tests {
     fn leaves_non_matching_and_normal_links_intact() {
         // 別フォルダ・前方一致だけの名前(日記帳)・通常リンクは対象外
         let body = "![](日記帳/001.png) ![](他/日記/001.png) [リンク](日記/001.png)\n";
-        assert_eq!(rewrite_image_links_for_rename(body, "日記", "日記2"), None);
+        assert_eq!(rename_no_legacy(body, "日記", "日記2"), None);
     }
 
     #[test]
     fn leaves_plain_text_and_code_intact() {
         let body = "日記/001.png はテキスト\n`![](日記/001.png)`\n```\n![](日記/001.png)\n```\n![](日記/003.png)\n";
-        let got = rewrite_image_links_for_rename(body, "日記", "日記2").unwrap();
+        let got = rename_no_legacy(body, "日記", "日記2").unwrap();
         assert_eq!(
             got,
             "日記/001.png はテキスト\n`![](日記/001.png)`\n```\n![](日記/001.png)\n```\n![](日記2/003.png)\n"
@@ -382,7 +565,7 @@ mod tests {
     #[test]
     fn handles_parentheses_in_name_and_multiple_links_per_line() {
         let body = "![a](メモ(1)/001.png \"題\") と ![b](メモ(1)/002.png)";
-        let got = rewrite_image_links_for_rename(body, "メモ(1)", "新 メモ").unwrap();
+        let got = rename_no_legacy(body, "メモ(1)", "新 メモ").unwrap();
         // 半角スペースを含む新名は山括弧形で書く(GitHub issue #266)
         assert_eq!(got, "![a](<新 メモ/001.png> \"題\") と ![b](<新 メモ/002.png>)");
     }
@@ -390,25 +573,25 @@ mod tests {
     #[test]
     fn spaced_name_uses_angle_brackets_and_normal_names_stay_bare() {
         let body = "![](日記/001.png)\n";
-        assert_eq!(rewrite_image_links_for_rename(body, "日記", "新 メモ").unwrap(), "![](<新 メモ/001.png>)\n");
-        assert_eq!(rewrite_image_links_for_rename(body, "日記", "日記2").unwrap(), "![](日記2/001.png)\n");
+        assert_eq!(rename_no_legacy(body, "日記", "新 メモ").unwrap(), "![](<新 メモ/001.png>)\n");
+        assert_eq!(rename_no_legacy(body, "日記", "日記2").unwrap(), "![](日記2/001.png)\n");
         // 全角スペースは裸形のままで有効
-        assert_eq!(rewrite_image_links_for_rename(body, "日記", "新\u{3000}メモ").unwrap(), "![](新\u{3000}メモ/001.png)\n");
+        assert_eq!(rename_no_legacy(body, "日記", "新\u{3000}メモ").unwrap(), "![](新\u{3000}メモ/001.png)\n");
         // 対応の取れない丸括弧も山括弧形
-        assert_eq!(rewrite_image_links_for_rename(body, "日記", "メモ(").unwrap(), "![](<メモ(/001.png>)\n");
+        assert_eq!(rename_no_legacy(body, "日記", "メモ(").unwrap(), "![](<メモ(/001.png>)\n");
     }
 
     #[test]
     fn matches_bracketed_spaced_links_and_keeps_bracket_form() {
         // 既に山括弧形で書かれた空白入りリンクも改名・ロック変換の対象になる
         let body = "![](<新 メモ/001.png>) ![x](<新 メモ/002.png> \"題\") ![](新 メモ/003.png)\n";
-        let got = rewrite_image_links_for_rename(body, "新 メモ", "a1b2c3").unwrap();
+        let got = rename_no_legacy(body, "新 メモ", "a1b2c3").unwrap();
         // 裸形の空白入りリンク(既存の壊れたリンク)は CommonMark 上リンクでないため対象外
         assert_eq!(got, "![](<a1b2c3/001.png>) ![x](<a1b2c3/002.png> \"題\") ![](新 メモ/003.png)\n");
         // 逆方向(ランダム名→空白入りメモ名)は山括弧形で戻る
-        let back = rewrite_image_links_for_rename("![](a1b2c3/001.png)\n", "a1b2c3", "新 メモ").unwrap();
+        let back = rename_no_legacy("![](a1b2c3/001.png)\n", "a1b2c3", "新 メモ").unwrap();
         assert_eq!(back, "![](<新 メモ/001.png>)\n");
-        assert_eq!(rewrite_image_links_for_rename(&back, "新 メモ", "a1b2c3").unwrap(), "![](<a1b2c3/001.png>)\n");
+        assert_eq!(rename_no_legacy(&back, "新 メモ", "a1b2c3").unwrap(), "![](<a1b2c3/001.png>)\n");
     }
 
     #[test]
@@ -420,5 +603,56 @@ mod tests {
         assert!(needs_angle_brackets("新 メモ/001.png"));
         assert!(needs_angle_brackets("a\tb/001.png"));
         assert!(needs_angle_brackets("メモ)/001.png"));
+    }
+
+    fn tempdir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ttn-link-rewrite-test-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn legacy_spaced_link_is_rewritten_with_brackets_when_file_exists() {
+        // 改名後の画像フォルダ(新名側)に実在するファイルで確認する
+        let tab = tempdir();
+        std::fs::create_dir_all(tab.join("別 メモ")).unwrap();
+        std::fs::write(tab.join("別 メモ").join("001.png"), b"png").unwrap();
+        let body = "前文 ![](新 メモ/001.png) 後文\n";
+        let got = rewrite_image_links_for_rename(body, "新 メモ", "別 メモ", |rest| regular_file_without_links(&tab, &format!("別 メモ/{rest}"))).unwrap();
+        assert_eq!(got, "前文 ![](<別 メモ/001.png>) 後文\n");
+        // 新名に空白が無ければ裸形
+        std::fs::create_dir_all(tab.join("日記")).unwrap();
+        std::fs::write(tab.join("日記").join("001.png"), b"png").unwrap();
+        let got = rewrite_image_links_for_rename(body, "新 メモ", "日記", |rest| regular_file_without_links(&tab, &format!("日記/{rest}"))).unwrap();
+        assert_eq!(got, "前文 ![](日記/001.png) 後文\n");
+        std::fs::remove_dir_all(&tab).ok();
+    }
+
+    #[test]
+    fn legacy_link_is_left_untouched_when_file_missing() {
+        let tab = tempdir();
+        let body = "![](新 メモ/001.png)\n";
+        assert_eq!(rewrite_image_links_for_rename(body, "新 メモ", "別 メモ", |rest| regular_file_without_links(&tab, &format!("別 メモ/{rest}"))), None);
+        // `..` を含むパスは実在確認の時点で拒否
+        assert!(!regular_file_without_links(&tab, "../x.png"));
+        std::fs::remove_dir_all(&tab).ok();
+    }
+
+    #[test]
+    fn legacy_link_with_title_and_parens_picks_resolving_split() {
+        let exists = |rest: &str| rest == "001 (1).png";
+        let body = "![a](新 メモ/001 (1).png \"題 名\") ![b](新 メモ/001 (1).png (題))\n";
+        let got = rewrite_image_links_for_rename(body, "新 メモ", "a1b2c3", exists).unwrap();
+        assert_eq!(got, "![a](<a1b2c3/001 (1).png> \"題 名\") ![b](<a1b2c3/001 (1).png> (題))\n");
+        // ファイル名が `001 (1).png "x"` のような候補でも、実在する分割だけを採用する
+        let only_title_split = |rest: &str| rest == "001.png";
+        let got = rewrite_image_links_for_rename("![](新 メモ/001.png 'x y')\n", "新 メモ", "日記", only_title_split).unwrap();
+        assert_eq!(got, "![](日記/001.png 'x y')\n");
+    }
+
+    #[test]
+    fn legacy_link_in_code_is_untouched() {
+        let body = "`![](新 メモ/001.png)`\n```\n![](新 メモ/001.png)\n```\n";
+        assert_eq!(rewrite_image_links_for_rename(body, "新 メモ", "日記", |_| true), None);
     }
 }
