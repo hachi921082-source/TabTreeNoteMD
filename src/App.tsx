@@ -27,7 +27,10 @@ const DEFAULT_TREE_WIDTH = 260;
 
 function App() {
   const tabsState = useTabs();
-  const treeState = useTree(tabsState.activeTabId);
+  const editorRef = useRef<EditorPaneHandle>(null);
+  // #267: 開いているメモの改名/タブ間移動の前に保留中の保存を確定させる(エディタ未表示なら何もしない)
+  const flushOpenMemoSave = useCallback(async () => (await editorRef.current?.flushSaveNow()) ?? true, []);
+  const treeState = useTree(tabsState.activeTabId, flushOpenMemoSave);
   const tabView = useTabView(treeState);
   const settingsState = useSettings();
   // Single app-wide notification queue (`state/useToast.ts`) — shared by `TreeView`'s folder-import
@@ -53,8 +56,6 @@ function App() {
   );
   useWindowGeometry(settingsState.settings, settingsState.patch);
   useAppearance(settingsState.settings);
-
-  const editorRef = useRef<EditorPaneHandle>(null);
 
   // `docs/plans/tab-lock/PLAN.md` §3 `tab_lock` step 2: "If any memo in this tab ... is
   // currently open with unsaved changes, the frontend must force a save-confirm (auto-save-and-
