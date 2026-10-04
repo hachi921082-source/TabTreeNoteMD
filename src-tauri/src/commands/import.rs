@@ -19,6 +19,7 @@ use crate::commands::tab_lock::{self, TabAccess};
 use crate::commands::tree::{contains_name, find_node, insert_node_at_end, load_and_reconcile, save_tab_meta, TreeSnapshot};
 use crate::fs::atomic_write::atomic_write;
 use crate::fs::retry::with_retry;
+use crate::fs::path_safety::is_link_or_reparse_point;
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::model::app_settings::EolPolicy;
 use crate::model::result::{AppResult, ErrorCode};
@@ -27,7 +28,7 @@ use crate::search::index::SearchIndex;
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::LockSessionStore;
 use crate::store::memo_file_service::{decode_memo_body, detect_eol, encode_for_save, normalize_to_lf, restore_eol, Eol};
-use crate::util::image_link_rewrite::{decode_destination, rewrite_image_destinations};
+use crate::util::image_link_rewrite::{decode_destination, rewrite_image_destinations_with_legacy};
 
 /// Return type of `import_file`: the tree snapshot (flattened, same wire fields as before) plus
 /// the number of relative image links whose source file was not found (GitHub issue #265). The
@@ -223,7 +224,15 @@ fn copy_relative_images(body: &str, source_dir: &Path, tab_folder: &Path, memo_n
     // 画像フォルダ: 未準備なら None、準備失敗なら Some(Err)
     let mut image_dir: Option<Result<PathBuf, ()>> = None;
 
-    let rewritten = rewrite_image_destinations(body, |dest| {
+    // #266: 空白入り裸形のレガシーリンクは、元 `.md` 基準で対応画像の通常ファイル(リンク以外)が
+    // 実在する場合のみ対象にする
+    let legacy_exists = |path: &str| {
+        let Some(rel) = relative_image_path(path) else { return false };
+        let source = source_dir.join(&rel);
+        let ext_ok = source.extension().and_then(|e| e.to_str()).is_some_and(|e| IMAGE_FILE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
+        ext_ok && std::fs::symlink_metadata(&source).is_ok_and(|m| m.is_file() && !is_link_or_reparse_point(&m))
+    };
+    let rewritten = rewrite_image_destinations_with_legacy(body, |dest| {
         let rel = relative_image_path(dest)?;
         let source = source_dir.join(&rel);
         // 拡張子判定を先に行い、対応画像拡張子のリンクだけを「見つからない」対象にする
@@ -267,7 +276,7 @@ fn copy_relative_images(body: &str, source_dir: &Path, tab_folder: &Path, memo_n
         let new_dest = format!("{memo_name}/{filename}");
         copied.insert(key, new_dest.clone());
         Some(new_dest)
-    });
+    }, legacy_exists);
     (rewritten, missing)
 }
 
@@ -438,6 +447,21 @@ mod tests {
         assert_eq!(got.unwrap(), "![](<新 メモ/001.png>) ![](<新 メモ/001.png>)\n");
         assert_eq!(missing, 0);
         assert!(tab.join("新 メモ").join("001.png").is_file());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn legacy_spaced_link_is_copied_only_when_source_exists() {
+        // #266: 空白入り裸形のレガシーリンクも、元ファイルが実在すれば取り込む
+        let (root, src, tab) = import_dirs();
+        std::fs::create_dir_all(src.join("旧 メモ")).unwrap();
+        std::fs::write(src.join("旧 メモ").join("001.png"), PNG).unwrap();
+        let body = "![](旧 メモ/001.png \"題\") ![](旧 メモ/無い.png)
+";
+        let (got, missing) = copy_relative_images(body, &src, &tab, "新 メモ", &SelfWriteRegistry::new());
+        assert_eq!(got.unwrap(), "![](<新 メモ/001.png> \"題\") ![](旧 メモ/無い.png)
+");
+        assert_eq!(missing, 0);
         std::fs::remove_dir_all(&root).ok();
     }
 
