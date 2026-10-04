@@ -691,14 +691,19 @@ fn rollback_image_folders(folder: &Path, image_folders: &[ImageFolderEntry], reg
 /// Rewrites `![..](<from>/..)` image links to `<to>/..` in a memo body's raw bytes
 /// (`util::image_link_rewrite`, same rules as #261's rename rewrite). UTF-8 only (BOM kept);
 /// a non-UTF-8 body is returned unchanged (`None`), like #261.
-fn rewrite_image_links_in_bytes(bytes: &[u8], from: &str, to: &str) -> Option<Vec<u8>> {
+///
+/// `legacy_dirs`: GitHub issue #266 — `(base folder, image folder name)` pairs where this memo's
+/// image folder may be at this moment (before/after its rename/transfer). A legacy bare link with a
+/// half-width space (`![](新 メモ/001.png)`) is repaired only if its file exists in one of them.
+fn rewrite_image_links_in_bytes(bytes: &[u8], from: &str, to: &str, legacy_dirs: &[(&Path, &str)]) -> Option<Vec<u8>> {
     const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
     let (bom, rest) = if bytes.starts_with(BOM) { bytes.split_at(BOM.len()) } else { (&[][..], bytes) };
     let Ok(body) = std::str::from_utf8(rest) else {
         tracing::warn!("tab lock: memo body is not UTF-8; image links not rewritten");
         return None;
     };
-    let rewritten = crate::util::image_link_rewrite::rewrite_image_links_for_rename(body, from, to)?;
+    let legacy_exists = |rest: &str| legacy_dirs.iter().any(|(base, name)| crate::util::image_link_rewrite::regular_file_without_links(base, &format!("{name}/{rest}")));
+    let rewritten = crate::util::image_link_rewrite::rewrite_image_links_for_rename(body, from, to, legacy_exists)?;
     let mut out = Vec::with_capacity(bom.len() + rewritten.len());
     out.extend_from_slice(bom);
     out.extend_from_slice(rewritten.as_bytes());
@@ -783,7 +788,7 @@ fn rename_and_encrypt_entry(folder: &Path, entry: &FileMapEntry, image_folder: O
         AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while locking this tab")
     })?;
     if let Some(random) = image_folder {
-        if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, &entry.memo_name, random) {
+        if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, &entry.memo_name, random, &[(folder, &entry.memo_name), (folder, random)]) {
             plaintext = rewritten;
         }
     }
@@ -1012,7 +1017,7 @@ fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, image
     })?;
     let mut plaintext = lock_blob::decrypt_memo_body(key, &bytes).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "incorrect password"))?;
     if let Some(random) = image_folder {
-        if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, random, &entry.memo_name) {
+        if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, random, &entry.memo_name, &[(folder, random), (folder, &entry.memo_name)]) {
             plaintext = rewritten;
         }
     }
@@ -1157,7 +1162,7 @@ fn permanent_unlock_relock_files(folder: &Path, payload: &LockPayload, planned: 
                     AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while restoring this tab's lock")
                 })?;
                 if let Some(e) = planned_folder_at_memo_name(folder, payload, planned, &entry_fm.memo_name) {
-                    if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, &e.memo_name, &e.folder) {
+                    if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, &e.memo_name, &e.folder, &[(folder, &e.memo_name), (folder, &e.folder)]) {
                         plaintext = rewritten;
                     }
                 }
@@ -1553,7 +1558,7 @@ fn recovery_restore_files(folder: &Path, marker: &LockInProgressMarker, key: &Lo
         let mut plaintext = lock_blob::decrypt_memo_body(key, &bytes).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "incorrect password"))?;
         // #272: 暗号化時に `<メモ名>/` -> `<ランダム名>/` へ書き換えたリンクを戻す(フォルダは下で戻す)
         if let Some(random) = image_folder_for(&marker.image_folders, &entry_fm.memo_name) {
-            if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, random, &entry_fm.memo_name) {
+            if let Some(rewritten) = rewrite_image_links_in_bytes(&plaintext, random, &entry_fm.memo_name, &[(folder, random), (folder, &entry_fm.memo_name)]) {
                 plaintext = rewritten;
             }
         }
@@ -2586,7 +2591,8 @@ fn apply_session_move_target(
             if let Some(src) = image_sources.get(name) {
                 let src_name = src.file_name().and_then(|n| n.to_str()).ok_or_else(|| AppErrorPayload::new(ErrorCode::Unknown, "invalid source image folder name"))?;
                 let (dst, random) = generate_unique_image_folder(target_folder, image_folders).ok_or_else(|| AppErrorPayload::new(ErrorCode::Unknown, "failed to generate a unique image folder name"))?;
-                rewritten = rewrite_image_links_in_bytes(plaintext, src_name, &random);
+                let src_base = src.parent().unwrap_or(src.as_path());
+                rewritten = rewrite_image_links_in_bytes(plaintext, src_name, &random, &[(src_base, src_name), (target_folder, &random)]);
                 // 同名メモの古いエントリが残っていれば置き換える(先頭一致で古いフォルダを引かないため)
                 image_folders.retain(|e| &e.memo_name != name);
                 image_folders.push(ImageFolderEntry {
@@ -2777,8 +2783,10 @@ pub(crate) fn move_cross_tab_session_to_plain(
     for (i, name) in all_names.iter().enumerate() {
         if let Some(plaintext) = plaintexts.get(name) {
             // リンク `<ランダム名>/…` → `<メモ名>/…`(書き込み前にメモリ上で)
-            let src_name = image_sources.get(name).and_then(|src| src.file_name()).and_then(|n| n.to_str());
-            let rewritten = src_name.and_then(|from| rewrite_image_links_in_bytes(plaintext, from, name));
+            let src = image_sources.get(name);
+            let src_name = src.and_then(|src| src.file_name()).and_then(|n| n.to_str());
+            let src_base = src.and_then(|src| src.parent());
+            let rewritten = src_name.zip(src_base).and_then(|(from, base)| rewrite_image_links_in_bytes(plaintext, from, name, &[(base, from), (target_folder, name)]));
             let plaintext = rewritten.as_deref().unwrap_or(plaintext);
             let dst = target_folder.join(format!("{name}.md"));
             if let Err(err) = atomic_write(&dst, plaintext, registry) {

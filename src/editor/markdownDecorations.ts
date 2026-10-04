@@ -434,7 +434,9 @@ class MarkdownDecorationsPlugin implements PluginValue {
             if (node.name === "Image") {
               if (!touchesSelection(state, node.from, node.to)) {
                 const altText = state.sliceDoc(labelFrom, labelTo);
-                addReplace(node.from, node.to, Decoration.replace({ widget: buildImageWidget(urlText, altText, config) }));
+                // `@lezer/markdown` の URL ノードは山括弧形 `<新 メモ/001.png>` の `<` `>` を含むので外す(GitHub issue #266)
+                const src = urlText.length >= 2 && urlText.startsWith("<") && urlText.endsWith(">") ? urlText.slice(1, -1) : urlText;
+                addReplace(node.from, node.to, Decoration.replace({ widget: buildImageWidget(src, altText, config) }));
                 imageRanges.push({ from: node.from, to: node.to });
               }
               break;

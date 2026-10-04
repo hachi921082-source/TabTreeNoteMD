@@ -29,6 +29,13 @@ export async function imageReadBytes(tabId: string, relativePath: string): Promi
   return new Uint8Array(buffer);
 }
 
+/** レガシー画像リンク(GitHub issue #266 以前の半角スペース入り裸形 `![](新 メモ/001.png)`)を
+ * 山括弧形に直した本文を返す。参照先がタブフォルダ基準で実在する場合のみ修復し、修復が無ければ
+ * `null`。ファイルには書き込まない(呼び出し側が通常の保存経路で保存する)。 */
+export async function imageRepairLegacyLinks(tabId: string, body: string): Promise<Result<string | null>> {
+  return invoke<Result<string | null>>("image_repair_legacy_links", { tabId, body });
+}
+
 /** Reads raw bytes from an arbitrary absolute filesystem path (GitHub issue #244's re-fix —
  * `components/Editor/EditorPane.tsx`'s native-OS-drag-drop listener only ever receives real
  * absolute paths from `getCurrentWebview().onDragDropEvent`, never `File` objects, so there is no

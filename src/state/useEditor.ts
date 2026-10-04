@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { editorClose, editorLoad, editorSave } from "../ipc/editor";
+import { imageRepairLegacyLinks } from "../ipc/image";
 import type { AppSettings, MemoContent } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 import { comboFromEvent, resolveShortcuts } from "../shared/shortcuts";
@@ -52,6 +53,40 @@ export interface UseEditorResult {
    * switch-away flush doesn't write against the now-missing file (`NOT_FOUND` banner). */
   suspendPendingSave: () => void;
   discardPendingEdits: () => void;
+}
+
+/** レガシー画像リンク(GitHub issue #266)が含まれうる本文かの安価な事前判定: 同じ行で `![` の後に
+ * `](` があり、その後 `)` `<` 改行より前に半角スペースがある。偽なら修復コマンドを呼ばない。
+ * 正規表現はバックトラックで巨大な行に対し多項式時間になるため、線形の1パス走査で判定する
+ * (走査済みの `](` 以降の区間は読み飛ばす — 区間内の `](` から始めても同じ結果になるため)。 */
+function hasLegacyImageLinkHint(text: string): boolean {
+  const n = text.length;
+  let sawBang = false;
+  let i = 0;
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c === 10) {
+      // 改行で行の状態をリセット
+      sawBang = false;
+      i++;
+    } else if (c === 33 && text.charCodeAt(i + 1) === 91) {
+      // `![`
+      sawBang = true;
+      i += 2;
+    } else if (sawBang && c === 93 && text.charCodeAt(i + 1) === 40) {
+      // `](` 以降を `)` `<` 改行まで調べる
+      let j = i + 2;
+      for (; j < n; j++) {
+        const d = text.charCodeAt(j);
+        if (d === 32) return true;
+        if (d === 41 || d === 60 || d === 10) break;
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return false;
 }
 
 export function useEditor(
@@ -218,13 +253,24 @@ export function useEditor(
       const result = await editorLoad(tabId, memoName);
       if (cancelled) return;
       if (result.ok) {
+        // GitHub issue #266: 編集ロックでないメモは、開いた時点でレガシー画像リンク(空白入り裸形)を
+        // 山括弧形に直す。エディタの初期内容として渡すので Undo 履歴には載らない。保存は通常の
+        // 経路(flushSave → editor_save)で行い、`.bak`・ロックセッションの暗号化もそのまま効く。
+        let repairedText: string | null = null;
+        if (!result.value.editLocked && !editLockedRef.current && hasLegacyImageLinkHint(result.value.text)) {
+          const repaired = await imageRepairLegacyLinks(tabId, result.value.text);
+          if (cancelled) return;
+          if (repaired.ok) repairedText = repaired.value;
+        }
         tabIdRef.current = tabId;
         memoNameRef.current = memoName;
-        textRef.current = result.value.text;
+        textRef.current = repairedText ?? result.value.text;
+        // 最終保存済みは読み込んだ内容のまま(修復分を未保存の変更として flushSave に書かせる)
         lastSavedTextRef.current = result.value.text;
         lastSavedHashRef.current = result.value.hash;
-        setContent(result.value);
+        setContent(repairedText !== null ? { ...result.value, text: repairedText } : result.value);
         setLoadGeneration((g) => g + 1);
+        if (repairedText !== null) void flushSave(tabId, memoName);
       } else {
         setLastErrorCode(result.error.code);
       }

@@ -520,7 +520,7 @@ fn follow_rename_image_folder(folder: &Path, old_name: &str, new_name: &str, new
         // GitHub issue #261: フォルダ名変更が成功した場合のみ、本文の画像リンクも追従させる
         // (後続の検索インデックス更新は書き換え後の本文を読み直す)。
         Ok(()) => {
-            rewrite_renamed_memo_image_links(new_memo_path, old_name, new_name, registry);
+            rewrite_renamed_memo_image_links(folder, new_memo_path, old_name, new_name, registry);
             None
         }
     }
@@ -531,7 +531,7 @@ fn follow_rename_image_folder(folder: &Path, old_name: &str, new_name: &str, new
 /// follows: the rename itself already succeeded, so any failure is logged, not returned. Only
 /// UTF-8 bodies are rewritten (BOM and EOL bytes preserved verbatim); a non-UTF-8 (e.g.
 /// Shift_JIS) body is skipped rather than silently re-encoded.
-fn rewrite_renamed_memo_image_links(memo_path: &Path, old_name: &str, new_name: &str, registry: &SelfWriteRegistry) {
+fn rewrite_renamed_memo_image_links(folder: &Path, memo_path: &Path, old_name: &str, new_name: &str, registry: &SelfWriteRegistry) {
     let bytes = match std::fs::read(memo_path) {
         Ok(b) => b,
         Err(err) => {
@@ -545,7 +545,9 @@ fn rewrite_renamed_memo_image_links(memo_path: &Path, old_name: &str, new_name: 
         tracing::warn!("memo_rename: memo body is not UTF-8; image links not rewritten");
         return;
     };
-    let Some(rewritten) = crate::util::image_link_rewrite::rewrite_image_links_for_rename(body, old_name, new_name) else {
+    // #266: 空白入り裸形のレガシーリンクは、改名済みフォルダ `<new>/` に実在する場合のみ修復する
+    let legacy_exists = |rest: &str| crate::util::image_link_rewrite::regular_file_without_links(folder, &format!("{new_name}/{rest}"));
+    let Some(rewritten) = crate::util::image_link_rewrite::rewrite_image_links_for_rename(body, old_name, new_name, legacy_exists) else {
         return;
     };
     let mut out = Vec::with_capacity(bom.len() + rewritten.len());

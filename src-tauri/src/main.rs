@@ -220,6 +220,7 @@ fn main() {
             commands::pdf_export::pdf_export_write,
             commands::image::image_save_pasted,
             commands::image::image_read_bytes,
+            commands::image::image_repair_legacy_links,
             commands::image::image_read_external_file,
             commands::import::import_file,
             commands::about::about_get_third_party_notices,
