@@ -173,6 +173,18 @@ pub fn existing_memo_image_folder(tab_folder: &Path, memo_name: &str) -> Option<
 /// 対象にするため `Strict` ではなく `Lenient`。末尾のピリオド/空白は Win32 の正規化で削られ別ファイルを
 /// 指すため常に拒否する。
 pub fn existing_direct_child_file(tab_folder: &Path, file_name: &str) -> Option<PathBuf> {
+    let path = direct_child_file_path(tab_folder, file_name)?;
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if is_link_or_reparse_point(&meta) || !meta.is_file() {
+        return None;
+    }
+    Some(path)
+}
+
+/// GitHub issue #282: `existing_direct_child_file` と同じ名前の検査(タブフォルダ直下の 1 要素・
+/// `Lenient`・末尾のピリオド/空白は拒否)だけを行い、実在は問わずに `<tab_folder>/<file_name>` を返す。
+/// まだ存在しない移動先(改名・タブ間移動で運ぶ `<メモ名>.md.bak` の行き先)を組み立てる用。
+pub fn direct_child_file_path(tab_folder: &Path, file_name: &str) -> Option<PathBuf> {
     if file_name.is_empty() || file_name == "." || file_name == ".." || file_name.ends_with('.') || file_name.ends_with(' ') {
         return None;
     }
@@ -181,10 +193,6 @@ pub fn existing_direct_child_file(tab_folder: &Path, file_name: &str) -> Option<
     }
     let path = tab_folder.join(file_name);
     if path.parent() != Some(tab_folder) || path.file_name() != Some(std::ffi::OsStr::new(file_name)) {
-        return None;
-    }
-    let meta = std::fs::symlink_metadata(&path).ok()?;
-    if is_link_or_reparse_point(&meta) || !meta.is_file() {
         return None;
     }
     Some(path)
