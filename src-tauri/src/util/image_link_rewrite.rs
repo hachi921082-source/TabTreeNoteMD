@@ -382,41 +382,62 @@ fn valid_link_tail(bytes: &[u8], mut i: usize) -> bool {
     bytes.get(skip_ws(i + 1)) == Some(&b')')
 }
 
+/// 計算量の上限(悪意ある/巨大な行での DoS 防止): `(` から先は `LEGACY_SCAN_WINDOW` バイトまでの
+/// `)` だけを見て、候補は最大 `LEGACY_MAX_CANDIDATES` 件(= 実在確認の回数の上限)。
+const LEGACY_SCAN_WINDOW: usize = 1024;
+const LEGACY_MAX_CANDIDATES: usize = 32;
+
 /// レガシーリンク(#266)のパス候補を返す: `start` 以降の各 `)` までの内側について、全体をパスと
 /// みなす候補と、末尾の `"…"` / `'…'` / `(…)` をタイトルとして除いた候補(右から順)。
 /// (パス範囲, その `)` の位置) の列。半角スペースを含まないパス・`<` で始まるパスは除外。
+/// 走査は1パス(スペース位置・タイトル開始候補を逐次更新)。
 fn legacy_candidates(line: &str, start: usize) -> Vec<(std::ops::Range<usize>, usize)> {
     let bytes = line.as_bytes();
-    let mut out = Vec::new();
-    for k in start..bytes.len() {
-        if bytes[k] != b')' || (k > start && bytes[k - 1] == b'\\') {
-            continue;
+    let end = bytes.len().min(start.saturating_add(LEGACY_SCAN_WINDOW));
+    let mut out: Vec<(std::ops::Range<usize>, usize)> = Vec::new();
+    // 走査済み範囲の情報を1パスで更新する: 最初の半角スペース位置、タイトル開始候補(直前が空白の
+    // `"` `'` `(`)の位置
+    let mut first_space: Option<usize> = None;
+    let mut openers: Vec<usize> = Vec::new();
+    // `start..start+len` を末尾空白を除いてパス候補として追加。上限に達したら false
+    let push = |out: &mut Vec<_>, len: usize, k: usize, first_space: Option<usize>| -> bool {
+        let path = line[start..start + len].trim_end_matches([' ', '\t']);
+        if !path.is_empty() && first_space.is_some_and(|s| s < start + path.len()) && !path.starts_with('<') {
+            out.push((start..start + path.len(), k));
         }
-        // 後続のリンク・インラインコードにまたがる候補は除外(以降の `)` も同様なので打ち切る)
-        if ["`", "](", "!["].iter().any(|s| line[start..k].contains(s)) {
-            break;
-        }
-        let inner = line[start..k].trim_end_matches([' ', '\t']);
-        let mut push = |len: usize| {
-            let path = line[start..start + len].trim_end_matches([' ', '\t']);
-            if !path.is_empty() && path.contains(' ') && !path.starts_with('<') && !path.contains('\n') {
-                out.push((start..start + path.len(), k));
+        out.len() < LEGACY_MAX_CANDIDATES
+    };
+    for k in start..end {
+        let b = bytes[k];
+        if b == b')' && !(k > start && bytes[k - 1] == b'\\') {
+            let inner_len = line[start..k].trim_end_matches([' ', '\t']).len();
+            if !push(&mut out, inner_len, k, first_space) {
+                break;
             }
-        };
-        push(inner.len());
-        let ib = inner.as_bytes();
-        let opener = match ib.last() {
-            Some(b'"') => Some(b'"'),
-            Some(b'\'') => Some(b'\''),
-            Some(b')') => Some(b'('),
-            _ => None,
-        };
-        if let Some(opener) = opener {
-            for q in (1..ib.len().saturating_sub(1)).rev() {
-                if ib[q] == opener && matches!(ib[q - 1], b' ' | b'\t') {
-                    push(q);
+            let opener = match inner_len.checked_sub(1).map(|l| bytes[start + l]) {
+                Some(b'"') => Some(b'"'),
+                Some(b'\'') => Some(b'\''),
+                Some(b')') => Some(b'('),
+                _ => None,
+            };
+            if let Some(opener) = opener {
+                // 右から順にタイトル分割を試す(閉じ文字自身は除く)
+                for &q in openers.iter().rev() {
+                    if q + 1 < start + inner_len && bytes[q] == opener && !push(&mut out, q - start, k, first_space) {
+                        return out;
+                    }
                 }
             }
+        }
+        // 後続のリンク・インラインコード・改行にまたがる候補は作らない(以降の `)` も同様なので打ち切る)
+        if b == b'`' || b == b'\n' || (k > start && matches!((bytes[k - 1], b), (b']', b'(') | (b'!', b'['))) {
+            break;
+        }
+        if b == b' ' && first_space.is_none() {
+            first_space = Some(k);
+        }
+        if matches!(b, b'"' | b'\'' | b'(') && k > start && matches!(bytes[k - 1], b' ' | b'\t') {
+            openers.push(k);
         }
     }
     out
@@ -666,6 +687,30 @@ mod tests {
         .unwrap();
         assert_eq!(got, "![](日記/001.png) ![](新 メモ/002.png) `x)`\n");
         assert!(seen.iter().all(|r| !r.contains("](") && !r.contains('`')), "{seen:?}");
+    }
+
+    #[test]
+    fn pathological_legacy_lines_are_bounded() {
+        // 100KB 級の悪意ある行でも計算量・実在確認回数が抑えられ、本文は変わらない
+        let bodies = [
+            format!("![](a b{}\n", ")".repeat(100_000)),
+            format!("![](a b{}\n", " (x)".repeat(25_000)),
+            format!("![](a b{}{}\n", " \"".repeat(25_000), ")".repeat(25_000)),
+            "![](a b) ".repeat(12_000) + "\n",
+        ];
+        for body in &bodies {
+            let mut calls = 0usize;
+            let started = std::time::Instant::now();
+            let got = rewrite_image_destinations_with_legacy(body, |_| None, |_| {
+                calls += 1;
+                false
+            });
+            let elapsed = started.elapsed();
+            assert_eq!(got, None);
+            assert!(elapsed < std::time::Duration::from_secs(1), "took {elapsed:?}");
+            // 1つの `![` あたり最大 LEGACY_MAX_CANDIDATES 回
+            assert!(calls <= body.matches("![").count() * LEGACY_MAX_CANDIDATES, "calls {calls}");
+        }
     }
 
     #[test]
