@@ -35,7 +35,7 @@ import type { Extension } from "@codemirror/state";
 import { imageReadExternalFile, imageSavePasted } from "../ipc/image";
 import { downscaleImageIfNeeded } from "./imageDownscale";
 import type { ErrorCode } from "../shared/result";
-import { enterFilePicker, exitFilePicker } from "../shared/filePickerGate";
+import { enterFilePicker } from "../shared/filePickerGate";
 
 /** Extensions accepted by both the toolbar's file-picker (`insertImageViaFilePicker`'s `accept`
  * list below) and the native-OS-drag-drop path (GitHub issue #244) — kept as one shared set so the
@@ -240,11 +240,13 @@ export function insertImageViaFilePicker(view: EditorView, tabId: string | null,
   // teardown idempotent so whichever fires first (change/cancel/focus) does the removal and the
   // others become no-ops.
   let cleaned = false;
+  // この表示専用の例外終了関数 (#274)。input.click() 直前に設定
+  let exitPicker: (() => void) | null = null;
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     // ダイアログ終了(change / cancel / フォーカス復帰のどれでも)でフォーカス喪失再ロックの例外を解除 (#274)
-    exitFilePicker();
+    exitPicker?.();
     window.removeEventListener("focus", onFocus);
     input.removeEventListener("cancel", onCancel);
     if (input.parentNode) input.parentNode.removeChild(input);
@@ -267,6 +269,6 @@ export function insertImageViaFilePicker(view: EditorView, tabId: string | null,
   document.body.appendChild(input);
   // ダイアログ表示中の OS フォーカス喪失で再ロックしないよう例外を有効化 (#274)。
   // 解除は上の cleanup() が担い、change / cancel / フォーカス復帰のどの経路でも 1 回だけ走る。
-  enterFilePicker();
+  exitPicker = enterFilePicker();
   input.click();
 }
