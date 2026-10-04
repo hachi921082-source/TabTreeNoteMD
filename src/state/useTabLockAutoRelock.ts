@@ -15,6 +15,7 @@ import type { AppSettings } from "../shared/models";
 import type { UseTabLockResult } from "./useTabLock";
 import type { UseToastResult } from "./useToast";
 import { isModalActive } from "../shared/modalActivityGate";
+import { isFilePickerActive, onFilePickerExit } from "../shared/filePickerGate";
 import { useT } from "../i18n";
 
 /** `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §3 (`[detailed-spec v1.1.0 §1.4]`) — fixed,
@@ -163,15 +164,34 @@ export function useTabLockAutoRelock({ activeTabId, tabLockState, settings, toas
     let cancelled = false;
     void appWindow
       .onFocusChanged(({ payload: focused }) => {
-        if (!focused) void teardown(tabId, false);
+        // 例外 (#274, `[spec v1.2.0 §11]`): アプリ自身の画像挿入ファイル選択ダイアログ表示中の
+        // フォーカス喪失では再ロックしない。他のフォーカス喪失(エクスプローラーからの D&D 等)は従来どおり。
+        if (!focused && !isFilePickerActive()) void teardown(tabId, false);
       })
       .then((un) => {
         if (cancelled) un();
         else unlisten = un;
       });
+    // 例外終了時の補完 (#274): ダイアログ表示中に別アプリへ切り替えたまま閉じた場合など、例外が
+    // 終わった時点でウィンドウが非フォーカスなら、抑止していたフォーカス喪失再ロックをここで適用する。
+    // フォーカス復帰経路では isFocused() が true なので何もしない。2 分の上限到達による終了も同じ経路。
+    // isFocused() が失敗した場合は安全側に倒して再ロックする。
+    const unsubscribePickerExit = onFilePickerExit(() => {
+      void appWindow.isFocused().then(
+        (focused) => {
+          if (cancelled || focused || isFilePickerActive()) return;
+          void teardown(tabId, false);
+        },
+        () => {
+          if (cancelled || isFilePickerActive()) return;
+          void teardown(tabId, false);
+        },
+      );
+    });
     return () => {
       cancelled = true;
       unlisten?.();
+      unsubscribePickerExit();
     };
   }, [hasSession, activeTabId, teardown]);
 }
