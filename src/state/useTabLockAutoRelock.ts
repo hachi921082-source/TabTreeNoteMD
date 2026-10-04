@@ -174,12 +174,19 @@ export function useTabLockAutoRelock({ activeTabId, tabLockState, settings, toas
       });
     // 例外終了時の補完 (#274): ダイアログ表示中に別アプリへ切り替えたまま閉じた場合など、例外が
     // 終わった時点でウィンドウが非フォーカスなら、抑止していたフォーカス喪失再ロックをここで適用する。
-    // フォーカス復帰経路では isFocused() が true なので何もしない。
+    // フォーカス復帰経路では isFocused() が true なので何もしない。2 分の上限到達による終了も同じ経路。
+    // isFocused() が失敗した場合は安全側に倒して再ロックする。
     const unsubscribePickerExit = onFilePickerExit(() => {
-      void appWindow.isFocused().then((focused) => {
-        if (cancelled || focused || isFilePickerActive()) return;
-        void teardown(tabId, false);
-      });
+      void appWindow.isFocused().then(
+        (focused) => {
+          if (cancelled || focused || isFilePickerActive()) return;
+          void teardown(tabId, false);
+        },
+        () => {
+          if (cancelled || isFilePickerActive()) return;
+          void teardown(tabId, false);
+        },
+      );
     });
     return () => {
       cancelled = true;
