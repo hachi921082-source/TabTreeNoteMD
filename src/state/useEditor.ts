@@ -42,8 +42,10 @@ export interface UseEditorResult {
   /** Called by `EditorPane` on every CodeMirror doc change — the debounced-autosave timer's
    * source of truth for "did anything change." */
   notifyTextChanged: (text: string) => void;
-  /** Ctrl+S / explicit flush; also used internally by the switch/minimize/exit triggers. */
-  flushSaveNow: () => Promise<void>;
+  /** Ctrl+S / explicit flush; also used internally by the switch/minimize/exit triggers.
+   * Resolves `false` if unsaved edits remain after the attempt (save error / conflict) — used to
+   * abort an open-memo rename/cross-tab move before it (GitHub issue #267). */
+  flushSaveNow: () => Promise<boolean>;
 }
 
 export function useEditor(
@@ -104,31 +106,33 @@ export function useEditor(
 
   /** "Don't write if no change" (`[spec §2.6]`) applies uniformly to every trigger, not just the
    * debounce timer: compares against the last-saved text before calling `editor_save` at all. */
-  const flushSave = useCallback(async (tid: string, name: string) => {
-    if (conflictOpenRef.current) return; // `[spec §5.8]`: suspended while the conflict dialog is open
-    if (editLockedRef.current) return; // defensive: never attempted for an edit-locked memo
-    if (textRef.current === lastSavedTextRef.current) return;
+  const flushSave = useCallback(async (tid: string, name: string): Promise<boolean> => {
+    // 戻り値: 未保存の編集が残っていなければ true(#267: 改名/タブ間移動の前に失敗を検知するため)
+    if (conflictOpenRef.current) return textRef.current === lastSavedTextRef.current; // `[spec §5.8]`: suspended while the conflict dialog is open
+    if (editLockedRef.current) return true; // defensive: never attempted for an edit-locked memo
+    if (textRef.current === lastSavedTextRef.current) return true;
 
     const result = await editorSave(tid, name, textRef.current, lastSavedHashRef.current);
     if (result.ok) {
       lastSavedHashRef.current = result.value.hash;
       lastSavedTextRef.current = textRef.current;
-      return;
+      return true;
     }
     if (result.error.code === "CONFLICT") {
       conflictOpenRef.current = true;
       setConflict("save");
-      return;
+      return false;
     }
     setLastErrorCode(result.error.code);
+    return false;
   }, []);
 
-  const flushSaveNow = useCallback(async () => {
+  const flushSaveNow = useCallback(async (): Promise<boolean> => {
     clearDebounce();
     const tid = tabIdRef.current;
     const name = memoNameRef.current;
-    if (!tid || !name) return;
-    await flushSave(tid, name);
+    if (!tid || !name) return true;
+    return flushSave(tid, name);
   }, [flushSave]);
 
   const notifyTextChanged = useCallback(
