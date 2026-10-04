@@ -30,7 +30,8 @@ Explicit Marker + Resume/Rollback".
 7. Image Folders (GitHub Issue #272)
 8. Plaintext Residue (GitHub Issue #276)
 9. Image Folders on Permanent Unlock (GitHub Issue #273)
-10. Open Items
+10. Image Folders on Cross-Tab Move/Copy (GitHub Issue #262)
+11. Open Items
 
 ---
 
@@ -281,6 +282,50 @@ pending (even with zero `.md`), and a retry completes it.
 renamed folders expose memo names — same exposure class as the already-restored `.md` files in
 that window; Restore lock renames them back. Known limitations: those of #272 (UTF-8 bodies, only
 the memo's own links, #266 bare-space links); a percent-encoded link comes back in raw form.
+
+## Image Folders on Cross-Tab Move/Copy (GitHub Issue #262)
+
+Cross-tab move/copy (`memo_move` `OtherTab`) carries each moved/copied memo's image folder along,
+for all four combinations (plain→plain is included here so all four live in one place). No marker:
+the operation is short, and the order below keeps the interruption windows narrow and recoverable by
+hand. Pre-#139 flat images in the tab root are **not** carried (it would need a body-reference scan
+of every other memo in the source tab, decrypting a locked one — too much added scope; #262 Q2).
+
+Source folder `S`: plain source → `<memo_name>/` if a real folder (#263 guard); locked source → the
+memo's `imageFolders` entry if that folder is real. Destination folder `D`: plain destination →
+`<memo_name>/`; locked destination → a fresh random name (`generate_unique_image_folder`) added to
+the destination payload's `imageFolders` (a stale same-name entry is replaced). Links `S/…` → `D/…`
+are rewritten in memory (`rewrite_image_links_in_bytes`, #261/#272 rules) before the body is written
+or encrypted; plain→plain needs no rewrite. Move = rename (`with_retry`, cross-volume fallback
+copy + delete; a failed delete of the source after a complete copy is only logged); copy = recursive
+copy (links are not followed). Locked source, move: `cleanup_session_move_source` drops the entry.
+
+Pre-flight (before anything is touched; the operation is rejected, nothing changes): plain
+destination where `<memo_name>/` already exists (file/folder/link) → `NAME_DUPLICATE`; where
+`<memo_name>` fails the #263 guard → `NAME_INVALID`. Locked destination: random names never collide.
+
+Order — plain destination (plain→plain, locked→plain): **folders first**.
+
+| Step | Action | Crash after this step |
+|---|---|---|
+| 1 | Pre-flight (memo names + image folders) | Nothing changed. |
+| 2 | Transfer every `S` → `<memo_name>/` in the target tab. Failure → already-transferred folders transferred back, `IMAGE_FOLDER_RENAME_FAILED`, nothing else changed. | Move: the source memo's images show broken; the folder sits in the target tab under the memo's own name (findable by hand). Copy: harmless extra folder. |
+| 3 | Write/move bodies (links rewritten), save target meta, then (move) source cleanup. A body failure transfers the folders of the not-yet-moved memos back (existing partial-failure class otherwise). | Existing cross-tab crash class (duplicate or reconciled memo); images match the body's tab. |
+
+Order — locked destination (plain→locked, locked→locked): **target commit first** (a random folder
+orphaned in a locked tab is not findable by hand, so the folder only moves once the destination
+payload already references it).
+
+| Step | Action | Crash after this step |
+|---|---|---|
+| 1 | Encrypt bodies (links → `D`) into new tokens, add `imageFolders` entries, save target lock blob (rejects on memo-name collision before writing) | Target memo shows broken images; source memo complete (duplicate). |
+| 2 | Transfer every `S` → `D`. Failure → already-transferred folders transferred back, the target commit undone (`cleanup_session_move_source` on the target: tokens, tree, entries), `IMAGE_FOLDER_RENAME_FAILED`. | Move: target complete; source memo is a duplicate with broken images. Copy: done. |
+| 3 | (Move) source cleanup (`.md` delete + meta, or session cleanup) | — |
+
+In every window at least one complete copy of each memo (body + reachable images) exists for a locked
+destination; for a plain destination the images are always under a folder named after the memo.
+Known limitations: those of #272 (UTF-8 bodies, only the memo's own links, #266 bare-space links); a
+link from another memo into a moved memo's folder is not rewritten.
 
 ## Open Items
 
