@@ -55,6 +55,11 @@ export function syncPreviewToEditorScroll(
   targetLine: number,
   editorScrollDOM: HTMLElement,
 ): void {
+  // エディタが最上部なら、先頭ブロックの上余白 (padding/見出し margin) も見えるようプレビューも 0 へ (#291)
+  if (editorScrollDOM.scrollTop <= 0.5) {
+    scrollContainer.scrollTop = 0;
+    return;
+  }
   const editorMax = editorScrollDOM.scrollHeight - editorScrollDOM.clientHeight;
   const t = computeEndBlendFactor(editorScrollDOM.scrollTop, editorMax, editorScrollDOM.clientHeight);
   if (t <= 0) {
