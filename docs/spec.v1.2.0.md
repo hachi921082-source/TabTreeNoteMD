@@ -80,6 +80,9 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - **§11 Auto-Relock Focus-Loss Exception for the Image-Insert File Picker (Modifies `[spec v1.1.0 §5.2]`
   — GitHub issue #274, added 2026-10-04)** — focus loss while the app's own toolbar image-insert file
   dialog is open no longer relocks. Decided.
+- **§12 Split-View Scroll Sync at the Editor's Scroll End (Bug Fix — GitHub issue #279, added 2026-10-04)**
+  — over the editor's last viewport of scroll, the preview is blended from the line-matched position to
+  its own end, so the whole preview stays reachable when it is much taller than the editor. Decided.
 - **Open Questions for User**
 
 ---
@@ -716,6 +719,30 @@ Decided 2026-10-03 (GitHub issue #274); no open points.
 
 ---
 
+## 12. Split-View Scroll Sync at the Editor's Scroll End (Bug Fix — GitHub issue #279, added 2026-10-04)
+
+**Problem**: editor→preview scroll sync (one-directional, `RENDERING.md` §6) only matches the editor's
+top visible line to the preview's top. When the rendered preview is much taller than the editor content
+(e.g. full-width images vs. editor thumbnails), the editor hits its scroll end while the preview is still
+only line-matched, and the rest of the preview is unreachable by editor scrolling.
+
+**Rule**:
+
+- Let `maxScroll` = editor scroll range, `viewport` = editor viewport height,
+  `zoneStart = max(0, maxScroll − viewport)`. For editor `scrollTop` in `[zoneStart, maxScroll]`,
+  `t = (scrollTop − zoneStart) / (maxScroll − zoneStart)`; preview target =
+  `matched + (previewMax − matched) × t`, where `matched` is the line-matched position. At the editor's
+  scroll end the preview is at its own end.
+- Outside that zone (`t = 0`) behaviour is unchanged (line-matching only).
+- Editor not scrollable (`maxScroll = 0`): no blending; the preview is not forced to its end.
+- If the line-matched position is already at/past the preview's end, the target is clamped to the
+  preview's end (never pulled backwards by the blend).
+- Sync stays one-directional; preview scrolling never drives the editor. No start-of-document blending.
+
+Decided 2026-10-04 (GitHub issue #279); no open points.
+
+---
+
 ## Open Questions for User
 
-None. All eleven items (§1–§11) are fully decided.
+None. All twelve items (§1–§12) are fully decided.
