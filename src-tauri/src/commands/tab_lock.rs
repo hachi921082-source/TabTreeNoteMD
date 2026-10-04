@@ -2059,6 +2059,11 @@ pub(crate) fn session_delete_memo(
                 continue;
             };
             let token_path = folder.join(&entry.token);
+            // GitHub issue #282: セッション中の保存で出来た `<token>.bak` もトークンファイルと同じく
+            // 完全削除する(ベストエフォート、無ければ何もしない)
+            if let Some(bak) = existing_direct_child_file(folder, &format!("{}.bak", entry.token)) {
+                tree::remove_bak_file(&bak, registry);
+            }
             if !token_path.exists() {
                 continue;
             }
@@ -5066,5 +5071,25 @@ mod tests {
                 std::fs::remove_dir_all(&dst).ok();
             }
         }
+    }
+
+    #[test]
+    fn session_delete_removes_token_backups_of_the_deleted_subtree() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let sessions = LockSessionStore::new();
+        t262_session(&dir, &sessions, "tab-1", true, &registry);
+        for token in ["tok0", "tok1"] {
+            std::fs::write(dir.join(format!("{token}.bak")), b"encrypted old").unwrap();
+        }
+        std::fs::write(dir.join("other.bak"), b"keep").unwrap();
+        let result = session_delete_memo(&sessions, &registry, &dir, "tab-1", &[T262_PARENT.to_string()], true);
+        assert!(matches!(result, AppResult::Ok(_)));
+        for token in ["tok0", "tok1"] {
+            assert!(!dir.join(token).exists());
+            assert!(!dir.join(format!("{token}.bak")).exists(), "{token}.bak");
+        }
+        assert!(dir.join("other.bak").exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
