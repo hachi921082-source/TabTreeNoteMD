@@ -429,6 +429,19 @@ mod tests {
     }
 
     #[test]
+    fn spaced_memo_name_emits_angle_bracket_destination() {
+        // 半角スペースを含むメモ名は CommonMark で有効な山括弧形で書く(GitHub issue #266)
+        let (root, src, tab) = import_dirs();
+        std::fs::write(src.join("図.png"), PNG).unwrap();
+        let body = "![](図.png) ![](<図.png>)\n";
+        let (got, missing) = copy_relative_images(body, &src, &tab, "新 メモ", &SelfWriteRegistry::new());
+        assert_eq!(got.unwrap(), "![](<新 メモ/001.png>) ![](<新 メモ/001.png>)\n");
+        assert_eq!(missing, 0);
+        assert!(tab.join("新 メモ").join("001.png").is_file());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn missing_image_is_counted_and_left_untouched() {
         let (root, src, tab) = import_dirs();
         // 画像拡張子でないリンク(フォルダ・存在しない .txt/.svg)は数えない
