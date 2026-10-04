@@ -16,11 +16,10 @@ pub struct FolderTransfer {
     pub dst: PathBuf,
 }
 
-/// フォルダを再帰コピーする。`dst` は存在してはならない(作成から行う)。シンボリックリンク/
-/// ジャンクションは辿らずスキップする(タブ外の内容を取り込まないため)。
-pub fn copy_dir_recursive(src: &Path, dst: &Path, registry: &SelfWriteRegistry) -> std::io::Result<()> {
-    registry.register(dst);
-    std::fs::create_dir(dst)?;
+/// `src` の中身を既存の `dst` へ再帰コピーする(`dst` は自分で作成済みのフォルダであること)。
+/// サブフォルダは `dst` 内に新規作成してから中身をコピーする。シンボリックリンク/ジャンクションは
+/// 辿らずスキップする(タブ外の内容を取り込まないため)。
+fn copy_dir_contents(src: &Path, dst: &Path, registry: &SelfWriteRegistry) -> std::io::Result<()> {
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let meta = std::fs::symlink_metadata(entry.path())?;
@@ -29,12 +28,27 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path, registry: &SelfWriteRegistry) 
             continue;
         }
         let to = dst.join(entry.file_name());
+        registry.register(&to);
         if meta.is_dir() {
-            copy_dir_recursive(&entry.path(), &to, registry)?;
+            std::fs::create_dir(&to)?;
+            copy_dir_contents(&entry.path(), &to, registry)?;
         } else {
-            registry.register(&to);
             std::fs::copy(entry.path(), &to)?;
         }
+    }
+    Ok(())
+}
+
+/// `dst` を新規作成して `src` を再帰コピーする。`dst` の作成に失敗(既存など)したら何も消さずに
+/// 失敗を返す。存在チェック後に他プロセスが `dst` を作った場合でも、自分が作っていないフォルダを
+/// 後始末で削除しないため。作成後のコピー途中で失敗したときだけ、作りかけの `dst` を消す。
+fn create_and_copy_dir(src: &Path, dst: &Path, registry: &SelfWriteRegistry) -> std::io::Result<()> {
+    registry.register(dst);
+    std::fs::create_dir(dst)?;
+    if let Err(err) = copy_dir_contents(src, dst, registry) {
+        registry.register(dst);
+        let _ = std::fs::remove_dir_all(dst);
+        return Err(err);
     }
     Ok(())
 }
@@ -42,7 +56,8 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path, registry: &SelfWriteRegistry) 
 /// `src` を `dst` へ移動(`copy == false`)またはコピーする。`dst` に何か(ファイル/フォルダ/リンク)が
 /// あれば失敗。移動はリネーム(再試行付き)、失敗時は別ボリューム想定でコピー + 元フォルダ削除へ
 /// フォールバックする(`.md` の移動と同じ方針)。コピー完了後の元フォルダ削除失敗はログのみ
-/// (移動先は完全なので成功扱い)。コピー途中の失敗では作りかけの `dst` を消してから失敗を返す。
+/// (移動先は完全なので成功扱い)。コピー途中の失敗では作りかけの `dst` を消してから失敗を返す
+/// (自分で作成した `dst` に限る。`create_and_copy_dir` 参照)。
 pub fn transfer_folder(src: &Path, dst: &Path, copy: bool, registry: &SelfWriteRegistry) -> std::io::Result<()> {
     if std::fs::symlink_metadata(dst).is_ok() {
         return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "image folder destination already exists"));
@@ -54,11 +69,7 @@ pub fn transfer_folder(src: &Path, dst: &Path, copy: bool, registry: &SelfWriteR
             return Ok(());
         }
     }
-    if let Err(err) = copy_dir_recursive(src, dst, registry) {
-        registry.register(dst);
-        let _ = std::fs::remove_dir_all(dst);
-        return Err(err);
-    }
+    create_and_copy_dir(src, dst, registry)?;
     if !copy {
         registry.register(src);
         if let Err(err) = with_retry(|| std::fs::remove_dir_all(src)) {
@@ -152,6 +163,21 @@ mod tests {
         }
         assert_folder(&src);
         assert_eq!(std::fs::read_dir(&dst).unwrap().count(), 0);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn create_and_copy_never_removes_existing_destination() {
+        // 存在チェック後に他プロセスが dst を作った競合を、既存 dst への直接呼び出しで再現する
+        let root = tempdir();
+        let registry = SelfWriteRegistry::new();
+        let src = root.join("元");
+        make_folder(&src);
+        let dst = root.join("先");
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(dst.join("他人の.png"), b"x").unwrap();
+        assert!(create_and_copy_dir(&src, &dst, &registry).is_err());
+        assert_eq!(std::fs::read(dst.join("他人の.png")).unwrap(), b"x");
         std::fs::remove_dir_all(&root).ok();
     }
 
