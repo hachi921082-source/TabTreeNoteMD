@@ -1075,7 +1075,8 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       void handle.waitForRender(pendingScroll.memoKey).then((ready) => {
         if (!ready) return;
         const container = handle.getContainer();
-        if (container) scrollPreviewToLine(container, pendingScroll.line - 1);
+        // pendingScroll.line は 1-indexed のまま渡す (0-indexed 変換は scrollPreviewToLine 側, #291)
+        if (container) scrollPreviewToLine(container, pendingScroll.line);
       });
     }
   }, [paneMode, memoKey, previewMountTick, ed.loadGeneration]);
