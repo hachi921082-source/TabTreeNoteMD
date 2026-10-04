@@ -23,6 +23,7 @@ use crate::commands::emit_settings_recovery_event;
 use crate::crypto::kdf::{self, KdfParams};
 use crate::crypto::lock_blob::{self, FileMapEntry, ImageFolderEntry, LockField, LockKey, LockPayload};
 use crate::fs::atomic_write::{atomic_write, bak_path};
+use crate::fs::image_folder_transfer::{transfer_all, undo_transfers, FolderTransfer};
 use crate::fs::path_safety::{existing_direct_child_file, existing_memo_image_folder, memo_image_folder_path};
 use crate::fs::trash;
 use crate::fs::retry::with_retry;
@@ -2446,12 +2447,13 @@ pub(crate) fn session_editor_save(
 // Cross-tab move combos involving a locked (session) tab (`PLAN.md` §5)
 // ---------------------------------------------------------------------------
 
-type GatheredMove = (Vec<MetaTreeNode>, HashMap<String, Vec<u8>>, HashMap<String, String>);
+type GatheredMove = (Vec<MetaTreeNode>, HashMap<String, Vec<u8>>, HashMap<String, String>, HashMap<String, PathBuf>);
 
 /// Reads (decrypts) the plaintext bodies of `paths`' full subtrees from `source_tab_id`'s active
 /// session, without mutating anything. Returns the moved-subtree root nodes (for reinsertion),
-/// each name's decrypted plaintext, and each name's original token (for cleanup on a non-copy
-/// move).
+/// each name's decrypted plaintext, each name's original token (for cleanup on a non-copy
+/// move), and (GitHub issue #262) each name's existing random-name image folder from the
+/// `imageFolders` map (only real folders passing the #263 guard).
 fn gather_session_move(sessions: &LockSessionStore, source_tab_id: &str, source_folder: &Path, paths: &[NodePath]) -> Option<Result<GatheredMove, AppErrorPayload>> {
     sessions.with_session(source_tab_id, |session| -> Result<GatheredMove, AppErrorPayload> {
         let mut nodes_to_move = Vec::new();
@@ -2483,7 +2485,13 @@ fn gather_session_move(sessions: &LockSessionStore, source_tab_id: &str, source_
             plaintexts.insert(name.clone(), plaintext);
             tokens.insert(name.clone(), entry.token.clone());
         }
-        Ok((nodes_to_move, plaintexts, tokens))
+        let mut image_sources = HashMap::new();
+        for name in &all_names {
+            if let Some(src) = image_folder_for(&session.image_folders, name).and_then(|f| existing_memo_image_folder(source_folder, f)) {
+                image_sources.insert(name.clone(), src);
+            }
+        }
+        Ok((nodes_to_move, plaintexts, tokens, image_sources))
     })
 }
 
@@ -2511,7 +2519,7 @@ fn cleanup_session_move_source(
             tree::remove_node(tree, name);
             file_map.retain(|e| &e.memo_name != name);
             // GitHub issue #271: 移動元の対応表からも外す(残すと同名の新メモが旧フォルダを再利用し、
-            // その削除で移動済みメモの画像までごみ箱へ送られる)。フォルダ自体の移動/コピーは #262 の範囲。
+            // その削除で移動済みメモの画像までごみ箱へ送られる)。フォルダ自体は #262 で移動先へ運び済み。
             image_folders.retain(|e| &e.memo_name != name);
         }
         Ok(())
@@ -2526,6 +2534,13 @@ fn cleanup_session_move_source(
 /// using `target_tab_id`'s active session key, inserts `nodes_to_move` into its tree, appends
 /// `fileMap` entries, and re-saves the target lock blob — the "apply" step shared by
 /// plain-to-session and session-to-session cross-tab moves.
+///
+/// GitHub issue #262 (`CRASH-RECOVERY.md` §10, locked destination): each memo in
+/// `image_sources` (memoName -> its image folder in the source tab) gets a fresh random folder
+/// name and `imageFolders` entry in the same lock-blob save, with its `<source>/…` image links
+/// rewritten to `<random>/…` before encryption. Only after that save are the folders moved/copied
+/// (`copy`); if a transfer fails, the transferred folders are put back, the target commit is
+/// undone, and `IMAGE_FOLDER_RENAME_FAILED` is returned.
 #[allow(clippy::too_many_arguments)]
 fn apply_session_move_target(
     sessions: &LockSessionStore,
@@ -2535,10 +2550,14 @@ fn apply_session_move_target(
     nodes_to_move: &[MetaTreeNode],
     all_names: &[String],
     plaintexts: &HashMap<String, Vec<u8>>,
+    image_sources: &HashMap<String, PathBuf>,
+    copy: bool,
     new_parent: Option<&str>,
     index: usize,
 ) -> Result<(), AppErrorPayload> {
-    let result = commit_session_mutation(sessions, registry, target_folder, target_tab_id, |session, tree, file_map| {
+    let mut new_tokens: HashMap<String, String> = HashMap::new();
+    let mut transfers: Vec<FolderTransfer> = Vec::new();
+    let result = commit_session_mutation_with_images(sessions, registry, target_folder, target_tab_id, |session, tree, file_map, image_folders| {
         if let Some(p) = new_parent {
             if tree::find_node(tree, p).is_none() {
                 return Err(AppErrorPayload::new(ErrorCode::NotFound, "target parent memo not found"));
@@ -2552,12 +2571,28 @@ fn apply_session_move_target(
         let key = LockKey::new(&session.key);
         for name in all_names {
             let Some(plaintext) = plaintexts.get(name) else { continue };
+            // #262: 画像フォルダを持つメモは移動先で新しいランダム名を割り当て、リンクを暗号化前に書き換える
+            let mut rewritten: Option<Vec<u8>> = None;
+            if let Some(src) = image_sources.get(name) {
+                let src_name = src.file_name().and_then(|n| n.to_str()).ok_or_else(|| AppErrorPayload::new(ErrorCode::Unknown, "invalid source image folder name"))?;
+                let (dst, random) = generate_unique_image_folder(target_folder, image_folders).ok_or_else(|| AppErrorPayload::new(ErrorCode::Unknown, "failed to generate a unique image folder name"))?;
+                rewritten = rewrite_image_links_in_bytes(plaintext, src_name, &random);
+                // 同名メモの古いエントリが残っていれば置き換える(先頭一致で古いフォルダを引かないため)
+                image_folders.retain(|e| &e.memo_name != name);
+                image_folders.push(ImageFolderEntry {
+                    memo_name: name.clone(),
+                    folder: random,
+                });
+                transfers.push(FolderTransfer { src: src.clone(), dst });
+            }
+            let plaintext = rewritten.as_deref().unwrap_or(plaintext);
             let token = obfuscated_naming::generate_unique_token(target_folder);
             let encrypted = lock_blob::encrypt_memo_body(&key, plaintext);
             if let Err(err) = atomic_write(&target_folder.join(&token), &encrypted, registry) {
                 tracing::error!(error = %err, "cross-tab move: failed to write obfuscated memo file");
                 return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to move memo file into locked tab"));
             }
+            new_tokens.insert(name.clone(), token.clone());
             file_map.push(FileMapEntry {
                 memo_name: name.clone(),
                 token,
@@ -2569,9 +2604,19 @@ fn apply_session_move_target(
         Ok(())
     });
     match result {
-        Some(r) => r,
-        None => Err(AppErrorPayload::new(ErrorCode::TabLocked, "target tab session ended")),
+        Some(Ok(())) => {}
+        Some(Err(e)) => return Err(e),
+        None => return Err(AppErrorPayload::new(ErrorCode::TabLocked, "target tab session ended")),
     }
+    // 移動先のロック blob が新フォルダ名を参照した後でフォルダを運ぶ(§10: ロック中タブ内で
+    // 対応表に無いランダム名フォルダが孤立する窓を作らない)
+    if transfer_all(&transfers, copy, registry).is_err() {
+        if let Err(err) = cleanup_session_move_source(sessions, registry, target_folder, target_tab_id, all_names, &new_tokens) {
+            tracing::error!(error = %err.message, "cross-tab move: failed to undo the target commit after an image folder transfer failure");
+        }
+        return Err(AppErrorPayload::new(ErrorCode::ImageFolderRenameFailed, "failed to move a memo image folder between tabs"));
+    }
+    Ok(())
 }
 
 /// Dropping onto a locked tab with an active session, from a normal unlocked tab
@@ -2621,7 +2666,10 @@ pub(crate) fn move_cross_tab_plain_to_session(
         }
     }
 
-    if let Err(payload) = apply_session_move_target(sessions, registry, target_folder, target_tab_id, &nodes_to_move, &all_names, &plaintexts, new_parent, index) {
+    // #262: 移動元の `<メモ名>/` 画像フォルダ
+    let image_sources: HashMap<String, PathBuf> = all_names.iter().filter_map(|name| existing_memo_image_folder(source_folder, name).map(|src| (name.clone(), src))).collect();
+
+    if let Err(payload) = apply_session_move_target(sessions, registry, target_folder, target_tab_id, &nodes_to_move, &all_names, &plaintexts, &image_sources, copy, new_parent, index) {
         return AppResult::err(payload);
     }
 
@@ -2683,7 +2731,7 @@ pub(crate) fn move_cross_tab_session_to_plain(
     let Some(gathered) = gather_session_move(sessions, source_tab_id, source_folder, paths) else {
         return AppResult::err_code(ErrorCode::TabLocked, "source tab session ended");
     };
-    let (nodes_to_move, plaintexts, tokens) = match gathered {
+    let (nodes_to_move, plaintexts, tokens, image_sources) = match gathered {
         Ok(v) => v,
         Err(payload) => return AppResult::err(payload),
     };
@@ -2703,11 +2751,28 @@ pub(crate) fn move_cross_tab_session_to_plain(
             return AppResult::err_code(ErrorCode::NameDuplicate, "a memo with this name already exists in the target tab");
         }
     }
-    for name in &all_names {
+    // #262: ランダム名画像フォルダを移動先の `<メモ名>/` へ。衝突は何も触る前に拒否し、フォルダを
+    // 先に運ぶ(§10 平文の移動先)。失敗時は運んだ分を戻して中止。
+    let image_sources_vec = all_names.iter().filter_map(|name| image_sources.get(name).map(|src| (name.clone(), src.clone()))).collect();
+    let image_transfers = match tree::plan_image_folders_into_plain_tab(target_folder, image_sources_vec) {
+        Ok(v) => v,
+        Err(err) => return AppResult::err(err),
+    };
+    let transfers: Vec<FolderTransfer> = image_transfers.iter().map(|(_, t)| t.clone()).collect();
+    if transfer_all(&transfers, copy, registry).is_err() {
+        return AppResult::err_code(ErrorCode::ImageFolderRenameFailed, "failed to move a memo image folder between tabs");
+    }
+    for (i, name) in all_names.iter().enumerate() {
         if let Some(plaintext) = plaintexts.get(name) {
+            // リンク `<ランダム名>/…` → `<メモ名>/…`(書き込み前にメモリ上で)
+            let src_name = image_sources.get(name).and_then(|src| src.file_name()).and_then(|n| n.to_str());
+            let rewritten = src_name.and_then(|from| rewrite_image_links_in_bytes(plaintext, from, name));
+            let plaintext = rewritten.as_deref().unwrap_or(plaintext);
             let dst = target_folder.join(format!("{name}.md"));
             if let Err(err) = atomic_write(&dst, plaintext, registry) {
                 tracing::error!(error = %err, "move_cross_tab_session_to_plain: failed to write plaintext memo file");
+                // 本文をまだ書けていないメモ(このメモ以降)の画像フォルダは元へ戻す
+                undo_transfers(&tree::image_transfers_for(&image_transfers, &all_names[i..]), copy, registry);
                 return AppResult::err_code(ErrorCode::Unknown, "failed to move memo file into target tab");
             }
             // The memo becomes indexable now that it lives in a plain (unlocked) tab, regardless
@@ -2762,7 +2827,7 @@ pub(crate) fn move_cross_tab_session_to_session(
     let Some(gathered) = gather_session_move(sessions, source_tab_id, source_folder, paths) else {
         return AppResult::err_code(ErrorCode::TabLocked, "source tab session ended");
     };
-    let (nodes_to_move, plaintexts, tokens) = match gathered {
+    let (nodes_to_move, plaintexts, tokens, image_sources) = match gathered {
         Ok(v) => v,
         Err(payload) => return AppResult::err(payload),
     };
@@ -2771,7 +2836,7 @@ pub(crate) fn move_cross_tab_session_to_session(
         tree::collect_names(node, &mut all_names);
     }
 
-    if let Err(payload) = apply_session_move_target(sessions, registry, target_folder, target_tab_id, &nodes_to_move, &all_names, &plaintexts, new_parent, index) {
+    if let Err(payload) = apply_session_move_target(sessions, registry, target_folder, target_tab_id, &nodes_to_move, &all_names, &plaintexts, &image_sources, copy, new_parent, index) {
         return AppResult::err(payload);
     }
 
@@ -4750,5 +4815,197 @@ mod tests {
         assert_eq!(value["name"], "非公開");
         assert_eq!(value["imageFoldersLeftRandom"], 2);
         assert_eq!(value["lockLabel"], serde_json::Value::Null);
+    }
+
+    // ---- GitHub issue #262: タブ間移動/コピーで画像フォルダも運ぶ(ロック中タブが絡む組み合わせ) ----
+
+    const T262_KEY: [u8; 32] = [5u8; 32];
+    const T262_PARENT: &str = "日記　その1";
+    const T262_CHILD: &str = "子メモ";
+    /// ロック中タブ側の既存ランダム名フォルダ(親・子)。
+    const T262_FOLDERS: [&str; 2] = ["0123456789abcdef", "fedcba9876543210"];
+
+    /// 画像フォルダ `folder` を参照する本文(山括弧形と生の形)。
+    fn t262_body(folder: &str) -> String {
+        format!("# メモ\n![](<{folder}/001.png>)\n![図]({folder}/002.png)\n")
+    }
+
+    fn t262_images(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(path.join("001.png"), b"img1").unwrap();
+        std::fs::write(path.join("002.png"), b"img2").unwrap();
+    }
+
+    fn t262_assert_images(path: &Path) {
+        assert_eq!(std::fs::read(path.join("001.png")).unwrap(), b"img1", "{}", path.display());
+        assert_eq!(std::fs::read(path.join("002.png")).unwrap(), b"img2", "{}", path.display());
+    }
+
+    fn t262_tree() -> Vec<MetaTreeNode> {
+        let mut parent = MetaTreeNode::default_for_new_file(T262_PARENT.to_string());
+        parent.children.push(MetaTreeNode::default_for_new_file(T262_CHILD.to_string()));
+        vec![parent]
+    }
+
+    /// 平文タブ: 親「日記　その1」(子「子メモ」)、両方に `<メモ名>/` 画像フォルダと本文リンク。
+    fn t262_plain(dir: &Path, registry: &SelfWriteRegistry) {
+        for name in [T262_PARENT, T262_CHILD] {
+            std::fs::write(dir.join(format!("{name}.md")), t262_body(name)).unwrap();
+            t262_images(&dir.join(name));
+        }
+        tree::save_tab_meta(dir, TAB_META_SCHEMA_VERSION, "test".to_string(), &t262_tree(), None, registry).unwrap();
+    }
+
+    /// ロック中タブのセッションを開始する。`with_memos` なら同じ構成をランダム名フォルダで持つ。
+    fn t262_session(dir: &Path, sessions: &LockSessionStore, tab_id: &str, with_memos: bool, registry: &SelfWriteRegistry) {
+        let key = LockKey::new(&T262_KEY);
+        let (tree, mut file_map, mut image_folders) = (if with_memos { t262_tree() } else { vec![] }, vec![], vec![]);
+        if with_memos {
+            for (i, name) in [T262_PARENT, T262_CHILD].iter().enumerate() {
+                let token = format!("tok{i}");
+                std::fs::write(dir.join(&token), lock_blob::encrypt_memo_body(&key, t262_body(T262_FOLDERS[i]).as_bytes())).unwrap();
+                t262_images(&dir.join(T262_FOLDERS[i]));
+                file_map.push(FileMapEntry { memo_name: name.to_string(), token });
+                image_folders.push(ImageFolderEntry { memo_name: name.to_string(), folder: T262_FOLDERS[i].to_string() });
+            }
+        }
+        sessions.start(
+            tab_id.to_string(),
+            LockSession {
+                real_tab_name: "非公開".to_string(),
+                tree,
+                file_map,
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: T262_KEY,
+                last_viewed_memo: None,
+                image_folders,
+            },
+        );
+        sessions.with_session(tab_id, |s| save_lock_blob(dir, s, &s.tree, &s.file_map, None, &s.image_folders, registry)).unwrap().unwrap();
+    }
+
+    fn t262_session_folder(sessions: &LockSessionStore, tab_id: &str, memo: &str) -> Option<String> {
+        sessions.with_session(tab_id, |s| image_folder_for(&s.image_folders, memo).map(str::to_string)).unwrap()
+    }
+
+    fn t262_session_body(dir: &Path, sessions: &LockSessionStore, tab_id: &str, memo: &str) -> String {
+        let token = sessions.with_session(tab_id, |s| s.file_map.iter().find(|e| e.memo_name == memo).unwrap().token.clone()).unwrap();
+        String::from_utf8(lock_blob::decrypt_memo_body(&LockKey::new(&T262_KEY), &std::fs::read(dir.join(token)).unwrap()).unwrap()).unwrap()
+    }
+
+    fn t262_persisted_map(dir: &Path) -> Vec<ImageFolderEntry> {
+        let (parsed, _) = tree::load_tab_meta_with_recovery(dir);
+        let field: LockField = serde_json::from_value(parsed.unwrap().lock.unwrap()).unwrap();
+        lock_blob::decrypt_lock_field(&LockKey::new(&T262_KEY), &field).unwrap().image_folders
+    }
+
+    /// 移動先ロック中タブで、各メモが新しいランダム名フォルダ・対応表(メモリ/ディスク)・書き換え済み本文を持つ。
+    fn t262_assert_carried_into_session(dir: &Path, sessions: &LockSessionStore, tab_id: &str) {
+        let persisted = t262_persisted_map(dir);
+        for name in [T262_PARENT, T262_CHILD] {
+            let folder = t262_session_folder(sessions, tab_id, name).expect("map entry");
+            assert_eq!(folder.len(), 16);
+            assert!(folder.chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(!T262_FOLDERS.contains(&folder.as_str()), "a fresh random name must be assigned");
+            t262_assert_images(&dir.join(&folder));
+            assert_eq!(t262_session_body(dir, sessions, tab_id, name), t262_body(&folder));
+            assert!(persisted.iter().any(|e| e.memo_name == name && e.folder == folder));
+        }
+    }
+
+    #[test]
+    fn plain_to_locked_move_and_copy_carry_image_folders() {
+        for copy in [false, true] {
+            let (src, dst) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            let sessions = LockSessionStore::new();
+            t262_plain(&src, &registry);
+            t262_session(&dst, &sessions, "tab-2", false, &registry);
+            let result = move_cross_tab_plain_to_session("tab-1", &src, "元", "tab-2", &dst, &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions, &SearchIndex::new());
+            assert!(matches!(result, AppResult::Ok(_)), "copy={copy}");
+            t262_assert_carried_into_session(&dst, &sessions, "tab-2");
+            for name in [T262_PARENT, T262_CHILD] {
+                assert!(!dst.join(name).exists(), "no memo-named folder in the locked tab");
+                assert_eq!(src.join(name).exists(), copy, "copy={copy}");
+                assert_eq!(src.join(format!("{name}.md")).exists(), copy);
+                if copy {
+                    t262_assert_images(&src.join(name));
+                    assert_eq!(std::fs::read_to_string(src.join(format!("{name}.md"))).unwrap(), t262_body(name));
+                }
+            }
+            std::fs::remove_dir_all(&src).ok();
+            std::fs::remove_dir_all(&dst).ok();
+        }
+    }
+
+    #[test]
+    fn locked_to_plain_move_and_copy_carry_image_folders() {
+        for copy in [false, true] {
+            let (src, dst) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            let sessions = LockSessionStore::new();
+            t262_session(&src, &sessions, "tab-1", true, &registry);
+            let result = move_cross_tab_session_to_plain("tab-1", &src, "tab-2", &dst, "先", &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions, &SearchIndex::new());
+            assert!(matches!(result, AppResult::Ok(_)), "copy={copy}");
+            for (i, name) in [T262_PARENT, T262_CHILD].iter().enumerate() {
+                t262_assert_images(&dst.join(name));
+                assert_eq!(std::fs::read_to_string(dst.join(format!("{name}.md"))).unwrap(), t262_body(name));
+                assert_eq!(src.join(T262_FOLDERS[i]).exists(), copy, "copy={copy}");
+                assert_eq!(t262_session_folder(&sessions, "tab-1", name).is_some(), copy, "move drops the source map entry");
+                assert_eq!(t262_persisted_map(&src).iter().any(|e| &e.memo_name == name), copy);
+                if copy {
+                    t262_assert_images(&src.join(T262_FOLDERS[i]));
+                    assert_eq!(t262_session_body(&src, &sessions, "tab-1", name), t262_body(T262_FOLDERS[i]));
+                }
+            }
+            std::fs::remove_dir_all(&src).ok();
+            std::fs::remove_dir_all(&dst).ok();
+        }
+    }
+
+    #[test]
+    fn locked_to_locked_move_and_copy_carry_image_folders() {
+        for copy in [false, true] {
+            let (src, dst) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            let sessions = LockSessionStore::new();
+            t262_session(&src, &sessions, "tab-1", true, &registry);
+            t262_session(&dst, &sessions, "tab-2", false, &registry);
+            let result = move_cross_tab_session_to_session("tab-1", &src, "tab-2", &dst, &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions);
+            assert!(matches!(result, AppResult::Ok(_)), "copy={copy}");
+            t262_assert_carried_into_session(&dst, &sessions, "tab-2");
+            for (i, name) in [T262_PARENT, T262_CHILD].iter().enumerate() {
+                assert_eq!(src.join(T262_FOLDERS[i]).exists(), copy, "copy={copy}");
+                assert_eq!(t262_session_folder(&sessions, "tab-1", name).is_some(), copy);
+            }
+            std::fs::remove_dir_all(&src).ok();
+            std::fs::remove_dir_all(&dst).ok();
+        }
+    }
+
+    /// 平文の移動先に `<メモ名>/` が既にあれば、何も触らずに拒否する(子メモ側の衝突でも親のフォルダは動かない)。
+    #[test]
+    fn locked_to_plain_rejects_an_image_folder_collision_without_partial_changes() {
+        for copy in [false, true] {
+            let (src, dst) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            let sessions = LockSessionStore::new();
+            t262_session(&src, &sessions, "tab-1", true, &registry);
+            std::fs::create_dir_all(dst.join(T262_CHILD)).unwrap();
+            let before = sessions.with_session("tab-1", |s| (s.tree.clone(), s.file_map.clone(), s.image_folders.clone())).unwrap();
+            let result = move_cross_tab_session_to_plain("tab-1", &src, "tab-2", &dst, "先", &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions, &SearchIndex::new());
+            let AppResult::Err(err) = result else { panic!("expected rejection") };
+            assert_eq!(err.code, ErrorCode::NameDuplicate);
+            assert_eq!(sessions.with_session("tab-1", |s| (s.tree.clone(), s.file_map.clone(), s.image_folders.clone())).unwrap(), before);
+            for (i, name) in [T262_PARENT, T262_CHILD].iter().enumerate() {
+                t262_assert_images(&src.join(T262_FOLDERS[i]));
+                assert!(!dst.join(format!("{name}.md")).exists());
+            }
+            assert!(!dst.join(T262_PARENT).exists());
+            assert_eq!(std::fs::read_dir(dst.join(T262_CHILD)).unwrap().count(), 0);
+            std::fs::remove_dir_all(&src).ok();
+            std::fs::remove_dir_all(&dst).ok();
+        }
     }
 }

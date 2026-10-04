@@ -23,6 +23,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::commands::tab_lock;
 use crate::commands::{emit_meta_recovered, emit_settings_recovery_event};
 use crate::fs::atomic_write::{atomic_write, bak_path};
+use crate::fs::image_folder_transfer::{transfer_all, undo_transfers, FolderTransfer};
 use crate::fs::path_safety::{existing_memo_image_folder, memo_image_folder_path, validate_name, ValidationMode};
 use crate::fs::retry::{is_lock_class_error, with_retry};
 use crate::fs::self_write_registry::SelfWriteRegistry;
@@ -870,8 +871,20 @@ fn memo_move_cross_tab(
             return AppResult::err_code(ErrorCode::NameDuplicate, "a memo with this name already exists in the target tab");
         }
     }
+    // GitHub issue #262: 画像フォルダ `<メモ名>/` も同名で運ぶ(名前が変わらないのでリンク書き換えは不要)。
+    // 衝突は上の名前チェックと同じく、何も触る前に拒否する。
+    let image_sources = all_names.iter().filter_map(|name| existing_memo_image_folder(source_folder, name).map(|src| (name.clone(), src))).collect();
+    let image_transfers = match plan_image_folders_into_plain_tab(target_folder, image_sources) {
+        Ok(v) => v,
+        Err(err) => return AppResult::err(err),
+    };
+    // フォルダを先に運ぶ(`CRASH-RECOVERY.md` §10)。失敗時は運んだ分を戻し、何も変えずに中止。
+    let transfers: Vec<FolderTransfer> = image_transfers.iter().map(|(_, t)| t.clone()).collect();
+    if transfer_all(&transfers, copy, registry).is_err() {
+        return AppResult::err_code(ErrorCode::ImageFolderRenameFailed, "failed to move a memo image folder between tabs");
+    }
 
-    for name in &all_names {
+    for (i, name) in all_names.iter().enumerate() {
         let src_path = source_folder.join(format!("{name}.md"));
         let dst_path = target_folder.join(format!("{name}.md"));
         let op_result: std::io::Result<()> = if copy {
@@ -893,6 +906,8 @@ fn memo_move_cross_tab(
         };
         if let Err(err) = op_result {
             tracing::error!(error = %err, "memo_move: cross-tab file operation failed");
+            // 本文をまだ運べていないメモ(このメモ以降)の画像フォルダは元へ戻す
+            undo_transfers(&image_transfers_for(&image_transfers, &all_names[i..]), copy, registry);
             return AppResult::err_code(ErrorCode::Unknown, "failed to move memo file between tabs");
         }
     }
@@ -952,6 +967,29 @@ fn memo_move_cross_tab(
             last_viewed_memo: target_loaded.last_viewed_memo,
         }),
     })
+}
+
+/// GitHub issue #262: 平文タブへ移動/コピーする各メモの画像フォルダ(`sources`: メモ名 → 移動元の
+/// 実フォルダ)について、移動先 `<target_folder>/<メモ名>/` を決める事前チェック。移動先に既に何か
+/// あれば `NameDuplicate`、メモ名が #263 のガードを通らなければ `NameInvalid`(どちらも何も
+/// 触る前に操作全体を拒否する)。
+pub(crate) fn plan_image_folders_into_plain_tab(target_folder: &Path, sources: Vec<(String, PathBuf)>) -> Result<Vec<(String, FolderTransfer)>, AppErrorPayload> {
+    let mut planned = Vec::with_capacity(sources.len());
+    for (name, src) in sources {
+        let Some(dst) = memo_image_folder_path(target_folder, &name) else {
+            return Err(AppErrorPayload::new(ErrorCode::NameInvalid, "memo name is not usable as an image folder name in the target tab"));
+        };
+        if std::fs::symlink_metadata(&dst).is_ok() {
+            return Err(AppErrorPayload::new(ErrorCode::NameDuplicate, "an image folder with this memo's name already exists in the target tab"));
+        }
+        planned.push((name, FolderTransfer { src, dst }));
+    }
+    Ok(planned)
+}
+
+/// `planned` のうち `names` に含まれるメモの転送だけを取り出す(部分取り消し用)。
+pub(crate) fn image_transfers_for(planned: &[(String, FolderTransfer)], names: &[String]) -> Vec<FolderTransfer> {
+    planned.iter().filter(|(n, _)| names.contains(n)).map(|(_, t)| t.clone()).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1967,5 +2005,64 @@ mod tests {
         );
         assert!(dir.join("日記").join("画像-1.png").exists());
         std::fs::remove_dir_all(&parent).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // GitHub issue #262: plain -> plain cross-tab move/copy carries image folders
+    // -----------------------------------------------------------------------
+
+    /// 親「日記　その1」(子「子メモ」)、両方に画像フォルダ。
+    fn t262_plain_source(dir: &Path, registry: &SelfWriteRegistry) {
+        make_memo_with_image_folder(dir, "日記　その1");
+        make_memo_with_image_folder(dir, "子メモ");
+        let mut parent = MetaTreeNode::default_for_new_file("日記　その1".to_string());
+        parent.children.push(MetaTreeNode::default_for_new_file("子メモ".to_string()));
+        save_tab_meta(dir, TAB_META_SCHEMA_VERSION, "test".to_string(), &[parent], None, registry).unwrap();
+    }
+
+    fn t262_move(source_dir: &Path, target_dir: &Path, copy: bool, registry: &SelfWriteRegistry) -> AppResult<MemoMoveResult> {
+        memo_move_cross_tab("tab-1", source_dir, "元", "tab-2", target_dir, "先", &["日記　その1".to_string()], None, 0, copy, registry, &SearchIndex::new())
+    }
+
+    #[test]
+    fn memo_move_cross_tab_plain_to_plain_carries_image_folders() {
+        for copy in [false, true] {
+            let (source_dir, target_dir) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            t262_plain_source(&source_dir, &registry);
+            assert!(matches!(t262_move(&source_dir, &target_dir, copy, &registry), AppResult::Ok(_)), "copy={copy}");
+            for name in ["日記　その1", "子メモ"] {
+                // 名前が変わらないので本文リンクはそのまま
+                assert_eq!(std::fs::read_to_string(target_dir.join(format!("{name}.md"))).unwrap(), format!("![図]({name}/画像-1.png)"));
+                assert_eq!(std::fs::read(target_dir.join(name).join("画像-1.png")).unwrap(), b"png");
+                assert_eq!(source_dir.join(name).join("画像-1.png").exists(), copy, "copy={copy}");
+                assert_eq!(source_dir.join(format!("{name}.md")).exists(), copy);
+            }
+            std::fs::remove_dir_all(&source_dir).ok();
+            std::fs::remove_dir_all(&target_dir).ok();
+        }
+    }
+
+    #[test]
+    fn memo_move_cross_tab_plain_to_plain_rejects_an_image_folder_collision_without_partial_changes() {
+        for copy in [false, true] {
+            let (source_dir, target_dir) = (tempdir(), tempdir());
+            let registry = SelfWriteRegistry::new();
+            t262_plain_source(&source_dir, &registry);
+            // 子メモ側だけ衝突(親のフォルダも動いてはならない)
+            std::fs::create_dir_all(target_dir.join("子メモ")).unwrap();
+            let AppResult::Err(err) = t262_move(&source_dir, &target_dir, copy, &registry) else { panic!("expected rejection") };
+            assert_eq!(err.code, ErrorCode::NameDuplicate);
+            for name in ["日記　その1", "子メモ"] {
+                assert!(source_dir.join(format!("{name}.md")).exists());
+                assert!(source_dir.join(name).join("画像-1.png").exists());
+                assert!(!target_dir.join(format!("{name}.md")).exists());
+            }
+            assert!(!target_dir.join("日記　その1").exists());
+            assert_eq!(std::fs::read_dir(target_dir.join("子メモ")).unwrap().count(), 0);
+            assert_eq!(load_and_reconcile(&source_dir).tree.len(), 1, "source tree unchanged");
+            std::fs::remove_dir_all(&source_dir).ok();
+            std::fs::remove_dir_all(&target_dir).ok();
+        }
     }
 }
