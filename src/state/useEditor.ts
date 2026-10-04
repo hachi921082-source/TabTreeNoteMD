@@ -55,9 +55,39 @@ export interface UseEditorResult {
   discardPendingEdits: () => void;
 }
 
-/** レガシー画像リンク(GitHub issue #266)が含まれうる本文かの安価な事前判定: `![...](` の後、
- * 同じ行で `)` より前に半角スペースがある。偽なら修復コマンドを呼ばない。 */
-const LEGACY_IMAGE_LINK_HINT_RE = /!\[[^\n]*\]\([^\n<)]* /;
+/** レガシー画像リンク(GitHub issue #266)が含まれうる本文かの安価な事前判定: 同じ行で `![` の後に
+ * `](` があり、その後 `)` `<` 改行より前に半角スペースがある。偽なら修復コマンドを呼ばない。
+ * 正規表現はバックトラックで巨大な行に対し多項式時間になるため、線形の1パス走査で判定する
+ * (走査済みの `](` 以降の区間は読み飛ばす — 区間内の `](` から始めても同じ結果になるため)。 */
+function hasLegacyImageLinkHint(text: string): boolean {
+  const n = text.length;
+  let sawBang = false;
+  let i = 0;
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c === 10) {
+      // 改行で行の状態をリセット
+      sawBang = false;
+      i++;
+    } else if (c === 33 && text.charCodeAt(i + 1) === 91) {
+      // `![`
+      sawBang = true;
+      i += 2;
+    } else if (sawBang && c === 93 && text.charCodeAt(i + 1) === 40) {
+      // `](` 以降を `)` `<` 改行まで調べる
+      let j = i + 2;
+      for (; j < n; j++) {
+        const d = text.charCodeAt(j);
+        if (d === 32) return true;
+        if (d === 41 || d === 60 || d === 10) break;
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return false;
+}
 
 export function useEditor(
   tabId: string | null,
@@ -227,7 +257,7 @@ export function useEditor(
         // 山括弧形に直す。エディタの初期内容として渡すので Undo 履歴には載らない。保存は通常の
         // 経路(flushSave → editor_save)で行い、`.bak`・ロックセッションの暗号化もそのまま効く。
         let repairedText: string | null = null;
-        if (!result.value.editLocked && !editLockedRef.current && LEGACY_IMAGE_LINK_HINT_RE.test(result.value.text)) {
+        if (!result.value.editLocked && !editLockedRef.current && hasLegacyImageLinkHint(result.value.text)) {
           const repaired = await imageRepairLegacyLinks(tabId, result.value.text);
           if (cancelled) return;
           if (repaired.ok) repairedText = repaired.value;
