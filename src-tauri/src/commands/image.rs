@@ -31,6 +31,7 @@ use crate::fs::temp_naming::generate_temp_file_name;
 use crate::model::result::{AppErrorPayload, AppResult, ErrorCode};
 use crate::settings::app_settings_store::AppSettingsStore;
 use crate::store::lock_session_store::LockSessionStore;
+use crate::util::image_link_rewrite::{decode_destination, regular_file_without_links, rewrite_image_destinations_with_legacy};
 
 /// Return type of `image_save_pasted` (`docs/plans/image-handling/PLAN.md` §3).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -182,6 +183,36 @@ pub(crate) fn next_sequence_number(dir: &Path) -> u32 {
         })
         .max();
     max.map_or(1, |m| m + 1)
+}
+
+/// GitHub issue #266: 本文中のレガシー画像リンク(#266 以前に書かれた半角スペース入りの裸形
+/// `![](新 メモ/001.png)` — CommonMark ではリンクにならない)を山括弧形 `![](<新 メモ/001.png>)` に
+/// 直した本文を返す。参照先がタブフォルダ基準で実在する通常ファイル(途中にリンク/リパースポイントを
+/// 含まない、`..`・絶対パス不可)の場合のみ修復する。修復が無ければ `None`。ファイルには書き込まない
+/// (フロントエンドが通常の保存経路で保存する — `.bak`・ロックセッションの暗号化もそのまま効く)。
+#[tauri::command]
+pub fn image_repair_legacy_links(
+    app: AppHandle,
+    tab_id: String,
+    body: String,
+    store: State<AppSettingsStore>,
+    registry: State<Arc<SelfWriteRegistry>>,
+    sessions: State<LockSessionStore>,
+) -> AppResult<Option<String>> {
+    let (settings, outcome) = store.get(&registry);
+    emit_settings_recovery_event(&app, outcome);
+    let folder = match resolve_tab_access(&settings, &sessions, &tab_id) {
+        Ok(TabAccess::Plain { folder, .. }) => folder,
+        Ok(TabAccess::Session { folder, .. }) => folder,
+        Err(e) => return AppResult::err(e),
+    };
+    AppResult::ok(repair_legacy_links(&body, &folder))
+}
+
+/// `image_repair_legacy_links` の本体。通常のリンクはそのまま返す(置換結果が同一なら変更なし扱い)。
+fn repair_legacy_links(body: &str, folder: &Path) -> Option<String> {
+    let repaired = rewrite_image_destinations_with_legacy(body, |dest| Some(dest.to_string()), |path| decode_destination(path).is_some_and(|rel| regular_file_without_links(folder, &rel)));
+    repaired.filter(|s| s != body)
 }
 
 /// Reads an image file's raw bytes and returns them as a raw-byte IPC response (Tauri 2.11.5's
@@ -506,6 +537,21 @@ mod tests {
         // 同名のファイルが既にある場合も拒否
         std::fs::write(dir.join("ファイル"), b"x").unwrap();
         assert_eq!(plain_tab_image_dir(&dir, "ファイル"), Err(ErrorCode::NameInvalid));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn repair_legacy_links_brackets_only_existing_files() {
+        // #266: 実在する画像を指すレガシーリンクだけを山括弧形に直す。通常リンクは不変
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("新 メモ")).unwrap();
+        std::fs::write(dir.join("新 メモ").join("001.png"), ONE_PX_PNG).unwrap();
+        let body = "![](新 メモ/001.png) ![](新 メモ/002.png) ![](日記/001.png)
+";
+        assert_eq!(repair_legacy_links(body, &dir).as_deref(), Some("![](<新 メモ/001.png>) ![](新 メモ/002.png) ![](日記/001.png)
+"));
+        assert_eq!(repair_legacy_links("![](<新 メモ/001.png>)
+", &dir), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
