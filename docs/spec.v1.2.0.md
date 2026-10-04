@@ -703,6 +703,11 @@ relocks the tab before a file is chosen, so the save fails with `TabLocked`.
   returns to the window — whichever comes first); it never stays active after the dialog closes.
 - If the app window is not focused at the moment the exception ends (e.g. the user switched to another
   app while the dialog was open), the suppressed focus-loss relock is applied then.
+- The exception is capped at 2 minutes per dialog opening: if the dialog is still open 2 minutes after
+  it opened, the exception ends there (and, the window being unfocused while the dialog is open, the
+  relock above applies). A later close of that same dialog has no further effect.
+- If the window's focus state cannot be determined when the exception ends, the relock is applied
+  (fail closed).
 - Every other focus loss is unchanged — including OS drag-and-drop from Explorer (focus genuinely
   leaves the app) and the app's other native dialogs (PDF export save dialog, tab-add folder picker).
 - The inactivity timer and all other relock triggers are unchanged.
