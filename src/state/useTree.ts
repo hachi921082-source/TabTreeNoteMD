@@ -31,6 +31,7 @@ import type { LabelColor, MemoEditorSettings, MemoMutationWarning, MemoPropertie
 import type { ErrorCode } from "../shared/result";
 import type { ClickModifiers, SelectionState } from "../shared/treeSelection";
 import { applyClick, clearSelection, flattenVisible, moveSelection } from "../shared/treeSelection";
+import { findNode, subtreeNames } from "../shared/treeOps";
 
 /** `warning` is only ever set by `renameMemo`/`deleteMemo` (GitHub issue #263's non-fatal
  * image-folder problem) — the mutation itself succeeded. */
@@ -178,7 +179,10 @@ export interface UseTreeResult {
   refresh: () => Promise<void>;
 }
 
-export function useTree(tabId: string | null): UseTreeResult {
+/** `flushOpenMemoSave`: awaits the open memo's pending autosave (`EditorPane`'s `flushSaveNow`);
+ * `false` = unsaved edits remain. Called before renaming / cross-tab-moving the open memo so its
+ * pending edits aren't flushed against the old (already gone) name afterward (GitHub issue #267). */
+export function useTree(tabId: string | null, flushOpenMemoSave?: () => Promise<boolean>): UseTreeResult {
   const [perTab, setPerTab] = useState<PerTabState>(makeEmptyPerTab);
   const [loading, setLoading] = useState(true);
   const [lastErrorCode, setLastErrorCode] = useState<ErrorCode | null>(null);
@@ -193,6 +197,22 @@ export function useTree(tabId: string | null): UseTreeResult {
   // has since moved on and its result is now stale (e.g. a fast switch to another tab and back).
   const currentTabIdRef = useRef<string | null>(tabId);
   currentTabIdRef.current = tabId;
+
+  // #267: 開いているメモの改名/タブ間移動の直前に保留中の保存を確定させるための参照
+  const flushOpenMemoSaveRef = useRef(flushOpenMemoSave);
+  flushOpenMemoSaveRef.current = flushOpenMemoSave;
+  const openMemoNameRef = useRef<string | null>(openMemoName);
+  openMemoNameRef.current = openMemoName;
+  const nodesRef = useRef<TreeNode[]>(nodes);
+  nodesRef.current = nodes;
+
+  /** `true` = safe to proceed (nothing pending, or flushed OK). On `false` the editor already
+   * shows its own error banner / conflict dialog, so callers just abort without a second error. */
+  const flushIfOpenMemoAffected = useCallback(async (affected: (open: string) => boolean): Promise<boolean> => {
+    const open = openMemoNameRef.current;
+    if (!open || !affected(open) || !flushOpenMemoSaveRef.current) return true;
+    return flushOpenMemoSaveRef.current();
+  }, []);
 
   // Reset ALL per-tab state atomically (single `setPerTab`, see `PerTabState`'s doc comment)
   // synchronously during render, the moment `tabId` changes, instead of waiting for a post-commit
@@ -449,6 +469,10 @@ export function useTree(tabId: string | null): UseTreeResult {
   const renameMemo = useCallback(
     async (path: string, newName: string): Promise<TreeMutationOutcome> => {
       if (!tabId) return { ok: false, code: "UNKNOWN", message: "no active tab" };
+      // #267: 開いているメモなら改名前に保留中の保存を確定。失敗時は改名を中止(編集内容を守る)
+      if (!(await flushIfOpenMemoAffected((open) => open === path))) {
+        return { ok: false, code: "UNKNOWN", message: "pending save of the open memo failed" };
+      }
       const result = await memoRename(tabId, path, newName);
       if (result.ok) {
         applySnapshot(result.value);
@@ -459,7 +483,7 @@ export function useTree(tabId: string | null): UseTreeResult {
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message };
     },
-    [tabId, applySnapshot, applyIfCurrent],
+    [tabId, applySnapshot, applyIfCurrent, flushIfOpenMemoAffected],
   );
 
   const deleteMemo = useCallback(
@@ -500,6 +524,18 @@ export function useTree(tabId: string | null): UseTreeResult {
     async (paths: string[], targetTabId: string, newParent: string | null, index: number, copy: boolean): Promise<TreeMutationOutcome> => {
       if (!tabId) return { ok: false, code: "UNKNOWN", message: "no active tab" };
       const target: MoveTarget = { kind: "otherTab", targetTabId, newParent, index, copy };
+      // #267: 開いているメモ(またはその祖先)を別タブへ移動する場合、移動前に保留中の保存を確定。
+      // 失敗時は移動を中止。コピーは元ファイルが残るため対象外
+      if (!copy) {
+        const movedNames = (open: string) =>
+          paths.some((p) => {
+            const node = findNode(nodesRef.current, p);
+            return node ? subtreeNames(node).includes(open) : p === open;
+          });
+        if (!(await flushIfOpenMemoAffected(movedNames))) {
+          return { ok: false, code: "UNKNOWN", message: "pending save of the open memo failed" };
+        }
+      }
       const result = await memoMove(tabId, paths, target);
       if (result.ok) {
         applySnapshot(result.value.source);
