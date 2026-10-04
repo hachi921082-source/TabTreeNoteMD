@@ -563,7 +563,8 @@ fn rewrite_renamed_memo_image_links(memo_path: &Path, old_name: &str, new_name: 
 /// - 移動元の `.bak` が無い(または直下の通常ファイルでない)なら何もしない
 /// - 移動先の名前がパスガードを通らない、または移動先に既に何かあるなら上書きせず、移動元の
 ///   `.bak` を削除する(ただのバックアップなので、旧名で残すより消す)
-/// - 同一フォルダで大文字小文字だけの改名は同じファイルなので、存在チェックをせずそのまま改名
+/// - 大文字小文字だけの改名(全角・非 ASCII を含む)は移動先が移動元自身として見えるので、名前ではなく
+///   ファイルの実体(`canonicalize` の結果)で同一と判定し、そのまま改名する
 /// - 改名に失敗したら(別ボリューム等)コピー + 削除で運ぶ
 pub(crate) fn carry_memo_bak(src_folder: &Path, src_name: &str, dst_folder: &Path, dst_name: &str, registry: &SelfWriteRegistry) {
     let Some(src) = existing_direct_child_file(src_folder, &format!("{src_name}.md.bak")) else {
@@ -574,8 +575,7 @@ pub(crate) fn carry_memo_bak(src_folder: &Path, src_name: &str, dst_folder: &Pat
         remove_bak_file(&src, registry);
         return;
     };
-    let same_file = src_folder == dst_folder && src_name.eq_ignore_ascii_case(dst_name);
-    if !same_file && std::fs::symlink_metadata(&dst).is_ok() {
+    if std::fs::symlink_metadata(&dst).is_ok() && !is_same_existing_file(&src, &dst) {
         tracing::warn!(path = %dst.display(), "memo .bak: destination backup already exists; removing the source backup instead");
         remove_bak_file(&src, registry);
         return;
@@ -588,6 +588,16 @@ pub(crate) fn carry_memo_bak(src_folder: &Path, src_name: &str, dst_folder: &Pat
     });
     if let Err(err) = result {
         tracing::warn!(error = %err, "memo .bak: failed to carry the backup file along (best-effort, not fatal)");
+    }
+}
+
+/// `a` と `b` が同じ実体ファイルを指すなら `true`。Windows の `canonicalize` は
+/// `GetFinalPathNameByHandle` でディスク上の実際の名前(大文字小文字を含む)を返すため、NTFS が
+/// 同一視する大文字小文字違い(全角 `ａ`/`Ａ`、`é`/`É` など)も一致する。解決できなければ別物扱い。
+fn is_same_existing_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -2212,6 +2222,20 @@ mod tests {
             assert!(!dir.join(format!("{name}.md.bak")).exists(), "{name}.md.bak");
         }
         assert!(dir.join("無関係.md.bak").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 全角など非 ASCII の大文字小文字だけの改名でも、移動先を「既存の別ファイル」と誤認して
+    /// 唯一の `.bak` を消さず、新名で残す。
+    #[test]
+    fn carry_memo_bak_keeps_the_backup_on_a_non_ascii_case_only_rename() {
+        let dir = tempdir();
+        let registry = SelfWriteRegistry::new();
+        std::fs::write(dir.join("ｍｅｍｏ.md.bak"), b"old body").unwrap();
+        carry_memo_bak(&dir, "ｍｅｍｏ", &dir, "Ｍｅｍｏ", &registry);
+        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec!["Ｍｅｍｏ.md.bak".to_string()]);
+        assert_eq!(std::fs::read(dir.join("Ｍｅｍｏ.md.bak")).unwrap(), b"old body");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
