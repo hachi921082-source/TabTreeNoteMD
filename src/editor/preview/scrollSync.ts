@@ -2,15 +2,27 @@
 // RENDERING.md` §6). Pure DOM reads/writes over the preview's own container subtree — never
 // touches CodeMirror state or `contentDOM`, so it carries none of the transaction-safety concerns
 // that apply to code reaching back INTO the CodeMirror editor pane.
-export function scrollPreviewToLine(container: HTMLElement, targetLine: number): void {
+// targetLine は 1-indexed (CodeMirror 行番号 / 保存済み scrollPosition と同じ基準)。
+// data-source-line は 0-indexed (markdown-it の .map) なので、0-indexed への変換はここ1か所だけで行う
+// (GitHub issue #291)。computeTopVisiblePreviewLine の +1 と対になり、保存→復元が同じブロックに戻る。
+function findBlockForLine(container: HTMLElement, targetLine: number): HTMLElement | null {
+  const target0 = targetLine - 1;
   const blocks = container.querySelectorAll<HTMLElement>("[data-source-line]");
   let best: HTMLElement | null = null;
   for (const el of blocks) {
     const line = Number(el.dataset.sourceLine);
-    if (line <= targetLine) best = el; // blocks are in document order, so the last match <= target wins
+    if (line <= target0) best = el; // blocks are in document order, so the last match <= target wins
     else break;
   }
-  best?.scrollIntoView({ block: "start" });
+  return best;
+}
+
+// scrollContainer: 該当ブロックが無い場合 (先頭に空行があり最初のブロックが targetLine より後ろ等) に
+// 先頭 (scrollTop = 0) へ戻す対象。省略時は container 自身 (container がスクロール要素の呼び出し元向け)。
+export function scrollPreviewToLine(container: HTMLElement, targetLine: number, scrollContainer: HTMLElement = container): void {
+  const best = findBlockForLine(container, targetLine);
+  if (best) best.scrollIntoView({ block: "start" });
+  else scrollContainer.scrollTop = 0;
 }
 
 // GitHub issue #279 / spec.v1.2.0 §12: エディタ末尾側スクロール時のプレビュー追従用の純関数群。
@@ -46,15 +58,11 @@ export function syncPreviewToEditorScroll(
   const editorMax = editorScrollDOM.scrollHeight - editorScrollDOM.clientHeight;
   const t = computeEndBlendFactor(editorScrollDOM.scrollTop, editorMax, editorScrollDOM.clientHeight);
   if (t <= 0) {
-    scrollPreviewToLine(contentContainer, targetLine);
+    scrollPreviewToLine(contentContainer, targetLine, scrollContainer);
     return;
   }
-  const blocks = contentContainer.querySelectorAll<HTMLElement>("[data-source-line]");
-  let best: HTMLElement | null = null;
-  for (const el of blocks) {
-    if (Number(el.dataset.sourceLine) <= targetLine) best = el;
-    else break;
-  }
+  // targetLine は 1-indexed。0-indexed 変換は findBlockForLine 内で行う
+  const best = findBlockForLine(contentContainer, targetLine);
   // 行合わせ位置: scrollIntoView({ block: "start" }) が到達する scrollTop 相当
   const matched = best
     ? scrollContainer.scrollTop + (best.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top)
