@@ -11,6 +11,11 @@
 //! segments inside one destination (e.g. `%E6%97%A5/a%20b.png`), and leaves untouched links
 //! byte-identical to before.
 //!
+//! Angle brackets (GitHub issue #266): a destination that already used `<dest>` keeps it; a bare
+//! destination whose rewritten form contains a space / ASCII control character or unbalanced
+//! parentheses (e.g. a memo renamed to `新 メモ`) is wrapped as `<dest>`, since CommonMark rejects
+//! those in a bare destination. Otherwise the bare form is kept.
+//!
 //! Limitation: processing is per line, so an image whose `![alt](dest)` syntax is split across
 //! lines, or an inline code span spanning lines, is not recognised (the app itself always emits
 //! single-line `![](relativePath)` markup — `editor/imagePaste.ts`).
@@ -34,8 +39,9 @@ pub fn rewrite_image_links_for_rename(body: &str, old_name: &str, new_name: &str
 /// 本文中の画像リンク `![alt](dest)` / `![alt](<dest>)` のリンク先を `replace` で置換する
 /// (GitHub issue #265 でインポート時の画像コピーと共用するため #261 の走査部分を汎用化)。
 /// `replace` にはリンク先の生テキスト(山括弧形なら括弧の内側、エスケープ・パーセントエンコードは
-/// 未処理のまま)を渡し、`Some(新リンク先)` ならその範囲だけを置き換える。フェンス・インライン
-/// コード内は対象外。置換が1件も無ければ `None`。
+/// 未処理のまま)を渡し、`Some(新リンク先)` ならその範囲だけを置き換える。新リンク先は山括弧なしで
+/// 返す: 元が山括弧形ならそのまま括弧内に、元が裸形で空白等を含むなら `<...>` で囲んで書く
+/// (GitHub issue #266)。フェンス・インラインコード内は対象外。置換が1件も無ければ `None`。
 pub fn rewrite_image_destinations<F: FnMut(&str) -> Option<String>>(body: &str, mut replace: F) -> Option<String> {
     let mut out = String::with_capacity(body.len() + 16);
     let mut changed = false;
@@ -117,13 +123,21 @@ fn rewrite_line<F: FnMut(&str) -> Option<String>>(line: &str, replace: &mut F, o
                     i += 1;
                     continue;
                 };
-                if let Some(new_dest) = replace(&line[dest.start..dest.end]) {
-                    out.push_str(&line[copied..dest.start]);
-                    out.push_str(&new_dest);
-                    copied = dest.end;
+                let (range, bracketed) = dest;
+                if let Some(new_dest) = replace(&line[range.start..range.end]) {
+                    out.push_str(&line[copied..range.start]);
+                    if !bracketed && needs_angle_brackets(&new_dest) {
+                        // 裸形のままでは CommonMark がリンク先と認めないため山括弧形にする(#266)
+                        out.push('<');
+                        out.push_str(&new_dest);
+                        out.push('>');
+                    } else {
+                        out.push_str(&new_dest);
+                    }
+                    copied = range.end;
                     changed = true;
                 }
-                i = dest.end;
+                i = range.end;
             }
             _ => i += 1,
         }
@@ -152,8 +166,31 @@ fn find_closing_backticks(bytes: &[u8], mut i: usize, run: usize) -> Option<usiz
     None
 }
 
-/// `[` 位置から `[alt](dest ...)` を解析し、リンク先の範囲(山括弧の内側)を返す。
-fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<std::ops::Range<usize>> {
+/// 裸形のリンク先として書けない文字列か(GitHub issue #266)。CommonMark の裸形リンク先は
+/// 半角スペース・ASCII 制御文字を含めず、エスケープされていない丸括弧が対応している必要がある。
+/// 全角スペース等の非 ASCII 空白は裸形のままで有効。
+pub fn needs_angle_brackets(dest: &str) -> bool {
+    let bytes = dest.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if bytes.get(i + 1).is_some_and(|n| n.is_ascii_punctuation()) => i += 1,
+            b' ' | 0x00..=0x1f | 0x7f => return true,
+            b'(' => depth += 1,
+            b')' => match depth.checked_sub(1) {
+                Some(d) => depth = d,
+                None => return true,
+            },
+            _ => {}
+        }
+        i += 1;
+    }
+    depth != 0
+}
+
+/// `[` 位置から `[alt](dest ...)` を解析し、(リンク先の範囲(山括弧の内側), 山括弧形か) を返す。
+fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<(std::ops::Range<usize>, bool)> {
     // alt テキストの対応する `]` を探す(ネスト・バックスラッシュエスケープ対応)
     let mut depth = 0usize;
     let mut i = open_bracket;
@@ -183,7 +220,7 @@ fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<std::ops
         let mut j = start;
         loop {
             match *bytes.get(j)? {
-                b'>' => return Some(start..j),
+                b'>' => return Some((start..j, true)),
                 b'\n' | b'<' => return None,
                 b'\\' => j += 2,
                 _ => j += 1,
@@ -208,7 +245,7 @@ fn parse_image_destination(bytes: &[u8], open_bracket: usize) -> Option<std::ops
         j += 1;
     }
     let end = j.min(bytes.len());
-    (end > start).then_some(start..end)
+    (end > start).then_some((start..end, false))
 }
 
 /// `dest` が `old_prefix` で始まるか判定する。生の形・パーセントエンコード形(大小文字不問、
@@ -346,6 +383,42 @@ mod tests {
     fn handles_parentheses_in_name_and_multiple_links_per_line() {
         let body = "![a](メモ(1)/001.png \"題\") と ![b](メモ(1)/002.png)";
         let got = rewrite_image_links_for_rename(body, "メモ(1)", "新 メモ").unwrap();
-        assert_eq!(got, "![a](新 メモ/001.png \"題\") と ![b](新 メモ/002.png)");
+        // 半角スペースを含む新名は山括弧形で書く(GitHub issue #266)
+        assert_eq!(got, "![a](<新 メモ/001.png> \"題\") と ![b](<新 メモ/002.png>)");
+    }
+
+    #[test]
+    fn spaced_name_uses_angle_brackets_and_normal_names_stay_bare() {
+        let body = "![](日記/001.png)\n";
+        assert_eq!(rewrite_image_links_for_rename(body, "日記", "新 メモ").unwrap(), "![](<新 メモ/001.png>)\n");
+        assert_eq!(rewrite_image_links_for_rename(body, "日記", "日記2").unwrap(), "![](日記2/001.png)\n");
+        // 全角スペースは裸形のままで有効
+        assert_eq!(rewrite_image_links_for_rename(body, "日記", "新\u{3000}メモ").unwrap(), "![](新\u{3000}メモ/001.png)\n");
+        // 対応の取れない丸括弧も山括弧形
+        assert_eq!(rewrite_image_links_for_rename(body, "日記", "メモ(").unwrap(), "![](<メモ(/001.png>)\n");
+    }
+
+    #[test]
+    fn matches_bracketed_spaced_links_and_keeps_bracket_form() {
+        // 既に山括弧形で書かれた空白入りリンクも改名・ロック変換の対象になる
+        let body = "![](<新 メモ/001.png>) ![x](<新 メモ/002.png> \"題\") ![](新 メモ/003.png)\n";
+        let got = rewrite_image_links_for_rename(body, "新 メモ", "a1b2c3").unwrap();
+        // 裸形の空白入りリンク(既存の壊れたリンク)は CommonMark 上リンクでないため対象外
+        assert_eq!(got, "![](<a1b2c3/001.png>) ![x](<a1b2c3/002.png> \"題\") ![](新 メモ/003.png)\n");
+        // 逆方向(ランダム名→空白入りメモ名)は山括弧形で戻る
+        let back = rewrite_image_links_for_rename("![](a1b2c3/001.png)\n", "a1b2c3", "新 メモ").unwrap();
+        assert_eq!(back, "![](<新 メモ/001.png>)\n");
+        assert_eq!(rewrite_image_links_for_rename(&back, "新 メモ", "a1b2c3").unwrap(), "![](<a1b2c3/001.png>)\n");
+    }
+
+    #[test]
+    fn needs_angle_brackets_rules() {
+        assert!(!needs_angle_brackets("メモ/001.png"));
+        assert!(!needs_angle_brackets("メモ(1)/001.png"));
+        assert!(!needs_angle_brackets("メモ\\(/001.png"));
+        assert!(!needs_angle_brackets("新\u{3000}メモ/001.png"));
+        assert!(needs_angle_brackets("新 メモ/001.png"));
+        assert!(needs_angle_brackets("a\tb/001.png"));
+        assert!(needs_angle_brackets("メモ)/001.png"));
     }
 }
