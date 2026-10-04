@@ -46,6 +46,12 @@ export interface UseEditorResult {
    * Resolves `false` if unsaved edits remain after the attempt (save error / conflict) — used to
    * abort an open-memo rename/cross-tab move before it (GitHub issue #267). */
   flushSaveNow: () => Promise<boolean>;
+  /** Deleting the open memo (or an ancestor) intentionally discards it (GitHub issue #267
+   * follow-up): `suspendPendingSave` stops the debounce timer (no write, edits stay dirty) before
+   * `memo_delete`; `discardPendingEdits` marks the buffer clean after the delete succeeded so the
+   * switch-away flush doesn't write against the now-missing file (`NOT_FOUND` banner). */
+  suspendPendingSave: () => void;
+  discardPendingEdits: () => void;
 }
 
 export function useEditor(
@@ -134,6 +140,16 @@ export function useEditor(
     if (!tid || !name) return true;
     return flushSave(tid, name);
   }, [flushSave]);
+
+  // #267 追補: 開いているメモの削除時に保留中の保存を止める/破棄する(書き込みはしない)
+  const suspendPendingSave = useCallback(() => {
+    clearDebounce();
+  }, []);
+
+  const discardPendingEdits = useCallback(() => {
+    clearDebounce();
+    lastSavedTextRef.current = textRef.current;
+  }, []);
 
   const notifyTextChanged = useCallback(
     (text: string) => {
@@ -380,5 +396,7 @@ export function useEditor(
     resolveConflictReloadFromDisk,
     notifyTextChanged,
     flushSaveNow,
+    suspendPendingSave,
+    discardPendingEdits,
   };
 }
