@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { editorClose, editorLoad, editorSave } from "../ipc/editor";
+import { imageRepairLegacyLinks } from "../ipc/image";
 import type { AppSettings, MemoContent } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 import { comboFromEvent, resolveShortcuts } from "../shared/shortcuts";
@@ -53,6 +54,10 @@ export interface UseEditorResult {
   suspendPendingSave: () => void;
   discardPendingEdits: () => void;
 }
+
+/** レガシー画像リンク(GitHub issue #266)が含まれうる本文かの安価な事前判定: `![...](` の後、
+ * 同じ行で `)` より前に半角スペースがある。偽なら修復コマンドを呼ばない。 */
+const LEGACY_IMAGE_LINK_HINT_RE = /!\[[^\n]*\]\([^\n<)]* /;
 
 export function useEditor(
   tabId: string | null,
@@ -218,13 +223,24 @@ export function useEditor(
       const result = await editorLoad(tabId, memoName);
       if (cancelled) return;
       if (result.ok) {
+        // GitHub issue #266: 編集ロックでないメモは、開いた時点でレガシー画像リンク(空白入り裸形)を
+        // 山括弧形に直す。エディタの初期内容として渡すので Undo 履歴には載らない。保存は通常の
+        // 経路(flushSave → editor_save)で行い、`.bak`・ロックセッションの暗号化もそのまま効く。
+        let repairedText: string | null = null;
+        if (!result.value.editLocked && !editLockedRef.current && LEGACY_IMAGE_LINK_HINT_RE.test(result.value.text)) {
+          const repaired = await imageRepairLegacyLinks(tabId, result.value.text);
+          if (cancelled) return;
+          if (repaired.ok) repairedText = repaired.value;
+        }
         tabIdRef.current = tabId;
         memoNameRef.current = memoName;
-        textRef.current = result.value.text;
+        textRef.current = repairedText ?? result.value.text;
+        // 最終保存済みは読み込んだ内容のまま(修復分を未保存の変更として flushSave に書かせる)
         lastSavedTextRef.current = result.value.text;
         lastSavedHashRef.current = result.value.hash;
-        setContent(result.value);
+        setContent(repairedText !== null ? { ...result.value, text: repairedText } : result.value);
         setLoadGeneration((g) => g + 1);
+        if (repairedText !== null) void flushSave(tabId, memoName);
       } else {
         setLastErrorCode(result.error.code);
       }
