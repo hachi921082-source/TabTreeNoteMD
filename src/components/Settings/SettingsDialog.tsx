@@ -402,6 +402,16 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 <option value="preview">{t("paneMode.preview")}</option>
               </select>
             </label>
+            <label className="ttn-settings-row">
+              <span>{t("settings.splitOrientationLabel")}</span>
+              <select
+                value={settings.editorDefaults.splitOrientation ?? "horizontal"}
+                onChange={(e) => void patchSettings({ editorDefaults: { splitOrientation: e.target.value as AppSettings["editorDefaults"]["splitOrientation"] } })}
+              >
+                <option value="horizontal">{t("settings.splitOrientation.horizontal")}</option>
+                <option value="vertical">{t("settings.splitOrientation.vertical")}</option>
+              </select>
+            </label>
           </section>
 
           <section className="ttn-settings-section">
