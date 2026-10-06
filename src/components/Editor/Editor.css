@@ -37,6 +37,12 @@
   flex-direction: column;
 }
 
+/* 上下分割時は左線ではなく、エディタとの境界になる上線にする */
+.ttn-editor-panes-row-vertical .ttn-editor-preview-pane {
+  border-left: none;
+  border-top: 1px solid var(--ttn-border);
+}
+
 .ttn-editor-cm-container {
   /* Sole flex item when pane-mode is `"edit"` (no `.ttn-editor-preview-pane` sibling rendered) —
      `flex-grow: 1` alone already fills 100% of `.ttn-editor-panes-row` in that case; with both
