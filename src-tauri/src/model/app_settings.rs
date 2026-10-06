@@ -202,6 +202,18 @@ pub struct EditorDefaults {
     /// so an old-format `settings.json` still parses.
     #[serde(default)]
     pub pane_mode: PaneMode,
+    /// GitHub issue #295 — 分割表示時の並び方向。旧形式の`settings.json`にも対応するためフィールド単位で`#[serde(default)]`。
+    #[serde(default)]
+    pub split_orientation: SplitOrientation,
+}
+
+/// 分割表示の並び方向(GitHub issue #295)。既定は左右。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum SplitOrientation {
+    #[default]
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,6 +342,7 @@ impl Default for AppSettings {
                 show_line_numbers: true,
                 font_size: 14,
                 pane_mode: PaneMode::Edit,
+                split_orientation: SplitOrientation::Horizontal,
             },
             autosave: AutosaveSettings {
                 plain_debounce_ms: 1500,
