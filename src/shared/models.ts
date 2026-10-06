@@ -117,7 +117,13 @@ export interface EditorDefaults {
   /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — default pane layout for a newly-opened
    * memo with no per-memo override. Default `"edit"` (today's edit-only appearance unchanged). */
   paneMode: PaneMode;
+  /** GitHub issue #295 — 分割表示時のエディタ/プレビューの並び方向。`"horizontal"`は左右、
+   * `"vertical"`は上下。既定`"horizontal"`(従来の見た目を維持)。 */
+  splitOrientation: SplitOrientation;
 }
+
+/** 分割表示の並び方向(GitHub issue #295)。 */
+export type SplitOrientation = "horizontal" | "vertical";
 
 /** Pane-layout tri-state (`docs/plans/markdown/markdown-preview/PLAN.md` §2/§4) — fully
  * independent of `viewMode` (live/source); the two toggles never interact except for the one
