@@ -32,6 +32,11 @@
   width: 100%;
 }
 
+/* 上下分割(GitHub issue #295)。プレビューのみ表示時は子が1つだけなので影響しない。 */
+.ttn-editor-panes-row-vertical {
+  flex-direction: column;
+}
+
 .ttn-editor-cm-container {
   /* Sole flex item when pane-mode is `"edit"` (no `.ttn-editor-preview-pane` sibling rendered) —
      `flex-grow: 1` alone already fills 100% of `.ttn-editor-panes-row` in that case; with both
@@ -52,6 +57,7 @@
 .ttn-editor-preview-pane {
   flex: 1 1 50%;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   box-sizing: border-box;
   border-left: 1px solid var(--ttn-border);
