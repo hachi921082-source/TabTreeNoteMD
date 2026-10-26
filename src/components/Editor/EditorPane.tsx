@@ -83,7 +83,7 @@ import "./Editor.css";
 
 /** Matches `AppSettings::default().editorDefaults` (`model/app_settings.rs`) — used until
  * `appSettings` has loaded from `settings_get`. */
-const FALLBACK_EDITOR_DEFAULTS: EditorDefaults = { wrap: "window", tabWidth: 4, softTab: true, showLineNumbers: true, fontSize: 14, paneMode: "edit" };
+const FALLBACK_EDITOR_DEFAULTS: EditorDefaults = { wrap: "window", tabWidth: 4, softTab: true, showLineNumbers: true, fontSize: 14, paneMode: "edit", splitOrientation: "horizontal" };
 
 /** `docs/plans/markdown/markdown-preview/PLAN.md` §4.1 — the 3-state pane-mode cycling toggle's
  * fixed order, `edit -> split -> preview -> edit -> ...`. */
@@ -1415,7 +1415,9 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       {/* §4.2's DOM restructure: the two sub-panes are siblings inside this new wrapper, while the
           floating toolbar/status-bar/dialogs below stay direct children of `.ttn-editor-pane`
           itself (unchanged mount point — see the toolbar's own clamp-bounds rationale, §6.1). */}
-      <div className="ttn-editor-panes-row">
+      <div
+        className={`ttn-editor-panes-row${editorDefaults.splitOrientation === "vertical" ? " ttn-editor-panes-row-vertical" : ""}`}
+      >
         <div
           className="ttn-editor-cm-container"
           ref={containerRef}

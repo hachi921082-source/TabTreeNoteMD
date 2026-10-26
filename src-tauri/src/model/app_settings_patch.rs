@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer};
 
 use super::app_settings::{
     AppSettings, AppearanceSettings, AutosaveSettings, AutostartSettings, EditorDefaults, EncodingSettings,
-    EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, PaneMode, PreviewSettings, TabSettingsEntry,
+    EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, PaneMode, PreviewSettings, SplitOrientation, TabSettingsEntry,
     Theme, ToolbarPosition, TreeSide, WindowSettings, WrapMode,
 };
 
@@ -138,6 +138,9 @@ pub struct EditorDefaultsPatch {
     /// Additive field, `docs/plans/markdown/markdown-preview/PLAN.md` §3.
     #[serde(default)]
     pub pane_mode: Option<PaneMode>,
+    /// GitHub issue #295。
+    #[serde(default)]
+    pub split_orientation: Option<SplitOrientation>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -321,6 +324,9 @@ impl EditorDefaultsPatch {
         if let Some(v) = self.pane_mode {
             current.pane_mode = v;
         }
+        if let Some(v) = self.split_orientation {
+            current.split_orientation = v;
+        }
     }
 }
 
@@ -439,6 +445,17 @@ mod tests {
         // Untouched sibling `EditorDefaults` fields must survive the merge.
         assert_eq!(current.editor_defaults.wrap, WrapMode::Window);
         assert_eq!(current.editor_defaults.font_size, 14);
+    }
+
+    #[test]
+    fn split_orientation_defaults_to_horizontal_and_patch_merges() {
+        // GitHub issue #295 — 既定は左右、パッチで上下に切り替わり他フィールドは不変。
+        let mut current = AppSettings::default();
+        assert_eq!(current.editor_defaults.split_orientation, SplitOrientation::Horizontal);
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"editorDefaults":{"splitOrientation":"vertical"}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.editor_defaults.split_orientation, SplitOrientation::Vertical);
+        assert_eq!(current.editor_defaults.pane_mode, PaneMode::Edit);
     }
 
     #[test]
