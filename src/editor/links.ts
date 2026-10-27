@@ -191,9 +191,21 @@ export function findNonAsciiEmailTokens(text: string): { index: number; raw: str
   let m: RegExpExecArray | null;
   while ((m = NON_ASCII_EMAIL_CANDIDATE_RE.exec(text))) {
     let raw = correctEmailRange(m[0]);
+    let index = m.index;
+    // ローカル部に「非 ASCII → ASCII」の境界があるときは、最後の境界より後ろ(ASCII 側)だけをメールとして取る
+    // (`連絡先はuser@example.com` は `user@...` のみ。日本語を含めない)。境界直後が `.` `+` `-` など
+    // ローカル部の先頭になれない文字(`日本語.john@example.com`)なら、このトークンは対象外にする
+    const at = raw.indexOf("@");
+    let boundary = -1;
+    for (const b of raw.slice(0, at).matchAll(/[^ -](?=[ -])/g)) boundary = b.index! + 1;
+    if (boundary >= 0) {
+      if (!/^[\p{L}\p{N}\p{M}_]/u.test(raw.slice(boundary))) continue;
+      raw = raw.slice(boundary);
+      index += boundary;
+    }
     raw = raw.replace(/[-_]+$/, "");
     if (!NON_ASCII_RE.test(raw) || !looksLikeEmail(raw)) continue;
-    results.push({ index: m.index, raw });
+    results.push({ index, raw });
   }
   return results;
 }
