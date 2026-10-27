@@ -31,7 +31,8 @@ export interface DetectedLink {
  * URL — both shapes come out of the same `@lezer/markdown` GFM `URL` node type, which does not
  * itself distinguish them (`markdownDecorations.ts` calls this to classify). */
 export function looksLikeEmail(text: string): boolean {
-  return /^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(text);
+  // ローカル部・ドメイン部とも非 ASCII の文字(`\p{L}\p{N}\p{M}`)を許す(#301)。ASCII のみの文字列の判定結果は従来と同じ
+  return /^[\p{L}\p{N}\p{M}_.+-]+@[\p{L}\p{N}\p{M}_-]+\.[\p{L}\p{N}\p{M}_.-]+$/u.test(text);
 }
 
 // Bare-token shapes `@lezer/markdown`'s GFM autolink extension does NOT recognize on its own —
@@ -77,7 +78,7 @@ export function scanBareFilePathTokens(lineText: string, lineFrom: number): Dete
 // --- 非 ASCII 文字を含む URL の検出補正 (#300) ---
 // ライブビュー(`@lezer/markdown` GFM autolink)とプレビュー(`linkify-it`)の両方が、ここの関数を通して
 // 同じリンク範囲に揃える。純 ASCII の文字列は一切触らない(ASCII のリンク検出の挙動は従来のまま)。
-// メール(#301)の非 ASCII 対応は、`findNonAsciiUrlTokens` と同じ形でメール用の正規表現と補正を足す想定。
+// 非 ASCII を含むメール(#301)は `findNonAsciiEmailTokens` が同じ形で扱う。
 
 const NON_ASCII_RE = /[^\x00-\x7f]/;
 // 非 ASCII の句読点・記号・全角括弧(`。、，．！？）」』】〉》`、アラビア語の `،` `؟` 等)。URL はこの直前で切る
@@ -162,6 +163,44 @@ export function findNonAsciiUrlTokens(text: string): { index: number; raw: strin
  * コード範囲の除外と、ツリーで検出済みの URL/Link 範囲との重複排除は呼び出し側で行う)。 */
 export function scanNonAsciiUrlTokens(lineText: string, lineFrom: number): DetectedLink[] {
   return findNonAsciiUrlTokens(lineText).map((t) => ({ from: lineFrom + t.index, to: lineFrom + t.index + t.raw.length, kind: "url", target: t.raw }));
+}
+
+// --- 非 ASCII 文字を含むメールアドレスの検出 (#301) ---
+// ローカル部またはドメイン部に非 ASCII を含むものだけが対象(ASCII のみのメールは従来どおり GFM/linkify-it が扱う)。
+// 文字クラスは `\p{L}\p{N}\p{M}` のみなので、`。` `、` 全角括弧などの非 ASCII 句読点では自然に切れる。
+// 直前が(ローカル部になりうる文字・`@`・`/`)なら語の途中・URL のパスとみなして開始しない。
+const NON_ASCII_EMAIL_CANDIDATE_RE =
+  /(?<![\p{L}\p{N}\p{M}_.+@\/-])[\p{L}\p{N}\p{M}_][\p{L}\p{N}\p{M}_.+-]*@(?:[\p{L}\p{N}\p{M}_-]+\.)+[\p{L}\p{N}\p{M}_-]*[\p{L}\p{N}\p{M}]/gu;
+
+/** メールアドレスの最後のドメインラベルが ASCII の直後に非 ASCII が続く形(`user@example.com日本語`)なら、
+ * ASCII の部分で切る(URL の `correctUrlRange` と同じ規則)。それ以外はそのまま返す。 */
+export function correctEmailRange(raw: string): string {
+  if (!NON_ASCII_RE.test(raw)) return raw;
+  const lastDot = raw.lastIndexOf(".");
+  const tail = /^[ -]+(?=[^ -])/.exec(raw.slice(lastDot + 1));
+  return tail ? raw.slice(0, lastDot + 1) + tail[0] : raw;
+}
+
+/** テキストから、ローカル部またはドメイン部に非 ASCII 文字を含むメールアドレスを探す。
+ * 最後のラベルが ASCII の直後に非 ASCII が続く形(`ユーザー@example.com日本語`)なら、URL(`correctUrlRange`)と同じく
+ * ASCII の部分で切る。切った結果が ASCII のみになるものは対象外(既存の検出が扱う)。
+ * URL 内の `@` などとの重複排除は呼び出し側の責務(コード範囲・既存リンク範囲との重複排除)。 */
+export function findNonAsciiEmailTokens(text: string): { index: number; raw: string }[] {
+  const results: { index: number; raw: string }[] = [];
+  NON_ASCII_EMAIL_CANDIDATE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = NON_ASCII_EMAIL_CANDIDATE_RE.exec(text))) {
+    let raw = correctEmailRange(m[0]);
+    raw = raw.replace(/[-_]+$/, "");
+    if (!NON_ASCII_RE.test(raw) || !looksLikeEmail(raw)) continue;
+    results.push({ index: m.index, raw });
+  }
+  return results;
+}
+
+/** 1 行のテキストから非 ASCII を含むメールアドレスを探す(呼び出し側の責務は `scanNonAsciiUrlTokens` と同じ)。 */
+export function scanNonAsciiEmailTokens(lineText: string, lineFrom: number): DetectedLink[] {
+  return findNonAsciiEmailTokens(lineText).map((t) => ({ from: lineFrom + t.index, to: lineFrom + t.index + t.raw.length, kind: "email", target: t.raw }));
 }
 
 export function isMemoScheme(url: string): boolean {
