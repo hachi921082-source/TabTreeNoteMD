@@ -81,7 +81,9 @@ export function scanBareFilePathTokens(lineText: string, lineFrom: number): Dete
 
 const NON_ASCII_RE = /[^\x00-\x7f]/;
 // 非 ASCII の句読点・記号・全角括弧(`。、，．！？）」』】〉》`、アラビア語の `،` `؟` 等)。URL はこの直前で切る
-const NON_ASCII_PUNCT_RE = /(?=[^\x00-\x7f])[\p{P}\p{S}]/u;
+// ただし `・`(U+30FB)`〜`(U+301C)`～`(U+FF5E)は URL の文字として残す(Wikipedia 等のパスで使われるため)。
+// 既知の限界: `https://x.jp/日本語・次の文` のように `・` の後に文が続く場合、`・` 以降も URL に含まれる
+const NON_ASCII_PUNCT_RE = /(?=[^\x00-\x7f])(?![・〜～])[\p{P}\p{S}]/u;
 // 補正対象は `http(s)://` と `www.` で始まるトークンのみ(メール等は対象外)
 const URL_PREFIX_RE = /^(?:https?:\/\/|www\.)/i;
 // 非 ASCII ホスト名の URL 候補(`https://` 直後〜最初の `/?#` までに非 ASCII 文字を含むもの)。
