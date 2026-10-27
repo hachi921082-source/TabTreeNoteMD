@@ -79,6 +79,27 @@ function classifyExternalLink(href: string): { kind: ExternalLinkKind; value: st
   return { kind: "url", value: href };
 }
 
+/** markdown-it が非ASCII文字をパーセントエンコードしたhrefを元の表記へ戻す。`%20`等のASCII分は書かれたまま残す。 */
+function decodeNonAsciiPercent(href: string): string {
+  return href.replace(/(?:%[89A-Fa-f][0-9A-Fa-f])+/g, (m) => {
+    try {
+      return decodeURIComponent(m);
+    } catch {
+      return m;
+    }
+  });
+}
+
+/** 右クリックされた要素がコピー対象リンク(URL/メール/ファイルパス)のアンカー内なら、そのリンク先文字列を返す。
+ * `memo:` と `#見出し` リンク、アンカー外は null。 */
+export function getPreviewLinkCopyValue(target: EventTarget | null, container: HTMLElement | null): string | null {
+  const anchor = (target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
+  if (!anchor || (container && !container.contains(anchor))) return null;
+  const href = anchor.getAttribute("href") ?? "";
+  if (!href || href.startsWith("memo:") || href.startsWith("#")) return null;
+  return decodeNonAsciiPercent(classifyExternalLink(href).value);
+}
+
 async function openExternal(kind: ExternalLinkKind, value: string, config: PreviewInteractionsConfig, extendedSearchText?: string): Promise<void> {
   if (config.confirmBeforeOpen) {
     const confirmed = await config.requestExternalConfirm(kind, value);
