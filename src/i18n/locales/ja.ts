@@ -140,6 +140,7 @@ export const ja = {
   "editor.convertTabsToSpaces": "タブをスペースに",
   "editor.convertSpacesToTabs": "スペースをタブに",
   "editor.toggleCheckbox": "チェック（☐/☑）",
+  "editor.copyLink": "リンクをコピー",
   "editor.searchGoogle": "Googleで検索",
   "editor.openSearchReplace": "検索と置換",
   "editor.showWhitespace": "空白/改行を表示",
