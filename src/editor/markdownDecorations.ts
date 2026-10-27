@@ -28,7 +28,7 @@ import type { SyntaxNodeRef } from "@lezer/common";
 import { checkboxDecoration } from "./checkboxClick";
 import { findColorSpans, findImageTags, findMarkSpans, findMathSpans } from "./markdownSpanParser";
 import type { DetectedLink, LinkKind } from "./links";
-import { linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens } from "./links";
+import { correctUrlRange, linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens, scanNonAsciiUrlTokens } from "./links";
 import { getOrLoadImage, hasImageLoadFailed } from "./imageLoader";
 import type { AppSettings, ExternalLinkKind } from "../shared/models";
 
@@ -356,6 +356,10 @@ class MarkdownDecorationsPlugin implements PluginValue {
     // `memo:`/file-path token scan, so a bare token that happens to sit inside a `[label](url)`'s
     // parenthesized URL isn't separately, redundantly detected as its own bare auto-link.
     const linkNodeRanges: Range2[] = [];
+    // ツリーで検出した裸 URL(範囲補正後)と `<url>` 形式のオートリンクの範囲。非 ASCII ドメイン URL の
+    // 走査(`scanNonAsciiUrlTokens`)だけがこれを除外に使う(`linkNodeRanges` に混ぜると既存の
+    // memo:/ファイルパス走査の挙動が変わるため別リストにしている)
+    const urlNodeRanges: Range2[] = [];
 
     const addMark = (from: number, to: number, deco: Decoration) => {
       if (from < to) ranges.push(deco.range(from, to));
@@ -452,13 +456,19 @@ class MarkdownDecorationsPlugin implements PluginValue {
           case "URL": {
             const parentName = node.node.parent?.type.name;
             if (parentName === "Link" || parentName === "Image") break; // handled via the parent above
-            const text = state.sliceDoc(node.from, node.to);
+            // 非 ASCII の句読点・全角括弧・ドメイン直後の非 ASCII 文字までリンクに含めないよう範囲を補正する(#300)。
+            // 純 ASCII の URL・メールは correctUrlRange がそのまま返すので挙動は変わらない
+            const text = correctUrlRange(state.sliceDoc(node.from, node.to));
+            if (!text) break;
+            const to = node.from + text.length;
             const kind: LinkKind = looksLikeEmail(text) ? "email" : "url";
-            links.push({ from: node.from, to: node.to, kind, target: text });
-            addMark(node.from, node.to, Decoration.mark({ class: "cm-md-link" }));
+            links.push({ from: node.from, to, kind, target: text });
+            addMark(node.from, to, Decoration.mark({ class: "cm-md-link" }));
+            urlNodeRanges.push({ from: node.from, to });
             break;
           }
           case "Autolink": {
+            urlNodeRanges.push({ from: node.from, to: node.to });
             const { marks, url } = collectLinkParts(node);
             if (marks.length < 1 || !url) break;
             const text = state.sliceDoc(url.from, url.to);
@@ -476,10 +486,17 @@ class MarkdownDecorationsPlugin implements PluginValue {
     // of the Lezer grammar.
     const docText = state.doc.toString();
     const bareTokenSkipRanges = [...codeSkipRanges, ...linkNodeRanges];
+    const nonAsciiUrlSkipRanges = [...bareTokenSkipRanges, ...urlNodeRanges];
     for (let lineNo = 1; lineNo <= state.doc.lines; lineNo++) {
       const line = state.doc.line(lineNo);
       for (const link of [...scanBareMemoTokens(line.text, line.from), ...scanBareFilePathTokens(line.text, line.from)]) {
         if (overlapsAny(bareTokenSkipRanges, link.from, link.to)) continue;
+        links.push(link);
+        addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
+      }
+      // 非 ASCII ドメインの URL(`https://日本語.jp/abc` 等)は GFM autolink が検出しないので別途走査する(#300)
+      for (const link of scanNonAsciiUrlTokens(line.text, line.from)) {
+        if (overlapsAny(nonAsciiUrlSkipRanges, link.from, link.to)) continue;
         links.push(link);
         addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
       }
