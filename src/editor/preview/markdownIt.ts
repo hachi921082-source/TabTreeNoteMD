@@ -37,7 +37,7 @@ import katex from "katex";
 // verification step, "disable network access, confirm formulas still render with correct
 // glyphs/styling," is reviewer-lite's live-test pass, not repeated here).
 import "katex/dist/katex.min.css";
-import { BARE_MEMO_RE, FILE_PATH_RE, correctUrlRange, findNonAsciiUrlTokens } from "../links";
+import { BARE_MEMO_RE, FILE_PATH_RE, correctEmailRange, correctUrlRange, findNonAsciiEmailTokens, findNonAsciiUrlTokens } from "../links";
 
 /** `Token`'s own class is exported as a type-only named export by markdown-it's bundled `.d.mts`
  * (`export { ..., type Token, ... }`) — there is no runtime value to `import` and take `typeof` of.
@@ -309,7 +309,7 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
   // ドメイン直後の非 ASCII 文字)を `correctUrlRange` で切る。(2) 直前が文字だと検出されない・
   // `linkify-it` が見つけない非 ASCII ホストの URL(`日本語https://...`)を `findNonAsciiUrlTokens` で補う。
   // コア規則は `.test()` が真のときだけ `.match()` を呼ぶので、`.test()` も (2) の分だけ真にする
-  md.linkify.test = (text: string) => originalTest(text) || (!inOriginalMatch && findNonAsciiUrlTokens(text).length > 0);
+  md.linkify.test = (text: string) => originalTest(text) || (!inOriginalMatch && (findNonAsciiUrlTokens(text).length > 0 || findNonAsciiEmailTokens(text).length > 0));
   // `markdown-it` の inline 規則 `linkify`(`scheme://` を `:` の位置で検出する)は `.match()` ではなく
   // `.matchAtStart()` を使うので、そちらも同じ補正を通す
   const originalMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
@@ -326,6 +326,16 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
       inOriginalMatch = false;
     }
     const matches = (found ?? []).filter((m) => !isUnwantedMdFilenameFuzzyMatch(m));
+    // #301: `linkify-it` のメールもドメイン直後の非 ASCII 文字(`user@example.com日本語`)を含めてしまうので、ライブビューと同じ範囲に切る
+    for (const m of matches) {
+      if (m.schema !== "mailto:") continue;
+      const corrected = correctEmailRange(m.raw);
+      if (corrected === m.raw) continue;
+      m.raw = corrected;
+      m.text = corrected;
+      m.url = "mailto:" + corrected;
+      m.lastIndex = m.index + corrected.length;
+    }
     for (let i = matches.length - 1; i >= 0; i--) {
       if (!correctLinkifyMatch(matches[i], text)) matches.splice(i, 1);
     }
@@ -333,6 +343,16 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
       const end = t.index + t.raw.length;
       if (matches.some((m) => t.index < m.lastIndex && m.index < end)) continue;
       matches.push({ schema: t.raw.toLowerCase().startsWith("https") ? "https:" : "http:", index: t.index, lastIndex: end, raw: t.raw, text: t.raw, url: t.raw });
+    }
+    // #301: 非 ASCII を含むメールをライブビューと同じ範囲で補う。`linkify-it` 自身のメール検出(ドメイン部のみ対応・
+    // 範囲が異なりうる)と重なるときは置き換え、URL など他のリンクと重なるとき(URL 内の `@` 等)は採用しない。
+    // href は `mailto:` + 記述どおりのアドレス(ドメインの punycode 化・ローカル部の %XX 化は `normalizeLink` が行う)
+    for (const t of findNonAsciiEmailTokens(text)) {
+      const end = t.index + t.raw.length;
+      const overlapping = matches.filter((m) => t.index < m.lastIndex && m.index < end);
+      if (overlapping.some((m) => m.schema !== "mailto:")) continue;
+      for (const m of overlapping) matches.splice(matches.indexOf(m), 1);
+      matches.push({ schema: "mailto:", index: t.index, lastIndex: end, raw: t.raw, text: t.raw, url: "mailto:" + t.raw });
     }
     matches.sort((a, b) => a.index - b.index);
     return matches;
