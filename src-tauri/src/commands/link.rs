@@ -153,6 +153,7 @@ pub enum ExternalLinkKind {
 #[tauri::command]
 pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, extended_search_text: Option<String>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
     let opener = app.opener();
+    allow_launched_process_foreground();
     let result = match kind {
         ExternalLinkKind::Url => opener.open_url(normalize_url(&value), None::<String>),
         ExternalLinkKind::Email => opener.open_url(normalize_mailto(&value), None::<String>),
@@ -176,6 +177,22 @@ pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String,
         }
     }
 }
+
+/// 外部リンクを開く直前に呼ぶ。リンクをクリックした時点で本アプリは前面権限を持つが、既に起動中の
+/// ブラウザ等が ShellExecute 要求を受けても前面化権限が無く、タスクバー点滅だけで背面に残る
+/// (GitHub issue #298)。`AllowSetForegroundWindow(ASFW_ANY)` で起動/受信側プロセスに前面化を許可する。
+/// ベストエフォート: 失敗は警告ログのみで、リンクを開く処理は妨げない。Windows 以外では何もしない。
+#[cfg(windows)]
+fn allow_launched_process_foreground() {
+    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
+    // SAFETY: 引数は定数のみで、ポインタ等は渡さない。
+    if let Err(err) = unsafe { AllowSetForegroundWindow(ASFW_ANY) } {
+        tracing::warn!(error = %err, "link_open_external: AllowSetForegroundWindow failed (ignored)");
+    }
+}
+
+#[cfg(not(windows))]
+fn allow_launched_process_foreground() {}
 
 fn normalize_url(value: &str) -> String {
     let lower = value.to_ascii_lowercase();
