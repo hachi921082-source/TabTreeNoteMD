@@ -138,6 +138,7 @@ export const en: Record<keyof typeof ja, string> = {
   "editor.convertTabsToSpaces": "Tabs to Spaces",
   "editor.convertSpacesToTabs": "Spaces to Tabs",
   "editor.toggleCheckbox": "Toggle Checkbox (☐/☑)",
+  "editor.copyLink": "Copy link",
   "editor.searchGoogle": "Search with Google",
   "editor.openSearchReplace": "Find and Replace",
   "editor.showWhitespace": "Show Whitespace",

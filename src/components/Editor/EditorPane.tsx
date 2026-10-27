@@ -39,6 +39,8 @@ import {
   sourceMathMarkerViewExtension,
 } from "../../editor/codeMirrorSetup";
 import type { MarkdownDecorationConfig } from "../../editor/markdownDecorations";
+import { findLinkAtCoords } from "../../editor/markdownDecorations";
+import { getPreviewLinkCopyValue } from "../../editor/preview/previewInteractions";
 import { resolveAndScrollToHeadingAnchor } from "../../editor/links";
 import { computeTopVisiblePreviewLine, scrollPreviewToLine } from "../../editor/preview/scrollSync";
 import { imagePasteExtension, isImageFilePath, saveAndInsertDroppedPaths } from "../../editor/imagePaste";
@@ -215,7 +217,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   const [renderTick, setRenderTick] = useState(0);
 
   const [showWhitespace, setShowWhitespace] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; linkTarget: string | null } | null>(null);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [properties, setProperties] = useState<MemoProperties | null>(null);
   const toolbarRef = useRef<MarkdownToolbarHandle>(null);
@@ -1281,6 +1283,18 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     return () => window.removeEventListener("keydown", handler);
   }, [appSettings?.shortcuts, onZoomIn, onZoomOut]);
 
+  // 右クリック位置のコピー対象リンク(URL/メール/ファイルパス)のリンク先。memo:/#見出しとリンク外は null。
+  const resolveLinkCopyTarget = (e: React.MouseEvent): string | null => {
+    if ((e.target as HTMLElement).closest(".ttn-editor-preview-pane")) {
+      return getPreviewLinkCopyValue(e.target, null);
+    }
+    const view = viewRef.current;
+    if (!view) return null;
+    const link = findLinkAtCoords(view, e.clientX, e.clientY);
+    if (!link || (link.kind !== "url" && link.kind !== "email" && link.kind !== "filePath")) return null;
+    return link.target;
+  };
+
   const runOnView = (fn: (view: EditorView) => void) => {
     const view = viewRef.current;
     if (view) fn(view);
@@ -1288,7 +1302,19 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
   // Separators group the menu by role (GitHub issue #117): history / clipboard-selection / line
   // & text ops / markdown checkbox / search / display toggle / properties.
-  const buildMenuItems = (): ContextMenuEntry[] => [
+  const buildMenuItems = (linkTarget: string | null): ContextMenuEntry[] => [
+    // リンク上の右クリック時のみ表示(読み取り専用操作なのでreadOnlyでも無効化しない)。
+    ...(linkTarget !== null
+      ? ([
+          {
+            label: t("editor.copyLink"),
+            onSelect: () => {
+              void navigator.clipboard.writeText(linkTarget).catch((err) => console.warn("copy link failed", err));
+            },
+          },
+          { type: "separator" },
+        ] as ContextMenuEntry[])
+      : []),
     { label: t("common.undo"), onSelect: () => runOnView(undoCommand), disabled: readOnly },
     { label: t("common.redo"), onSelect: () => runOnView(redoCommand), disabled: readOnly },
     { type: "separator" },
@@ -1407,7 +1433,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
       className="ttn-editor-pane"
       onContextMenu={(e) => {
         e.preventDefault();
-        setContextMenu({ x: e.clientX, y: e.clientY });
+        setContextMenu({ x: e.clientX, y: e.clientY, linkTarget: resolveLinkCopyTarget(e) });
       }}
     >
       {ed.loading && <div className="ttn-editor-loading">{t("common.loading")}</div>}
@@ -1498,7 +1524,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
         </div>
       )}
 
-      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={buildMenuItems()} onClose={() => setContextMenu(null)} />}
+      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={buildMenuItems(contextMenu.linkTarget)} onClose={() => setContextMenu(null)} />}
 
       {ed.conflict && (
         <ConflictDialog

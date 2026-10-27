@@ -22,7 +22,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { EditorView } from "@codemirror/view";
 import { renderMarkdownToHtml } from "../../editor/preview/previewRenderer";
-import { attachPreviewInteractions } from "../../editor/preview/previewInteractions";
+import { attachPreviewInteractions, getPreviewLinkCopyValue } from "../../editor/preview/previewInteractions";
 import type { PreviewInteractionsConfig } from "../../editor/preview/previewInteractions";
 import { syncPreviewToEditorScroll } from "../../editor/preview/scrollSync";
 import { getOrLoadImage } from "../../editor/imageLoader";
@@ -284,9 +284,10 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
         // (deviates from `RENDERING.md` §4.3's literal `onContextMenu={(e) => e.preventDefault()}`
         // snippet, which alone would leave that outer app-level menu still showing — see this
         // feature's implementation report).
+        // 例外: コピー対象リンク上の右クリックのみ EditorPane のメニュー(リンクをコピー)へ伝播させる。
         onContextMenu={(e) => {
           e.preventDefault();
-          e.stopPropagation();
+          if (getPreviewLinkCopyValue(e.target, containerRef.current) === null) e.stopPropagation();
         }}
       >
         {/* Outer div above is the scroll container (full pane width/background regardless of pane
