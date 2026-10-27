@@ -266,9 +266,16 @@ function isUnwantedMdFilenameFuzzyMatch(match: { schema: string; raw: string }):
 
 /** `linkify-it` の検出結果(`http(s)://`/`www.`)を `correctUrlRange` で補正する(`links.ts`、#300)。
  * `m` を直接書き換える。リンクにならない形になったら false。ASCII のみ・対象外の形式は何もしない。 */
-function correctLinkifyMatch(m: { schema: string; index: number; lastIndex: number; raw: string; text: string; url: string }): boolean {
+function correctLinkifyMatch(m: { schema: string; index: number; lastIndex: number; raw: string; text: string; url: string }, source: string): boolean {
   if (m.schema !== "" && m.schema !== "http:" && m.schema !== "https:") return true;
-  const corrected = correctUrlRange(m.raw);
+  // `linkify-it` は `・` `〜` `～` で URL を打ち切るが、ライブビューはこれらを URL の文字として扱うので、
+  // 直後がこれらの文字なら元テキストから範囲を取り直す(`source` は `m.index` を起点とする位置が有効なテキスト)
+  let raw = m.raw;
+  if (/^[・〜～]/.test(source.slice(m.index + raw.length))) {
+    const wider = correctUrlRange(/^[^\s<]+/.exec(source.slice(m.index))![0]);
+    if (wider.length > raw.length && wider.startsWith(raw)) raw = wider;
+  }
+  const corrected = correctUrlRange(raw);
   if (corrected === m.raw) return true;
   if (!corrected) return false;
   m.url = (m.schema === "" ? "http://" : "") + corrected;
@@ -308,7 +315,7 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
   const originalMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
   md.linkify.matchAtStart = (text: string) => {
     const m = originalMatchAtStart(text);
-    return m && correctLinkifyMatch(m) ? m : null;
+    return m && correctLinkifyMatch(m, text) ? m : null;
   };
   md.linkify.match = (text: string) => {
     inOriginalMatch = true;
@@ -320,7 +327,7 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
     }
     const matches = (found ?? []).filter((m) => !isUnwantedMdFilenameFuzzyMatch(m));
     for (let i = matches.length - 1; i >= 0; i--) {
-      if (!correctLinkifyMatch(matches[i])) matches.splice(i, 1);
+      if (!correctLinkifyMatch(matches[i], text)) matches.splice(i, 1);
     }
     for (const t of findNonAsciiUrlTokens(text)) {
       const end = t.index + t.raw.length;
