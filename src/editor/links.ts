@@ -98,6 +98,21 @@ function countChar(text: string, ch: string): number {
   return n;
 }
 
+/** `@lezer/markdown` の autolink と同じ規則で、URL 末尾の ASCII 記号(`?!.,:*_~`、対応のない `)`、
+ * 文字参照 `&...;`)を外す。 */
+function trimAsciiUrlTail(url: string): string {
+  let out = url;
+  for (;;) {
+    const last = out[out.length - 1];
+    let m: RegExpExecArray | null;
+    if (last !== undefined && (/[?!.,:*_~]/.test(last) || (last === ")" && countChar(out, ")") > countChar(out, "("))))
+      out = out.slice(0, -1);
+    else if (last === ";" && (m = /&(?:#\d+|#x[a-f\d]+|\w+);$/i.exec(out))) out = out.slice(0, m.index);
+    else break;
+  }
+  return out;
+}
+
 /** 検出済み URL トークン(`http(s)://...`/`www....`)の末尾を補正して、リンクにする部分だけを返す。
  * 1. 最初の非 ASCII 句読点・記号・全角括弧の直前で切る。
  * 2. ホスト名の最後のラベルが ASCII の直後に非 ASCII 文字が続く形(`example.com日本語`)なら、ドメインの終わりで切る
@@ -121,11 +136,7 @@ export function correctUrlRange(text: string): string {
   else kept = hostMatch[0] + after;
   let out = prefix[0] + kept;
   if (out.length === text.length) return text;
-  for (;;) {
-    const last = out[out.length - 1];
-    if (last !== undefined && (/[?!.,:*_~]/.test(last) || (last === ")" && countChar(out, ")") > countChar(out, "(")))) out = out.slice(0, -1);
-    else break;
-  }
+  out = trimAsciiUrlTail(out);
   return out.length > prefix[0].length ? out : "";
 }
 
@@ -137,7 +148,8 @@ export function findNonAsciiUrlTokens(text: string): { index: number; raw: strin
   NON_ASCII_URL_CANDIDATE_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = NON_ASCII_URL_CANDIDATE_RE.exec(text))) {
-    const raw = correctUrlRange(m[0]);
+    // 切り詰めが起きなかった場合も、GFM と同じ末尾 ASCII 記号の除去をかける(`correctUrlRange` は切ったときだけ除去する)
+    const raw = trimAsciiUrlTail(correctUrlRange(m[0]));
     if (!raw || !NON_ASCII_URL_VALID_RE.test(raw)) continue;
     const host = /^https?:\/\/([^/?#]*)/i.exec(raw)![1];
     if (!NON_ASCII_RE.test(host)) continue;
