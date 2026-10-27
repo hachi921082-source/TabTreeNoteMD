@@ -83,6 +83,9 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - **§12 Split-View Scroll Sync at the Editor's Scroll End (Bug Fix — GitHub issue #279, added 2026-10-04)**
   — over the editor's last viewport of scroll, the preview is blended from the line-matched position to
   its own end, so the whole preview stays reachable when it is much taller than the editor. Decided.
+- **§13 Split-View Orientation Setting (New — GitHub issue #295 / PR #297, added 2026-10-27)** — new
+  `editorDefaults.splitOrientation` (`horizontal` default / `vertical`) chosen in the settings dialog;
+  split view only. Decided.
 - **Open Questions for User**
 
 ---
@@ -743,6 +746,23 @@ Decided 2026-10-04 (GitHub issue #279); no open points.
 
 ---
 
+## 13. Split-View Orientation Setting (New — GitHub issue #295 / PR #297, added 2026-10-27)
+
+Elaborates `[spec §2]` pane modes / default pane display setting.
+
+- **Setting**: `AppSettings.editorDefaults.splitOrientation` = `"horizontal"` (default) | `"vertical"`.
+  - `horizontal`: editor left, preview right; border on the preview's left edge (existing behavior).
+  - `vertical`: editor top, preview bottom, 50/50 split; border on the preview's top edge instead of the left.
+- **UI**: selector in the settings dialog directly under the default pane display. Labels (ja): 分割表示の向き /
+  左右に並べる / 上下に並べる.
+- **Scope**: applies only while split view is shown; `edit`-only and `preview`-only modes unaffected.
+- **Scroll sync**: unchanged (height-based, `[spec v1.2.0 §12]`).
+- **Compatibility**: a `settings.json` without the field loads as `horizontal`.
+
+Decided (GitHub issue #295); no open points.
+
+---
+
 ## Open Questions for User
 
-None. All twelve items (§1–§12) are fully decided.
+None. All thirteen items (§1–§13) are fully decided.
