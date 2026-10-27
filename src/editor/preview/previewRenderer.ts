@@ -205,6 +205,8 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
       // Issue #235's bare-file-path click-time search widening (`markdownIt.ts`'s
       // `bareLinkCoreRule`/`previewInteractions.ts`'s `handleAnchorClick`).
       "data-extended-search-text",
+      // 非 ASCII を含む URL の記述どおりの文字列(`markdownIt.ts`/`previewInteractions.ts` のリンクコピー用、#299/#300)。
+      "data-source-url",
       // KaTeX `<svg>`/`<path>` attributes (see the `ALLOWED_TAGS` comment above) — `width`/`height`
       // are already allowlisted (shared with `<img>`), so only these five are new.
       "aria-hidden", "d", "viewBox", "preserveAspectRatio", "xmlns",
