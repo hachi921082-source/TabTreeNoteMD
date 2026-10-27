@@ -97,6 +97,10 @@ export function getPreviewLinkCopyValue(target: EventTarget | null, container: H
   if (!anchor || (container && !container.contains(anchor))) return null;
   const href = anchor.getAttribute("href") ?? "";
   if (!href || href.startsWith("memo:") || href.startsWith("#")) return null;
+  // 非 ASCII を含む URL は、記述どおりの文字列(`markdownIt.ts` が `data-source-url` に載せる)を優先する。
+  // href は markdown-it がホスト名を punycode 化・パスを %XX 化した値なので、そこからは復元できない(#299/#300)
+  const sourceUrl = anchor.dataset.sourceUrl;
+  if (sourceUrl) return classifyExternalLink(sourceUrl).value;
   return decodeNonAsciiPercent(classifyExternalLink(href).value);
 }
 
