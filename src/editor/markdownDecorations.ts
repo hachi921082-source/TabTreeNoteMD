@@ -544,7 +544,13 @@ class MarkdownDecorationsPlugin implements PluginValue {
   // properties defined outside this class body but called with `this` bound to the plugin
   // instance at runtime; TypeScript's `private` is a compile-time-only, lexically-scoped check
   // that would reject that access pattern even though it's safe.
+  linkAtPos(pos: number): DetectedLink | null {
+    return this.links.find((l) => pos >= l.from && pos <= l.to) ?? null;
+  }
+
   handleMouseEvent(event: MouseEvent, view: EditorView, eventType: "click" | "dblclick"): boolean {
+    // 右クリック・中クリックではリンクを開かない(右クリックメニュー「リンクをコピー」のため)。
+    if (event.button !== 0) return false;
     const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
     if (pos == null) return false;
     const link = this.links.find((l) => pos >= l.from && pos <= l.to);
@@ -600,9 +606,17 @@ class MarkdownDecorationsPlugin implements PluginValue {
  * enclosing compartment (`codeMirrorSetup.ts`'s `liveViewCompartment`) whenever it changes, same
  * pattern as `editor/textCommands.ts`'s other compartmentalized settings. */
 export function markdownDecorationExtension(config: MarkdownDecorationConfig): Extension {
-  return [
-    markdownConfigFacet.of(config),
-    ViewPlugin.fromClass(MarkdownDecorationsPlugin, {
+  return [markdownConfigFacet.of(config), markdownDecorationsViewPlugin];
+}
+
+/** 画面座標に位置するリンクを返す。クリック判定と同じ検出結果(this.links)を再利用する。 */
+export function findLinkAtCoords(view: EditorView, x: number, y: number): DetectedLink | null {
+  const pos = view.posAtCoords({ x, y });
+  if (pos == null) return null;
+  return view.plugin(markdownDecorationsViewPlugin)?.linkAtPos(pos) ?? null;
+}
+
+const markdownDecorationsViewPlugin = ViewPlugin.fromClass(MarkdownDecorationsPlugin, {
       decorations: (plugin) => plugin.decorations,
       eventHandlers: {
         mousedown(event, view) {
@@ -621,9 +635,7 @@ export function markdownDecorationExtension(config: MarkdownDecorationConfig): E
           return this.handleMouseEvent(event, view, "dblclick");
         },
       },
-    }),
-  ];
-}
+});
 
 /** Source-view-only "this is an image reference" marker (GitHub issue #81). Source view shows raw
  * Markdown text with no decoration extension active at all (`liveViewCompartment` swaps in `[]`
