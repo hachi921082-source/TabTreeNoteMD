@@ -74,6 +74,96 @@ export function scanBareFilePathTokens(lineText: string, lineFrom: number): Dete
   return results;
 }
 
+// --- 非 ASCII 文字を含む URL の検出補正 (#300) ---
+// ライブビュー(`@lezer/markdown` GFM autolink)とプレビュー(`linkify-it`)の両方が、ここの関数を通して
+// 同じリンク範囲に揃える。純 ASCII の文字列は一切触らない(ASCII のリンク検出の挙動は従来のまま)。
+// メール(#301)の非 ASCII 対応は、`findNonAsciiUrlTokens` と同じ形でメール用の正規表現と補正を足す想定。
+
+const NON_ASCII_RE = /[^\x00-\x7f]/;
+// 非 ASCII の句読点・記号・全角括弧(`。、，．！？）」』】〉》`、アラビア語の `،` `؟` 等)。URL はこの直前で切る
+// ただし `・`(U+30FB)`〜`(U+301C)`～`(U+FF5E)は URL の文字として残す(Wikipedia 等のパスで使われるため)。
+// 既知の限界: `https://x.jp/日本語・次の文` のように `・` の後に文が続く場合、`・` 以降も URL に含まれる
+const NON_ASCII_PUNCT_RE = /(?=[^\x00-\x7f])(?![・〜～])[\p{P}\p{S}]/u;
+// 補正対象は `http(s)://` と `www.` で始まるトークンのみ(メール等は対象外)
+const URL_PREFIX_RE = /^(?:https?:\/\/|www\.)/i;
+// 非 ASCII ホスト名の URL 候補(`https://` 直後〜最初の `/?#` までに非 ASCII 文字を含むもの)。
+// 直前が ASCII の英数字・`_` なら語の途中とみなす(`@lezer/markdown` の autolink と同じ判定)
+const NON_ASCII_URL_CANDIDATE_RE = /(?<![A-Za-z0-9_])https?:\/\/(?=[^\s<\/?#]*[^\x00-\x7f])[^\s<]+/gi;
+// 補正後の URL がドメイン名(`.` 区切りの非 ASCII 対応ラベル)+任意のポート+任意のパスの形か
+const NON_ASCII_URL_VALID_RE = /^https?:\/\/(?:[\p{L}\p{N}\p{M}_-]+\.)+[\p{L}\p{N}\p{M}_-]+(?::\d+)?(?:\/.*)?$/u;
+
+function countChar(text: string, ch: string): number {
+  let n = 0;
+  for (const c of text) if (c === ch) n++;
+  return n;
+}
+
+/** `@lezer/markdown` の autolink と同じ規則で、URL 末尾の ASCII 記号(`?!.,:*_~`、対応のない `)`、
+ * 文字参照 `&...;`)を外す。 */
+function trimAsciiUrlTail(url: string): string {
+  let out = url;
+  for (;;) {
+    const last = out[out.length - 1];
+    let m: RegExpExecArray | null;
+    if (last !== undefined && (/[?!.,:*_~]/.test(last) || (last === ")" && countChar(out, ")") > countChar(out, "("))))
+      out = out.slice(0, -1);
+    else if (last === ";" && (m = /&(?:#\d+|#x[a-f\d]+|\w+);$/i.exec(out))) out = out.slice(0, m.index);
+    else break;
+  }
+  return out;
+}
+
+/** 検出済み URL トークン(`http(s)://...`/`www....`)の末尾を補正して、リンクにする部分だけを返す。
+ * 1. 最初の非 ASCII 句読点・記号・全角括弧の直前で切る。
+ * 2. ホスト名の最後のラベルが ASCII の直後に非 ASCII 文字が続く形(`example.com日本語`)なら、ドメインの終わりで切る
+ *    (ポートの直後に非 ASCII が続く場合も同様。パスは `/` で始まるときだけ残す)。
+ * 3. 切ったときだけ、末尾の ASCII 記号(`?!.,:*_~`、対応のない `)`)を `@lezer/markdown` と同じ規則で外す。
+ * 純 ASCII、または対象外の形式なら入力をそのまま返す。リンクにならない形になった場合は空文字を返す。 */
+export function correctUrlRange(text: string): string {
+  if (!NON_ASCII_RE.test(text)) return text;
+  const prefix = URL_PREFIX_RE.exec(text);
+  if (!prefix) return text;
+  const punct = NON_ASCII_PUNCT_RE.exec(text);
+  const rest = text.slice(prefix[0].length, punct ? punct.index : text.length);
+  const hostMatch = /^([^/?#:\s]*)(:\d+)?/.exec(rest)!;
+  const hostname = hostMatch[1];
+  const after = rest.slice(hostMatch[0].length);
+  const lastDot = hostname.lastIndexOf(".");
+  const lastLabelTail = /^[\x00-\x7f]+(?=[^\x00-\x7f])/.exec(hostname.slice(lastDot + 1));
+  let kept: string;
+  if (lastLabelTail) kept = hostname.slice(0, lastDot + 1) + lastLabelTail[0];
+  else if (after && !after.startsWith("/")) kept = hostMatch[0];
+  else kept = hostMatch[0] + after;
+  let out = prefix[0] + kept;
+  if (out.length === text.length) return text;
+  out = trimAsciiUrlTail(out);
+  return out.length > prefix[0].length ? out : "";
+}
+
+/** テキストから、非 ASCII ホスト名(国際化ドメイン、`https://日本語.jp/abc` 等)を持つ `http(s)://` URL を探す。
+ * `@lezer/markdown`/`linkify-it` が前者は ASCII ホストのみ、後者は直前が文字だと検出できない分を補う。
+ * 補正後のホストが ASCII だけになるもの(`https://example.com日本語`)は対象外(既存の検出が扱う)。 */
+export function findNonAsciiUrlTokens(text: string): { index: number; raw: string }[] {
+  const results: { index: number; raw: string }[] = [];
+  NON_ASCII_URL_CANDIDATE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = NON_ASCII_URL_CANDIDATE_RE.exec(text))) {
+    // 切り詰めが起きなかった場合も、GFM と同じ末尾 ASCII 記号の除去をかける(`correctUrlRange` は切ったときだけ除去する)
+    const raw = trimAsciiUrlTail(correctUrlRange(m[0]));
+    if (!raw || !NON_ASCII_URL_VALID_RE.test(raw)) continue;
+    const host = /^https?:\/\/([^/?#]*)/i.exec(raw)![1];
+    if (!NON_ASCII_RE.test(host)) continue;
+    results.push({ index: m.index, raw });
+  }
+  return results;
+}
+
+/** 1 行のテキストから非 ASCII ホスト名の URL を探す(`scanBareFilePathTokens` と同じ呼び出し側の責務:
+ * コード範囲の除外と、ツリーで検出済みの URL/Link 範囲との重複排除は呼び出し側で行う)。 */
+export function scanNonAsciiUrlTokens(lineText: string, lineFrom: number): DetectedLink[] {
+  return findNonAsciiUrlTokens(lineText).map((t) => ({ from: lineFrom + t.index, to: lineFrom + t.index + t.raw.length, kind: "url", target: t.raw }));
+}
+
 export function isMemoScheme(url: string): boolean {
   return url.startsWith("memo:");
 }

@@ -37,7 +37,7 @@ import katex from "katex";
 // verification step, "disable network access, confirm formulas still render with correct
 // glyphs/styling," is reviewer-lite's live-test pass, not repeated here).
 import "katex/dist/katex.min.css";
-import { BARE_MEMO_RE, FILE_PATH_RE } from "../links";
+import { BARE_MEMO_RE, FILE_PATH_RE, correctUrlRange, findNonAsciiUrlTokens } from "../links";
 
 /** `Token`'s own class is exported as a type-only named export by markdown-it's bundled `.d.mts`
  * (`export { ..., type Token, ... }`) — there is no runtime value to `import` and take `typeof` of.
@@ -228,14 +228,29 @@ function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCto
   return sawMatch ? out : children;
 }
 
-function bareLinkCoreRule(state: StateCore): void {
-  for (const blockToken of state.tokens) {
-    if (blockToken.type !== "inline" || !blockToken.children) continue;
-    let children = blockToken.children;
-    children = splitTextTokensByBareTokenRegex(children, BARE_MEMO_RE, state.Token, false);
-    children = splitTextTokensByBareTokenRegex(children, FILE_PATH_RE, state.Token, true);
-    blockToken.children = children;
+/** 非 ASCII 文字を含む URL の記述どおりの文字列を、そのアンカーの `data-source-url` に載せる(#299/#300)。
+ * markdown-it の `normalizeLink` はホスト名を punycode 化・パスを `%XX` 化した href を作るため、
+ * 「リンクをコピー」(`previewInteractions.ts`)は href からは記述どおりの URL を復元できない。
+ * `rawUrlByHref` は `createPreviewMarkdownIt` が `normalizeLink` をラップして記録した「正規化後 → 記述どおり」の対応。 */
+function annotateSourceUrls(children: Token[], rawUrlByHref: Map<string, string>): void {
+  for (const tok of children) {
+    if (tok.type !== "link_open") continue;
+    const raw = rawUrlByHref.get(String(tok.attrGet("href") ?? ""));
+    if (raw) tok.attrSet("data-source-url", raw);
   }
+}
+
+function makeBareLinkCoreRule(rawUrlByHref: Map<string, string>): (state: StateCore) => void {
+  return (state) => {
+    for (const blockToken of state.tokens) {
+      if (blockToken.type !== "inline" || !blockToken.children) continue;
+      let children = blockToken.children;
+      children = splitTextTokensByBareTokenRegex(children, BARE_MEMO_RE, state.Token, false);
+      children = splitTextTokensByBareTokenRegex(children, FILE_PATH_RE, state.Token, true);
+      blockToken.children = children;
+      annotateSourceUrls(children, rawUrlByHref);
+    }
+  };
 }
 
 /** `linkify-it`'s `fuzzyLink: true` (set below for bare `www.`-token parity with the live view,
@@ -247,6 +262,27 @@ function bareLinkCoreRule(state: StateCore): void {
  * link, a `<http://...>` autolink, or a genuine scheme-ful bare URL are untouched. */
 function isUnwantedMdFilenameFuzzyMatch(match: { schema: string; raw: string }): boolean {
   return match.schema === "" && /^[^\s:/]+\.md$/i.test(match.raw) && !/^www\./i.test(match.raw);
+}
+
+/** `linkify-it` の検出結果(`http(s)://`/`www.`)を `correctUrlRange` で補正する(`links.ts`、#300)。
+ * `m` を直接書き換える。リンクにならない形になったら false。ASCII のみ・対象外の形式は何もしない。 */
+function correctLinkifyMatch(m: { schema: string; index: number; lastIndex: number; raw: string; text: string; url: string }, source: string): boolean {
+  if (m.schema !== "" && m.schema !== "http:" && m.schema !== "https:") return true;
+  // `linkify-it` は `・` `〜` `～` で URL を打ち切るが、ライブビューはこれらを URL の文字として扱うので、
+  // 直後がこれらの文字なら元テキストから範囲を取り直す(`source` は `m.index` を起点とする位置が有効なテキスト)
+  let raw = m.raw;
+  if (/^[・〜～]/.test(source.slice(m.index + raw.length))) {
+    const wider = correctUrlRange(/^[^\s<]+/.exec(source.slice(m.index))![0]);
+    if (wider.length > raw.length && wider.startsWith(raw)) raw = wider;
+  }
+  const corrected = correctUrlRange(raw);
+  if (corrected === m.raw) return true;
+  if (!corrected) return false;
+  m.url = (m.schema === "" ? "http://" : "") + corrected;
+  m.raw = corrected;
+  m.text = corrected;
+  m.lastIndex = m.index + corrected.length;
+  return true;
 }
 
 /** Builds a fresh configured instance. Stateless across calls to `render`/`parse` — it retains no
@@ -266,15 +302,57 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
   // whenever `.test()` said yes — an empty array satisfies that same assumption (the `links.length
   // > 0` check downstream just no-ops), but `null` crashes it.
   const originalMatch = md.linkify.match.bind(md.linkify);
-  md.linkify.match = (text: string) => {
-    const matches = originalMatch(text);
-    if (!matches) return matches;
-    return matches.filter((m) => !isUnwantedMdFilenameFuzzyMatch(m));
+  const originalTest = md.linkify.test.bind(md.linkify);
+  // `originalMatch` は内部で `this.test()`(下で差し替える版)を呼ぶので、その間だけ元の判定に戻す
+  let inOriginalMatch = false;
+  // #300: ライブビューと同じリンク範囲にそろえる。(1) `linkify-it` が取りすぎる末尾(非 ASCII の句読点・全角括弧、
+  // ドメイン直後の非 ASCII 文字)を `correctUrlRange` で切る。(2) 直前が文字だと検出されない・
+  // `linkify-it` が見つけない非 ASCII ホストの URL(`日本語https://...`)を `findNonAsciiUrlTokens` で補う。
+  // コア規則は `.test()` が真のときだけ `.match()` を呼ぶので、`.test()` も (2) の分だけ真にする
+  md.linkify.test = (text: string) => originalTest(text) || (!inOriginalMatch && findNonAsciiUrlTokens(text).length > 0);
+  // `markdown-it` の inline 規則 `linkify`(`scheme://` を `:` の位置で検出する)は `.match()` ではなく
+  // `.matchAtStart()` を使うので、そちらも同じ補正を通す
+  const originalMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
+  md.linkify.matchAtStart = (text: string) => {
+    const m = originalMatchAtStart(text);
+    return m && correctLinkifyMatch(m, text) ? m : null;
   };
+  md.linkify.match = (text: string) => {
+    inOriginalMatch = true;
+    let found: ReturnType<typeof originalMatch>;
+    try {
+      found = originalMatch(text);
+    } finally {
+      inOriginalMatch = false;
+    }
+    const matches = (found ?? []).filter((m) => !isUnwantedMdFilenameFuzzyMatch(m));
+    for (let i = matches.length - 1; i >= 0; i--) {
+      if (!correctLinkifyMatch(matches[i], text)) matches.splice(i, 1);
+    }
+    for (const t of findNonAsciiUrlTokens(text)) {
+      const end = t.index + t.raw.length;
+      if (matches.some((m) => t.index < m.lastIndex && m.index < end)) continue;
+      matches.push({ schema: t.raw.toLowerCase().startsWith("https") ? "https:" : "http:", index: t.index, lastIndex: end, raw: t.raw, text: t.raw, url: t.raw });
+    }
+    matches.sort((a, b) => a.index - b.index);
+    return matches;
+  };
+  // 非 ASCII を含む URL の「正規化後 → 記述どおり」を記録する(`annotateSourceUrls` が使う)。
+  // 描画ごとに作り直すので、`normalize` 規則(コア規則の先頭)でクリアする
+  const rawUrlByHref = new Map<string, string>();
+  const originalNormalizeLink = md.normalizeLink;
+  md.normalizeLink = (url: string) => {
+    const normalized = originalNormalizeLink(url);
+    if (/[^\u0000-\u007f]/.test(url)) rawUrlByHref.set(normalized, url);
+    return normalized;
+  };
+  md.core.ruler.before("normalize", "ttn_reset_source_urls", () => {
+    rawUrlByHref.clear();
+  });
   md.renderer.rules.table_open = wrapTableOpen;
   md.renderer.rules.table_close = wrapTableClose;
   md.renderer.rules.image = renderImageWithDeferredSrc;
-  md.core.ruler.push("ttn_bare_link_scan", bareLinkCoreRule);
+  md.core.ruler.push("ttn_bare_link_scan", makeBareLinkCoreRule(rawUrlByHref));
 
   // Math rendering (`PLAN.md` §2.1): `"dollars"` preset registers `$...$` (`math_inline`) and
   // `$$...$$` (`math_block` when it starts its own line, `math_inline_double` — still KaTeX
