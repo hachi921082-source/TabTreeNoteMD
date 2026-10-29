@@ -309,7 +309,7 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
   // ドメイン直後の非 ASCII 文字)を `correctUrlRange` で切る。(2) 直前が文字だと検出されない・
   // `linkify-it` が見つけない非 ASCII ホストの URL(`日本語https://...`)を `findNonAsciiUrlTokens` で補う。
   // コア規則は `.test()` が真のときだけ `.match()` を呼ぶので、`.test()` も (2) の分だけ真にする
-  md.linkify.test = (text: string) => originalTest(text) || (!inOriginalMatch && (findNonAsciiUrlTokens(text).length > 0 || findNonAsciiEmailTokens(text).length > 0));
+  md.linkify.test = (text: string) => originalTest(text) || (!inOriginalMatch && (findNonAsciiUrlTokens(text).length > 0 || findNonAsciiEmailTokens(text, true).length > 0));
   // `markdown-it` の inline 規則 `linkify`(`scheme://` を `:` の位置で検出する)は `.match()` ではなく
   // `.matchAtStart()` を使うので、そちらも同じ補正を通す
   const originalMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
@@ -347,7 +347,7 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
     // #301: 非 ASCII を含むメールをライブビューと同じ範囲で補う。`linkify-it` 自身のメール検出(ドメイン部のみ対応・
     // 範囲が異なりうる)と重なるときは置き換え、URL など他のリンクと重なるとき(URL 内の `@` 等)は採用しない。
     // href は `mailto:` + 記述どおりのアドレス(ドメインの punycode 化・ローカル部の %XX 化は `normalizeLink` が行う)
-    for (const t of findNonAsciiEmailTokens(text)) {
+    for (const t of findNonAsciiEmailTokens(text, true)) {
       const end = t.index + t.raw.length;
       const overlapping = matches.filter((m) => t.index < m.lastIndex && m.index < end);
       if (overlapping.some((m) => m.schema !== "mailto:")) continue;
