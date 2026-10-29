@@ -24,7 +24,7 @@ use crate::crypto::kdf::{self, KdfParams};
 use crate::crypto::lock_blob::{self, FileMapEntry, ImageFolderEntry, LockField, LockKey, LockPayload};
 use crate::fs::atomic_write::{atomic_write, bak_path};
 use crate::fs::image_folder_transfer::{transfer_all, undo_transfers, FolderTransfer};
-use crate::fs::path_safety::{existing_direct_child_file, existing_memo_image_folder, memo_image_folder_path};
+use crate::fs::path_safety::{direct_child_file_path, existing_direct_child_file, existing_memo_image_folder, memo_image_folder_path};
 use crate::fs::trash;
 use crate::fs::retry::with_retry;
 use crate::fs::self_write_registry::SelfWriteRegistry;
@@ -63,13 +63,33 @@ struct LockInProgressMarker {
     image_folders: Vec<ImageFolderEntry>,
 }
 
+/// GitHub issue #311: `fileMap` の token(`<tab_folder>/<token>`)を、タブフォルダ直下の 1 要素としてだけ解決する。
+/// `join` は絶対パス・ドライブ指定・`..\` で基準を置き換え/抜け出せるため、読み書き・削除の前に必ず通す。
+fn token_file_path(folder: &Path, token: &str) -> Result<PathBuf, AppErrorPayload> {
+    direct_child_file_path(folder, token).ok_or_else(|| AppErrorPayload::new(ErrorCode::NameInvalid, "invalid memo file token in the lock data"))
+}
+
+/// GitHub issue #311: `<メモ名>.md` を、タブフォルダ直下の 1 要素としてだけ解決する(`token_file_path` と同じ理由)。
+fn memo_file_path(folder: &Path, memo_name: &str) -> Result<PathBuf, AppErrorPayload> {
+    if !lock_blob::is_valid_memo_name(memo_name) {
+        return Err(AppErrorPayload::new(ErrorCode::NameInvalid, "invalid memo name in the lock data"));
+    }
+    direct_child_file_path(folder, &format!("{memo_name}.md")).ok_or_else(|| AppErrorPayload::new(ErrorCode::NameInvalid, "invalid memo name in the lock data"))
+}
+
 fn marker_path(folder: &Path) -> PathBuf {
     folder.join(LOCK_INPROGRESS_MARKER_NAME)
 }
 
 fn load_marker(folder: &Path) -> Option<LockInProgressMarker> {
     let bytes = std::fs::read(marker_path(folder)).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let marker: LockInProgressMarker = serde_json::from_slice(&bytes).ok()?;
+    // GitHub issue #311: 細工された token / メモ名が 1 件でもあれば、壊れたマーカーと同じく読めない扱いにする
+    if !lock_blob::entries_are_valid(&marker.file_map, &marker.image_folders) {
+        tracing::warn!("load_marker: rejected a lock-in-progress marker with an invalid fileMap/imageFolders entry");
+        return None;
+    }
+    Some(marker)
 }
 
 fn write_marker(folder: &Path, marker: &LockInProgressMarker, registry: &SelfWriteRegistry) -> std::io::Result<()> {
@@ -136,8 +156,10 @@ fn delete_unlock_marker(folder: &Path, registry: &SelfWriteRegistry) -> std::io:
 /// `tab-lock-permanent-unlock/PLAN.md` §4.1) each interpret the same two booleans according to
 /// their own direction's success criterion. Returns `(real_exists, token_exists)`.
 fn pair_exists(folder: &Path, entry: &FileMapEntry) -> (bool, bool) {
-    let real = folder.join(format!("{}.md", entry.memo_name));
-    let token = folder.join(&entry.token);
+    // 不正な名前は存在しない扱い(分類は Anomalous になり、何にも触れない)
+    let (Ok(real), Ok(token)) = (memo_file_path(folder, &entry.memo_name), token_file_path(folder, &entry.token)) else {
+        return (false, false);
+    };
     (real.exists(), token.exists())
 }
 
@@ -780,8 +802,8 @@ fn write_lock_field(folder: &Path, field: &LockField, registry: &SelfWriteRegist
 /// `<memo>/…` image links are rewritten to `<random>/…` in memory, so only the encrypted copy
 /// carries the new links (the plaintext file is never rewritten on disk).
 fn rename_and_encrypt_entry(folder: &Path, entry: &FileMapEntry, image_folder: Option<&str>, key: &LockKey, registry: &SelfWriteRegistry) -> Result<(), AppErrorPayload> {
-    let src = folder.join(format!("{}.md", entry.memo_name));
-    let dst = folder.join(&entry.token);
+    let src = memo_file_path(folder, &entry.memo_name)?;
+    let dst = token_file_path(folder, &entry.token)?;
 
     let mut plaintext = std::fs::read(&src).map_err(|err| {
         tracing::error!(error = %err, path = %src.display(), "failed to read memo file to encrypt");
@@ -1010,7 +1032,8 @@ async fn resolve_key_and_lock_payload(
 /// been renamed back to `<memo>/`; the decrypted body's `<random>/...` links are then rewritten to
 /// `<memo>/...` in memory before the single plaintext write (the `.md` never points at a missing folder).
 fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, image_folder: Option<&str>, key: &LockKey, registry: &SelfWriteRegistry) -> Result<(), AppErrorPayload> {
-    let token_path = folder.join(&entry.token);
+    let token_path = token_file_path(folder, &entry.token)?;
+    let real_path = memo_file_path(folder, &entry.memo_name)?;
     let bytes = std::fs::read(&token_path).map_err(|err| {
         tracing::error!(error = %err, path = %token_path.display(), "failed to read an obfuscated memo file while permanently unlocking this tab");
         AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while unlocking this tab")
@@ -1021,7 +1044,6 @@ fn restore_one_permanent_unlock_entry(folder: &Path, entry: &FileMapEntry, image
             plaintext = rewritten;
         }
     }
-    let real_path = folder.join(format!("{}.md", entry.memo_name));
     atomic_write(&real_path, &plaintext, registry).map_err(|err| {
         tracing::error!(error = %err, path = %real_path.display(), "failed to restore a plaintext memo file while permanently unlocking this tab");
         AppErrorPayload::new(ErrorCode::Unknown, "failed to restore a memo file")
@@ -1156,7 +1178,8 @@ fn permanent_unlock_relock_files(folder: &Path, payload: &LockPayload, planned: 
                 return Err(AppErrorPayload::new(ErrorCode::AnomalousFileState, "an unexpected file state was found while restoring this tab's lock"));
             }
             UnlockEntryState::Restored => {
-                let real_path = folder.join(format!("{}.md", entry_fm.memo_name));
+                let real_path = memo_file_path(folder, &entry_fm.memo_name)?;
+                let token_path = token_file_path(folder, &entry_fm.token)?;
                 let mut plaintext = std::fs::read(&real_path).map_err(|err| {
                     tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to read a plaintext memo file");
                     AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while restoring this tab's lock")
@@ -1167,7 +1190,6 @@ fn permanent_unlock_relock_files(folder: &Path, payload: &LockPayload, planned: 
                     }
                 }
                 let encrypted = lock_blob::encrypt_memo_body(key, &plaintext);
-                let token_path = folder.join(&entry_fm.token);
                 atomic_write(&token_path, &encrypted, registry).map_err(|err| {
                     tracing::error!(error = %err, "tab_permanent_unlock_recovery_restore: failed to write an obfuscated memo file");
                     AppErrorPayload::new(ErrorCode::Unknown, "failed to restore an obfuscated memo file")
@@ -1279,7 +1301,7 @@ pub async fn tab_permanent_unlock(app: AppHandle, tab_id: String, password: Opti
     // Step 12: reindex.
     let search_index = app.state::<SearchIndex>();
     for entry_fm in &payload.file_map {
-        if let Ok(bytes) = std::fs::read(folder.join(format!("{}.md", entry_fm.memo_name))) {
+        if let Some(Ok(bytes)) = memo_file_path(&folder, &entry_fm.memo_name).ok().map(std::fs::read) {
             let (decoded, _encoding) = decode_memo_body(&bytes);
             search_index.upsert(&tab_id, &entry_fm.memo_name, &decoded);
         }
@@ -1367,7 +1389,7 @@ async fn derive_and_verify_recovery_key(folder: &Path, marker: &LockInProgressMa
     let Some(verify_entry) = marker.file_map.iter().find(|e| classify_entry(folder, e) == EntryState::Renamed) else {
         return Err(AppErrorPayload::new(ErrorCode::Unknown, "nothing to recover for this tab"));
     };
-    let verify_bytes = std::fs::read(folder.join(&verify_entry.token))
+    let verify_bytes = std::fs::read(token_file_path(folder, &verify_entry.token)?)
         .map_err(|_| AppErrorPayload::new(ErrorCode::Unknown, "failed to read a recovered memo file"))?;
     lock_blob::decrypt_memo_body(&key, &verify_bytes).map_err(|_| AppErrorPayload::new(ErrorCode::DecryptFailed, "incorrect password"))?;
 
@@ -1550,7 +1572,8 @@ fn recovery_restore_files(folder: &Path, marker: &LockInProgressMarker, key: &Lo
         if classify_entry(folder, entry_fm) != EntryState::Renamed {
             continue;
         }
-        let token_path = folder.join(&entry_fm.token);
+        let token_path = token_file_path(folder, &entry_fm.token)?;
+        let real_path = memo_file_path(folder, &entry_fm.memo_name)?;
         let bytes = std::fs::read(&token_path).map_err(|err| {
             tracing::error!(error = %err, "tab_lock_recovery_restore: failed to read an encrypted memo file");
             AppErrorPayload::new(ErrorCode::Unknown, "failed to read a memo file while restoring this tab")
@@ -1562,7 +1585,6 @@ fn recovery_restore_files(folder: &Path, marker: &LockInProgressMarker, key: &Lo
                 plaintext = rewritten;
             }
         }
-        let real_path = folder.join(format!("{}.md", entry_fm.memo_name));
         atomic_write(&real_path, &plaintext, registry).map_err(|err| {
             tracing::error!(error = %err, "tab_lock_recovery_restore: failed to restore a plaintext memo file");
             AppErrorPayload::new(ErrorCode::Unknown, "failed to restore a memo file")
@@ -1954,7 +1976,7 @@ pub(crate) fn session_create_memo(
         let token = obfuscated_naming::generate_unique_token(folder);
         let key = LockKey::new(&session.key);
         let encrypted = lock_blob::encrypt_memo_body(&key, b"");
-        if let Err(err) = atomic_write(&folder.join(&token), &encrypted, registry) {
+        if let Err(err) = atomic_write(&token_file_path(folder, &token)?, &encrypted, registry) {
             tracing::error!(error = %err, "session_create_memo: failed to write obfuscated memo file");
             return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to create memo file"));
         }
@@ -2063,7 +2085,7 @@ pub(crate) fn session_delete_memo(
             let Some(entry) = file_map.iter().find(|e| &e.memo_name == name) else {
                 continue;
             };
-            let token_path = folder.join(&entry.token);
+            let token_path = token_file_path(folder, &entry.token)?;
             // GitHub issue #282: セッション中の保存で出来た `<token>.bak` もトークンファイルと同じく
             // 完全削除する(ベストエフォート、無ければ何もしない)
             if let Some(bak) = existing_direct_child_file(folder, &format!("{}.bak", entry.token)) {
@@ -2242,7 +2264,7 @@ pub(crate) fn session_import_file(
                 }
             }
             let token = obfuscated_naming::generate_unique_token(folder);
-            if let Err(err) = atomic_write(&folder.join(&token), &encrypted, registry) {
+            if let Err(err) = atomic_write(&token_file_path(folder, &token)?, &encrypted, registry) {
                 tracing::error!(error = %err, "session_import_file: failed to write obfuscated memo file");
                 return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to import memo file"));
             }
@@ -2260,7 +2282,7 @@ pub(crate) fn session_import_file(
                 return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo to overwrite not found"));
             };
             let real_name = entry.memo_name.clone();
-            let token_path = folder.join(&entry.token);
+            let token_path = token_file_path(folder, &entry.token)?;
             if tree::find_node(tree, &real_name).and_then(|n| n.locked) == Some(true) {
                 // Defensive fallback, same policy as the plain path (`commands/import.rs`) — the
                 // frontend already disables the Overwrite control for an edit-locked collision
@@ -2293,7 +2315,7 @@ pub(crate) fn session_get_properties(sessions: &LockSessionStore, folder: &Path,
         let Some(entry) = session.file_map.iter().find(|e| e.memo_name == path) else {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo file not found"));
         };
-        let token_path = folder.join(&entry.token);
+        let token_path = token_file_path(folder, &entry.token)?;
         let metadata = std::fs::metadata(&token_path).map_err(|_| AppErrorPayload::new(ErrorCode::NotFound, "memo file not found"))?;
         let bytes = std::fs::read(&token_path).map_err(|_| AppErrorPayload::new(ErrorCode::NotFound, "memo file not found"))?;
         let key = LockKey::new(&session.key);
@@ -2347,7 +2369,7 @@ pub(crate) fn session_editor_load(
         let Some(entry) = session.file_map.iter().find(|e| e.memo_name == path) else {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
         };
-        let bytes = std::fs::read(folder.join(&entry.token)).map_err(|err| {
+        let bytes = std::fs::read(token_file_path(folder, &entry.token)?).map_err(|err| {
             tracing::error!(error = %err, "session_editor_load: failed to read obfuscated memo file");
             AppErrorPayload::new(ErrorCode::NotFound, "failed to read memo file")
         })?;
@@ -2409,7 +2431,7 @@ pub(crate) fn session_editor_save(
         let Some(entry) = session.file_map.iter().find(|e| e.memo_name == path) else {
             return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
         };
-        let token_path = folder.join(&entry.token);
+        let token_path = token_file_path(folder, &entry.token)?;
 
         let on_disk = std::fs::read(&token_path).map_err(|err| {
             tracing::error!(error = %err, "session_editor_save: failed to read obfuscated memo file for conflict check");
@@ -2487,7 +2509,7 @@ fn gather_session_move(sessions: &LockSessionStore, source_tab_id: &str, source_
             let Some(entry) = session.file_map.iter().find(|e| &e.memo_name == name) else {
                 return Err(AppErrorPayload::new(ErrorCode::Unknown, "internal inconsistency: memo missing from file map"));
             };
-            let bytes = std::fs::read(source_folder.join(&entry.token)).map_err(|err| {
+            let bytes = std::fs::read(token_file_path(source_folder, &entry.token)?).map_err(|err| {
                 tracing::error!(error = %err, "cross-tab move: failed to read source memo file");
                 AppErrorPayload::new(ErrorCode::Unknown, "failed to read memo file to move")
             })?;
@@ -2519,7 +2541,7 @@ fn cleanup_session_move_source(
     let result = commit_session_mutation_with_images(sessions, registry, source_folder, source_tab_id, |_session, tree, file_map, image_folders| {
         for name in all_names {
             if let Some(token) = tokens.get(name) {
-                let token_path = source_folder.join(token);
+                let token_path = token_file_path(source_folder, token)?;
                 registry.register(&token_path);
                 if let Err(err) = with_retry(|| std::fs::remove_file(&token_path)) {
                     tracing::error!(error = %err, "cross-tab move: failed to remove obfuscated source file after move");
@@ -2604,7 +2626,7 @@ fn apply_session_move_target(
             let plaintext = rewritten.as_deref().unwrap_or(plaintext);
             let token = obfuscated_naming::generate_unique_token(target_folder);
             let encrypted = lock_blob::encrypt_memo_body(&key, plaintext);
-            if let Err(err) = atomic_write(&target_folder.join(&token), &encrypted, registry) {
+            if let Err(err) = atomic_write(&token_file_path(target_folder, &token)?, &encrypted, registry) {
                 tracing::error!(error = %err, "cross-tab move: failed to write obfuscated memo file");
                 return Err(AppErrorPayload::new(ErrorCode::Unknown, "failed to move memo file into locked tab"));
             }
@@ -2919,7 +2941,7 @@ mod tests {
             kdf: KdfParams::generate_new(),
             file_map: vec![FileMapEntry {
                 memo_name: "Diary".to_string(),
-                token: "abc123".to_string(),
+                token: "0123456789abcdef0123456789abcdef".to_string(),
             }],
             image_folders: vec![],
         };
@@ -2935,14 +2957,14 @@ mod tests {
     fn check_marker_on_tree_open_reports_recovery_pending_when_any_entry_is_renamed() {
         let dir = tempdir();
         let registry = SelfWriteRegistry::new();
-        std::fs::write(dir.join("abc123"), b"encrypted").unwrap();
+        std::fs::write(dir.join("0123456789abcdef0123456789abcdef"), b"encrypted").unwrap();
 
         let marker = LockInProgressMarker {
             format_version: MARKER_FORMAT_VERSION,
             kdf: KdfParams::generate_new(),
             file_map: vec![FileMapEntry {
                 memo_name: "Diary".to_string(),
-                token: "abc123".to_string(),
+                token: "0123456789abcdef0123456789abcdef".to_string(),
             }],
             image_folders: vec![],
         };
@@ -3849,8 +3871,8 @@ mod tests {
         let mut parent = MetaTreeNode::default_for_new_file("日記".to_string());
         parent.children.push(MetaTreeNode::default_for_new_file("日記の続き".to_string()));
         let file_map = vec![
-            FileMapEntry { memo_name: "日記".to_string(), token: "tok-nikki".to_string() },
-            FileMapEntry { memo_name: "日記の続き".to_string(), token: "tok-tsuzuki".to_string() },
+            FileMapEntry { memo_name: "日記".to_string(), token: "00000000000000000000000000000a01".to_string() },
+            FileMapEntry { memo_name: "日記の続き".to_string(), token: "00000000000000000000000000000a02".to_string() },
         ];
         for e in &file_map {
             std::fs::write(dir.join(&e.token), b"encrypted-placeholder").unwrap();
@@ -3989,7 +4011,7 @@ mod tests {
         for path in &paths {
             assert!(!path.exists(), "subtree memo image folders must be deleted");
         }
-        assert!(!dir.join("tok-nikki").exists() && !dir.join("tok-tsuzuki").exists());
+        assert!(!dir.join("00000000000000000000000000000a01").exists() && !dir.join("00000000000000000000000000000a02").exists());
         assert!(dir.join("img_0011223344556677.png").exists());
         assert!(sessions.with_session("tab-1", |s| s.image_folders.clone()).unwrap().is_empty());
         assert!(persisted_image_folders(&dir).is_empty());
@@ -4021,7 +4043,7 @@ mod tests {
 
         // 「日記」とその子「日記の続き」を移動した後の後始末
         let names = vec!["日記".to_string(), "日記の続き".to_string()];
-        let tokens: HashMap<String, String> = [("日記", "tok-nikki"), ("日記の続き", "tok-tsuzuki")].iter().map(|(n, t)| (n.to_string(), t.to_string())).collect();
+        let tokens: HashMap<String, String> = [("日記", "00000000000000000000000000000a01"), ("日記の続き", "00000000000000000000000000000a02")].iter().map(|(n, t)| (n.to_string(), t.to_string())).collect();
         cleanup_session_move_source(&sessions, &registry, &dir, "tab-1", &names, &tokens).unwrap();
 
         assert!(sessions.with_session("tab-1", |s| s.image_folders.clone()).unwrap().is_empty());
@@ -4882,7 +4904,7 @@ mod tests {
         let (tree, mut file_map, mut image_folders) = (if with_memos { t262_tree() } else { vec![] }, vec![], vec![]);
         if with_memos {
             for (i, name) in [T262_PARENT, T262_CHILD].iter().enumerate() {
-                let token = format!("tok{i}");
+                let token = format!("{:032x}", i + 1);
                 std::fs::write(dir.join(&token), lock_blob::encrypt_memo_body(&key, t262_body(T262_FOLDERS[i]).as_bytes())).unwrap();
                 t262_images(&dir.join(T262_FOLDERS[i]));
                 file_map.push(FileMapEntry { memo_name: name.to_string(), token });
@@ -5058,7 +5080,7 @@ mod tests {
                 let registry = SelfWriteRegistry::new();
                 let sessions = LockSessionStore::new();
                 t262_session(&src, &sessions, "tab-1", true, &registry);
-                for token in ["tok0", "tok1"] {
+                for token in ["00000000000000000000000000000001", "00000000000000000000000000000002"] {
                     std::fs::write(src.join(format!("{token}.bak")), b"encrypted old").unwrap();
                 }
                 let result = if to_locked {
@@ -5068,7 +5090,7 @@ mod tests {
                     move_cross_tab_session_to_plain("tab-1", &src, "tab-2", &dst, "先", &[T262_PARENT.to_string()], None, 0, copy, &registry, &sessions, &SearchIndex::new())
                 };
                 assert!(matches!(result, AppResult::Ok(_)), "copy={copy} to_locked={to_locked}");
-                for token in ["tok0", "tok1"] {
+                for token in ["00000000000000000000000000000001", "00000000000000000000000000000002"] {
                     assert_eq!(src.join(format!("{token}.bak")).exists(), copy, "copy={copy} to_locked={to_locked}");
                     assert!(!dst.join(format!("{token}.bak")).exists());
                 }
@@ -5087,17 +5109,194 @@ mod tests {
         let registry = SelfWriteRegistry::new();
         let sessions = LockSessionStore::new();
         t262_session(&dir, &sessions, "tab-1", true, &registry);
-        for token in ["tok0", "tok1"] {
+        for token in ["00000000000000000000000000000001", "00000000000000000000000000000002"] {
             std::fs::write(dir.join(format!("{token}.bak")), b"encrypted old").unwrap();
         }
         std::fs::write(dir.join("other.bak"), b"keep").unwrap();
         let result = session_delete_memo(&sessions, &registry, &dir, "tab-1", &[T262_PARENT.to_string()], true);
         assert!(matches!(result, AppResult::Ok(_)));
-        for token in ["tok0", "tok1"] {
+        for token in ["00000000000000000000000000000001", "00000000000000000000000000000002"] {
             assert!(!dir.join(token).exists());
             assert!(!dir.join(format!("{token}.bak")).exists(), "{token}.bak");
         }
         assert!(dir.join("other.bak").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // GitHub issue #311: fileMap の token / メモ名の検証とパスガード
+    // -----------------------------------------------------------------------
+
+    const T311_GOOD_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+    /// 悪用入力の token / メモ名(タブフォルダ外・別ストリーム・予約名を指す)
+    fn t311_bad_names() -> Vec<String> {
+        vec![
+            r"C:\Users\x\y.docx".to_string(),
+            r"..\..\x".to_string(),
+            "C:x".to_string(),
+            "foo/bar".to_string(),
+            "a:b".to_string(),
+            "CON".to_string(),
+        ]
+    }
+
+    #[test]
+    fn t311_path_helpers_reject_escaping_names_and_accept_normal_ones() {
+        let dir = tempdir();
+        for bad in t311_bad_names() {
+            assert!(token_file_path(&dir, &bad).is_err(), "token {bad:?}");
+            assert!(memo_file_path(&dir, &bad).is_err(), "memo {bad:?}");
+        }
+        assert_eq!(token_file_path(&dir, T311_GOOD_TOKEN).unwrap(), dir.join(T311_GOOD_TOKEN));
+        for ok in ["日記", "新 メモ", "Diary 2026-07", "a.b", "買い物(1)"] {
+            assert_eq!(memo_file_path(&dir, ok).unwrap(), dir.join(format!("{ok}.md")), "{ok:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn t311_load_marker_rejects_the_whole_marker_when_any_entry_is_bad() {
+        let registry = SelfWriteRegistry::new();
+        let make = |file_map: Vec<FileMapEntry>, image_folders: Vec<ImageFolderEntry>| LockInProgressMarker {
+            format_version: MARKER_FORMAT_VERSION,
+            kdf: KdfParams::generate_new(),
+            file_map,
+            image_folders,
+        };
+        let good = FileMapEntry { memo_name: "日記".to_string(), token: T311_GOOD_TOKEN.to_string() };
+
+        let dir = tempdir();
+        write_marker(&dir, &make(vec![good.clone()], vec![ImageFolderEntry { memo_name: "日記".to_string(), folder: "a3f9c2d4e5f60718".to_string() }]), &registry).unwrap();
+        assert!(load_marker(&dir).is_some(), "a normal marker must still load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        for bad in t311_bad_names() {
+            let dir = tempdir();
+            let bad_token = FileMapEntry { memo_name: "readme".to_string(), token: bad.clone() };
+            write_marker(&dir, &make(vec![good.clone(), bad_token], vec![]), &registry).unwrap();
+            assert!(load_marker(&dir).is_none(), "token {bad:?}");
+            std::fs::remove_dir_all(&dir).ok();
+
+            let dir = tempdir();
+            let bad_memo = FileMapEntry { memo_name: bad.clone(), token: T311_GOOD_TOKEN.to_string() };
+            write_marker(&dir, &make(vec![bad_memo], vec![]), &registry).unwrap();
+            assert!(load_marker(&dir).is_none(), "memo {bad:?}");
+            std::fs::remove_dir_all(&dir).ok();
+
+            let dir = tempdir();
+            let bad_image = ImageFolderEntry { memo_name: "日記".to_string(), folder: bad.clone() };
+            write_marker(&dir, &make(vec![good.clone()], vec![bad_image]), &registry).unwrap();
+            assert!(load_marker(&dir).is_none(), "image folder {bad:?}");
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// 悪用 token を持つセッションを開始し、フォルダ外の「おとり」ファイルを用意する
+    fn t311_session_with_token(dir: &Path, outside: &Path, token: String) -> LockSessionStore {
+        let sessions = LockSessionStore::new();
+        std::fs::write(outside, b"decoy").unwrap();
+        sessions.start(
+            "tab-1".to_string(),
+            LockSession {
+                real_tab_name: "Private".to_string(),
+                tree: vec![MetaTreeNode::default_for_new_file("readme".to_string())],
+                file_map: vec![FileMapEntry { memo_name: "readme".to_string(), token }],
+                kdf: KdfParams::generate_new(),
+                hint: None,
+                key: [7u8; 32],
+                last_viewed_memo: None,
+                image_folders: Vec::new(),
+            },
+        );
+        let _ = dir;
+        sessions
+    }
+
+    #[test]
+    fn t311_session_delete_and_import_never_touch_a_file_outside_the_tab_folder() {
+        let registry = SelfWriteRegistry::new();
+        let dir = tempdir();
+        let outside_dir = tempdir();
+        let decoy = outside_dir.join("thesis.docx");
+        // 絶対パスと、`..\` で抜ける相対パスの 2 通り
+        let escaping = [decoy.to_string_lossy().to_string(), format!(r"..\{}\thesis.docx", outside_dir.file_name().unwrap().to_string_lossy())];
+        for token in escaping {
+            let sessions = t311_session_with_token(&dir, &decoy, token.clone());
+            match session_delete_memo(&sessions, &registry, &dir, "tab-1", &["readme".to_string()], true) {
+                AppResult::Err(err) => assert_eq!(err.code, ErrorCode::NameInvalid, "{token:?}"),
+                AppResult::Ok(_) => panic!("delete must be rejected for {token:?}"),
+            }
+            assert_eq!(std::fs::read(&decoy).unwrap(), b"decoy", "delete must not remove {token:?}");
+
+            match session_import_file(&sessions, &registry, &dir, "tab-1", "readme", b"overwritten", true, None) {
+                AppResult::Err(err) => assert_eq!(err.code, ErrorCode::NameInvalid, "{token:?}"),
+                AppResult::Ok(_) => panic!("overwrite must be rejected for {token:?}"),
+            }
+            assert_eq!(std::fs::read(&decoy).unwrap(), b"decoy", "import must not overwrite {token:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&outside_dir).ok();
+    }
+
+    #[test]
+    fn t311_cleanup_session_move_source_never_deletes_outside_the_tab_folder() {
+        let registry = SelfWriteRegistry::new();
+        let dir = tempdir();
+        let outside_dir = tempdir();
+        let decoy = outside_dir.join("thesis.docx");
+        let token = decoy.to_string_lossy().to_string();
+        let sessions = t311_session_with_token(&dir, &decoy, token.clone());
+        let tokens: HashMap<String, String> = [("readme".to_string(), token)].into_iter().collect();
+        let result = cleanup_session_move_source(&sessions, &registry, &dir, "tab-1", &["readme".to_string()], &tokens);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NameInvalid);
+        assert!(decoy.exists());
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&outside_dir).ok();
+    }
+
+    #[test]
+    fn t311_file_restore_and_encrypt_helpers_reject_escaping_entries() {
+        let registry = SelfWriteRegistry::new();
+        let key = LockKey::new(&[7u8; 32]);
+        let dir = tempdir();
+        let outside_dir = tempdir();
+        let decoy = outside_dir.join("thesis.docx");
+        std::fs::write(&decoy, b"decoy").unwrap();
+        let abs = decoy.to_string_lossy().to_string();
+
+        // 悪い token(暗号化の書き込み先 / 永久解除の読み出し元・削除元)
+        std::fs::write(dir.join("readme.md"), b"body").unwrap();
+        let bad_token = FileMapEntry { memo_name: "readme".to_string(), token: abs.clone() };
+        assert!(rename_and_encrypt_entry(&dir, &bad_token, None, &key, &registry).is_err());
+        assert!(dir.join("readme.md").exists(), "the plaintext must be left alone");
+        assert!(restore_one_permanent_unlock_entry(&dir, &bad_token, None, &key, &registry).is_err());
+        assert_eq!(std::fs::read(&decoy).unwrap(), b"decoy");
+
+        // 悪いメモ名(平文の書き出し先 / 読み出し元)
+        std::fs::write(dir.join(T311_GOOD_TOKEN), lock_blob::encrypt_memo_body(&key, b"secret")).unwrap();
+        for bad in t311_bad_names() {
+            let bad_memo = FileMapEntry { memo_name: bad.clone(), token: T311_GOOD_TOKEN.to_string() };
+            assert!(restore_one_permanent_unlock_entry(&dir, &bad_memo, None, &key, &registry).is_err(), "{bad:?}");
+            assert!(rename_and_encrypt_entry(&dir, &bad_memo, None, &key, &registry).is_err(), "{bad:?}");
+            assert!(dir.join(T311_GOOD_TOKEN).exists(), "the token file must be left alone for {bad:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&outside_dir).ok();
+    }
+
+    #[test]
+    fn t311_normal_entries_still_encrypt_and_restore() {
+        let registry = SelfWriteRegistry::new();
+        let key = LockKey::new(&[7u8; 32]);
+        let dir = tempdir();
+        std::fs::write(dir.join("新 メモ (1).md"), "本文".as_bytes()).unwrap();
+        let entry = FileMapEntry { memo_name: "新 メモ (1)".to_string(), token: T311_GOOD_TOKEN.to_string() };
+        rename_and_encrypt_entry(&dir, &entry, None, &key, &registry).unwrap();
+        assert!(!dir.join("新 メモ (1).md").exists());
+        restore_one_permanent_unlock_entry(&dir, &entry, None, &key, &registry).unwrap();
+        assert_eq!(std::fs::read(dir.join("新 メモ (1).md")).unwrap(), "本文".as_bytes());
+        assert!(!dir.join(T311_GOOD_TOKEN).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

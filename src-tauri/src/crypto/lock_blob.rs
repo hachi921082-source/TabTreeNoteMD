@@ -26,6 +26,7 @@ use base64::Engine as _;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
+use crate::fs::path_safety::{validate_name, ValidationMode};
 use crate::model::tree::MetaTreeNode;
 
 use super::kdf::KdfParams;
@@ -68,6 +69,44 @@ pub struct FileMapEntry {
 pub struct ImageFolderEntry {
     pub memo_name: String,
     pub folder: String,
+}
+
+/// GitHub issue #311: `token` は `obfuscated_naming::generate_token` の出力形式(小文字 16 進 32 文字)のみ許可する。
+/// パス区切り・ドライブ指定・`..` などを含む値でタブフォルダ外へ `join` されるのを防ぐ。
+pub fn is_valid_token(token: &str) -> bool {
+    token.len() == 32 && token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// GitHub issue #311: 画像フォルダ名は `obfuscated_naming::generate_image_folder_name` の出力形式
+/// (16 進 16 文字)。生成は小文字だが、大文字小文字を区別しない FS 上の既存データを弾かないよう大文字も許す。
+pub fn is_valid_image_folder_name(name: &str) -> bool {
+    name.len() == 16 && name.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// GitHub issue #311: メモ名(`<メモ名>.md` の語幹)の検査。既存の `validate_name`(`Lenient`)と同じ基準:
+/// 空・パス区切り・`:`・その他の禁止文字・制御文字・予約デバイス名を拒否する。
+/// 既存ユーザーのメモ名(走査は `Lenient`)を弾かないよう、先頭/末尾の空白・末尾ピリオドは許す
+/// (`.md` が付くため Win32 の正規化で削られることはなく、`<メモ名>.md` は常に 1 要素)。
+/// ただし `.` / `..` の単独名は拒否する。
+pub fn is_valid_memo_name(name: &str) -> bool {
+    name != "." && name != ".." && validate_name(name, ValidationMode::Lenient).is_ok()
+}
+
+impl FileMapEntry {
+    pub fn is_valid(&self) -> bool {
+        is_valid_token(&self.token) && is_valid_memo_name(&self.memo_name)
+    }
+}
+
+impl ImageFolderEntry {
+    pub fn is_valid(&self) -> bool {
+        is_valid_image_folder_name(&self.folder) && is_valid_memo_name(&self.memo_name)
+    }
+}
+
+/// `fileMap` / `imageFolders` の全エントリが妥当なら `true`。1 件でも違反があれば全体を不正として扱う。
+pub fn entries_are_valid(file_map: &[FileMapEntry], image_folders: &[ImageFolderEntry]) -> bool {
+    file_map.iter().all(FileMapEntry::is_valid) && image_folders.iter().all(ImageFolderEntry::is_valid)
 }
 
 /// The decrypted "lock payload" (`tab-lock/PLAN.md` §2) — never written to disk in this shape,
@@ -210,7 +249,12 @@ pub fn decrypt_lock_field(key: &LockKey, field: &LockField) -> Result<LockPayloa
     ciphertext_with_tag.extend_from_slice(&tag);
 
     let plaintext = key.decrypt_bytes(&iv, &ciphertext_with_tag)?;
-    serde_json::from_slice(&plaintext).map_err(|_| LockCryptoError::DecryptFailed)
+    let payload: LockPayload = serde_json::from_slice(&plaintext).map_err(|_| LockCryptoError::DecryptFailed)?;
+    // GitHub issue #311: 細工された token / メモ名が 1 件でもあればペイロードごと拒否する(破損扱い)
+    if !entries_are_valid(&payload.file_map, &payload.image_folders) {
+        return Err(LockCryptoError::DecryptFailed);
+    }
+    Ok(payload)
 }
 
 #[cfg(test)]
@@ -391,5 +435,77 @@ mod tests {
     fn empty_image_folders_map_is_omitted_from_the_plaintext_payload_json() {
         let json = serde_json::to_value(sample_payload()).unwrap();
         assert!(json.get("imageFolders").is_none());
+    }
+
+    // GitHub issue #311: 細工された fileMap / imageFolders の拒否
+    const GOOD_TOKEN: &str = "9f2c7a1e4b3d0f8c6a5e2d1b0c9a8f7e";
+
+    #[test]
+    fn token_accepts_only_32_lowercase_hex() {
+        assert!(is_valid_token(GOOD_TOKEN));
+        assert!(is_valid_token(&crate::crypto::obfuscated_naming::generate_token()));
+        for bad in [
+            "",
+            "abc123",
+            r"C:\Users\x\y.docx",
+            r"..\..\x",
+            "C:x",
+            "foo/bar",
+            "a:b",
+            "CON",
+            "9F2C7A1E4B3D0F8C6A5E2D1B0C9A8F7E",
+            "9f2c7a1e4b3d0f8c6a5e2d1b0c9a8f7",
+            "9f2c7a1e4b3d0f8c6a5e2d1b0c9a8f7e0",
+            "9f2c7a1e4b3d0f8c6a5e2d1b0c9a8f7g",
+        ] {
+            assert!(!is_valid_token(bad), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn memo_name_accepts_real_world_names_and_rejects_path_tricks() {
+        for ok in ["日記", "Diary 2026-07", "買い物 メモ", "a.b", "memo(1)", "#tag & more", " lead", "trail ", "名前."] {
+            assert!(is_valid_memo_name(ok), "{ok:?} must be accepted");
+        }
+        for bad in ["", ".", "..", r"C:\Users\x\y.docx", r"..\..\x", "C:x", "foo/bar", "a:b", "CON", "con", "nul.txt", "a\u{0007}b", "x|y", "a*b"] {
+            assert!(!is_valid_memo_name(bad), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn image_folder_name_accepts_only_16_hex() {
+        assert!(is_valid_image_folder_name("a3f9c2d4e5f60718"));
+        assert!(is_valid_image_folder_name(&crate::crypto::obfuscated_naming::generate_image_folder_name()));
+        for bad in ["", "..", "a3f9c2d4e5f6071", "a3f9c2d4e5f607181", r"C:\x", r"..\..\xxxxxxxx", "a3f9c2d4e5f6071g"] {
+            assert!(!is_valid_image_folder_name(bad), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn decrypt_lock_field_rejects_the_whole_payload_on_any_bad_entry() {
+        let key = LockKey::new(&[3u8; 32]);
+        let kdf = KdfParams::generate_new();
+        let bad_entries = [
+            FileMapEntry { memo_name: "readme".into(), token: r"C:\Users\x\y.docx".into() },
+            FileMapEntry { memo_name: "readme".into(), token: r"..\..\x".into() },
+            FileMapEntry { memo_name: r"..\..\x".into(), token: GOOD_TOKEN.into() },
+            FileMapEntry { memo_name: "CON".into(), token: GOOD_TOKEN.into() },
+            FileMapEntry { memo_name: "a:b".into(), token: GOOD_TOKEN.into() },
+        ];
+        for bad in bad_entries {
+            let mut payload = sample_payload();
+            payload.file_map.push(bad);
+            let field = encrypt_lock_field(&key, kdf.clone(), None, &payload).unwrap();
+            assert!(matches!(decrypt_lock_field(&key, &field), Err(LockCryptoError::DecryptFailed)));
+        }
+        let mut payload = sample_payload();
+        payload.image_folders.push(ImageFolderEntry { memo_name: "Diary 2026-07".into(), folder: "..".into() });
+        let field = encrypt_lock_field(&key, kdf.clone(), None, &payload).unwrap();
+        assert!(matches!(decrypt_lock_field(&key, &field), Err(LockCryptoError::DecryptFailed)));
+
+        let mut payload = sample_payload();
+        payload.image_folders.push(ImageFolderEntry { memo_name: "C:x".into(), folder: "a3f9c2d4e5f60718".into() });
+        let field = encrypt_lock_field(&key, kdf, None, &payload).unwrap();
+        assert!(matches!(decrypt_lock_field(&key, &field), Err(LockCryptoError::DecryptFailed)));
     }
 }
