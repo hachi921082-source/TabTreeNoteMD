@@ -264,6 +264,7 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
               />
               <span>{t("settings.linkConfirmBeforeOpen")}</span>
             </label>
+            <p className="ttn-settings-hint">{t("settings.linkConfirmBeforeOpenHint")}</p>
           </section>
 
           <section className="ttn-settings-section">

@@ -134,6 +134,12 @@
   margin: 0;
 }
 
+.ttn-settings-hint {
+  color: var(--ttn-fg-subtle);
+  font-size: calc(12px * var(--ui-font-scale));
+  margin: 2px 0 0 0;
+}
+
 .ttn-settings-error {
   color: var(--ttn-danger);
   font-size: calc(12px * var(--ui-font-scale));
