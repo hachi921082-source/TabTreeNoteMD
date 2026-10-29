@@ -28,7 +28,7 @@ import type { SyntaxNodeRef } from "@lezer/common";
 import { checkboxDecoration } from "./checkboxClick";
 import { findColorSpans, findImageTags, findMarkSpans, findMathSpans } from "./markdownSpanParser";
 import type { DetectedLink, LinkKind } from "./links";
-import { correctUrlRange, linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens, scanNonAsciiUrlTokens } from "./links";
+import { correctUrlRange, linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens, scanNonAsciiEmailTokens, scanNonAsciiUrlTokens } from "./links";
 import { getOrLoadImage, hasImageLoadFailed } from "./imageLoader";
 import type { AppSettings, ExternalLinkKind } from "../shared/models";
 
@@ -497,6 +497,14 @@ class MarkdownDecorationsPlugin implements PluginValue {
       // 非 ASCII ドメインの URL(`https://日本語.jp/abc` 等)は GFM autolink が検出しないので別途走査する(#300)
       for (const link of scanNonAsciiUrlTokens(line.text, line.from)) {
         if (overlapsAny(nonAsciiUrlSkipRanges, link.from, link.to)) continue;
+        links.push(link);
+        addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
+      }
+      // 非 ASCII を含むメール(`ユーザー@example.com` 等)も GFM autolink が検出しないので別途走査する(#301)。
+      // URL 内の `@`(`https://x.jp/@ユーザー`)を拾わないよう、ツリー・走査で検出済みの URL 範囲とも重複排除する
+      const lineUrlRanges = nonAsciiUrlSkipRanges.concat(links.filter((l) => l.from >= line.from && l.to <= line.to));
+      for (const link of scanNonAsciiEmailTokens(line.text, line.from)) {
+        if (overlapsAny(lineUrlRanges, link.from, link.to)) continue;
         links.push(link);
         addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
       }
