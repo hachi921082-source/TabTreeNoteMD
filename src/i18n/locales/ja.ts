@@ -221,6 +221,7 @@ export const ja = {
   "settings.linkTriggerCtrlClick": "Ctrl+クリック",
   "settings.linkTriggerDoubleClick": "ダブルクリック",
   "settings.linkConfirmBeforeOpen": "開く前に確認する",
+  "settings.linkConfirmBeforeOpenHint": "オフでも、実行ファイル・スクリプト(.exe .bat .ps1 など)へのファイルパスリンクは、開く前に必ず確認します。",
   "settings.autostartSection": "スタートアップ",
   "settings.autostartEnabled": "Windowsログイン時にトレイへ自動起動する",
   "settings.tabLockSection": "タブロック",
