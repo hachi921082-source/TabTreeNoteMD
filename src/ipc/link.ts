@@ -32,7 +32,7 @@ export async function linkOpenExternal(kind: ExternalLinkKind, value: string, cu
 /** 確認ダイアログの文言切替専用の簡易判定(issue #308)。実行ファイル・スクリプトかの最終判断はバックエンド
  * (`link.rs` の `is_executable_file_path`)が行う。ここは「最初から実行ファイル用の文言で確認を出す」ためだけに使い、
  * 判定が外れてもバックエンドの `CONFIRM_REQUIRED` で必ず確認に回る。 */
-const EXECUTABLE_EXT_RE = /\.(?:exe|bat|cmd|com|scr|ps1|ps1xml|ps2|psm1|psd1|vbs|vbe|js|jse|wsf|wsh|ws|hta|lnk|url|msi|msp|mst|reg|cpl|jar|pif|application|gadget|msc|inf|sct|scf|msh|msh1|msh2|mshxml|appref-ms|settingcontent-ms|diagcab|appx|msix|appinstaller|xll|wll|library-ms)[ .]*(?::.*)?$/i;
+const EXECUTABLE_EXT_RE = /\.(?:py|pyw|pl|rb|sh|wsc|chm|dll|ocx|vb|docm|xlsm|pptm|iso|vhd|vhdx|jnlp|exe|bat|cmd|com|scr|ps1|ps1xml|ps2|psm1|psd1|vbs|vbe|js|jse|wsf|wsh|ws|hta|lnk|url|msi|msp|mst|reg|cpl|jar|pif|application|gadget|msc|inf|sct|scf|msh|msh1|msh2|mshxml|appref-ms|settingcontent-ms|diagcab|appx|msix|appinstaller|xll|wll|library-ms)[ .]*(?::.*)?$/i;
 export function looksLikeExecutableFilePath(value: string): boolean {
   return EXECUTABLE_EXT_RE.test(value);
 }
