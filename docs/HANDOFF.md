@@ -22,8 +22,9 @@
 - Branch `V1.2.0`, local == origin (after this file's commit is pushed), nothing in progress.
 - **No open GitHub issues.**
 - Working tree: `src-tauri/Cargo.toml` shows modified — line endings only. Never commit it.
-- A `/security-review` of `V1.2.0` (whole branch vs `master`) was started at the user's request on
-  2026-10-29; result not yet reported when this was written. Re-run or ask the user.
+- `/security-review` of `V1.2.0` (whole branch vs `master`, 2026-10-29): no high-confidence finding; one
+  MEDIUM candidate (executable file-path links opened without confirmation) → fixed as #308. Not read in
+  full: `tab_lock.rs` (mostly), `tree.rs`, `watch/*`.
 
 ## 2. Next action
 
@@ -41,6 +42,7 @@ earlier doc/issue without the user asking (see §5).
 | #300 | #304 | Non-ASCII URL detection: live = preview range; IDN in live view; preview copy keeps as-written URL (`data-source-url`) |
 | #301 | #305 | Non-ASCII email detection, live = preview, `mailto:` href |
 | #306 | #307 | Preview links an ASCII email directly after Japanese text (same as live) |
+| #308 | #309 | Executable/script file-path links always need a confirm dialog (backend returns `CONFIRM_REQUIRED` unless `confirmed`) |
 
 All entries are in `RESOLVED-ISSUES.md`; limits of #300/#301/#306 are in `spec.v1.2.0.md` §14.
 
@@ -53,6 +55,9 @@ All entries are in `RESOLVED-ISSUES.md`; limits of #300/#301/#306 are in `spec.v
 - **#301/#306:** non-ASCII local part → whole token is the email; ASCII email after Japanese → ASCII side only.
 - **`/security-review` was skipped** for #300/#301/#306 PRs ("全て進めて" is not an explicit yes); the
   whole-branch review requested afterwards covers them.
+- **#308:** confirm dialog required (not a hard block) for executable/script extensions; enforcement is in
+  the backend. Limits: extension-based only, no symlink/junction resolution, `file:///` URL form untouched,
+  settings-screen help text for `confirmBeforeOpen` not updated.
 
 ## 5. Lessons from this session
 
