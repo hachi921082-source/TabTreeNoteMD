@@ -65,7 +65,7 @@ export interface MarkdownDecorationConfig {
   onOpenMemo: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
   /** Shows the shared non-blocking confirm dialog and resolves to whether the user confirmed;
    * only awaited when `confirmBeforeOpen` is true (`docs/plans/link/PLAN.md` §4). */
-  requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
+  requestExternalConfirm: (kind: ExternalLinkKind, value: string, executable?: boolean) => Promise<boolean>;
   /** Identifies the currently-open memo for image-cache scoping (§5.4 of
    * `docs/plans/markdown/image-handling/PLAN.md`). `null` only when no memo is open at all, in
    * which case no `Image`/`<img>` node can be reached anyway (there is no document to decorate). */
