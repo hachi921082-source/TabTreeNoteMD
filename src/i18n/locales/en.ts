@@ -215,6 +215,7 @@ export const en: Record<keyof typeof ja, string> = {
   "settings.linkTriggerCtrlClick": "Ctrl+Click",
   "settings.linkTriggerDoubleClick": "Double Click",
   "settings.linkConfirmBeforeOpen": "Confirm before opening",
+  "settings.linkConfirmBeforeOpenHint": "Even when off, file-path links to executables and scripts (.exe, .bat, .ps1, etc.) always ask for confirmation before opening.",
   "settings.autostartSection": "Startup",
   "settings.autostartEnabled": "Auto-launch to tray on Windows login",
   "settings.tabLockSection": "Tab Lock",
