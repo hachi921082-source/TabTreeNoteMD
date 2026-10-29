@@ -8,7 +8,7 @@
 // classification/open-trigger/resolution/opening logic shared by every link kind regardless of
 // how its range was detected (`docs/plans/link/PLAN.md` §5).
 import { EditorView } from "@codemirror/view";
-import { linkOpenExternal, linkResolve } from "../ipc/link";
+import { linkResolve, openExternalWithConfirm } from "../ipc/link";
 import type { ExternalLinkKind } from "../ipc/link";
 import type { AppSettings } from "../shared/models";
 import type { MarkdownDecorationConfig } from "./markdownDecorations";
@@ -281,11 +281,7 @@ export function resolveAndScrollToHeadingAnchor(view: EditorView, slug: string):
  * click handler runs deep inside a CodeMirror `ViewPlugin`, not a React component). Declining the
  * confirm is treated the same as any other unresolved/cancelled link: a silent no-op. */
 async function openExternalLink(kind: ExternalLinkKind, value: string, config: MarkdownDecorationConfig, extendedSearchText?: string): Promise<void> {
-  if (config.confirmBeforeOpen) {
-    const confirmed = await config.requestExternalConfirm(kind, value);
-    if (!confirmed) return;
-  }
-  await linkOpenExternal(kind, value, config.currentTabId ?? undefined, extendedSearchText);
+  await openExternalWithConfirm(kind, value, { currentTabId: config.currentTabId ?? undefined, extendedSearchText, confirmBeforeOpen: config.confirmBeforeOpen, requestExternalConfirm: config.requestExternalConfirm });
 }
 
 export async function openDetectedLink(view: EditorView, link: DetectedLink, config: MarkdownDecorationConfig): Promise<void> {
