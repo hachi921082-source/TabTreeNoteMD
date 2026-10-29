@@ -389,12 +389,12 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   // while that setting is on. The click happens deep inside a CodeMirror `ViewPlugin`
   // (`markdownDecorations.ts`), not a React event handler, so `requestExternalConfirm` bridges
   // that with a Promise whose resolver is stashed until the dialog closes.
-  const [pendingExternalLink, setPendingExternalLink] = useState<{ kind: ExternalLinkKind; value: string } | null>(null);
+  const [pendingExternalLink, setPendingExternalLink] = useState<{ kind: ExternalLinkKind; value: string; executable: boolean } | null>(null);
   const externalConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
-  const requestExternalConfirm = useCallback((kind: ExternalLinkKind, value: string): Promise<boolean> => {
+  const requestExternalConfirm = useCallback((kind: ExternalLinkKind, value: string, executable?: boolean): Promise<boolean> => {
     return new Promise<boolean>((resolve) => {
       externalConfirmResolveRef.current = resolve;
-      setPendingExternalLink({ kind, value });
+      setPendingExternalLink({ kind, value, executable: executable ?? false });
     });
   }, []);
   const settleExternalConfirm = (confirmed: boolean) => {
@@ -1536,8 +1536,8 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 
       {pendingExternalLink && (
         <ConfirmDialog
-          title={t("editor.externalLinkTitle")}
-          message={t("editor.externalLinkMessageTemplate").replace("{value}", pendingExternalLink.value)}
+          title={t(pendingExternalLink.executable ? "editor.externalLinkExecutableTitle" : "editor.externalLinkTitle")}
+          message={t(pendingExternalLink.executable ? "editor.externalLinkExecutableMessageTemplate" : "editor.externalLinkMessageTemplate").replace("{value}", pendingExternalLink.value)}
           confirmLabel={t("common.open")}
           onConfirm={() => settleExternalConfirm(true)}
           onCancel={() => settleExternalConfirm(false)}

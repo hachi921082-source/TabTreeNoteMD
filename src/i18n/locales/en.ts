@@ -145,6 +145,8 @@ export const en: Record<keyof typeof ja, string> = {
   "editor.hideWhitespace": "Hide Whitespace",
   "editor.externalLinkTitle": "Open External Link",
   "editor.externalLinkMessageTemplate": "This will open the following link. Continue? — {value}",
+  "editor.externalLinkExecutableTitle": "Open Executable File",
+  "editor.externalLinkExecutableMessageTemplate": "This will run an executable file or script. Do not run it unless you trust it. Continue? — {value}",
   "editor.defaultLinkLabel": "Link",
   "editor.checkboxUncheckTooltip": "Click to uncheck",
   "editor.checkboxCheckTooltip": "Click to check",

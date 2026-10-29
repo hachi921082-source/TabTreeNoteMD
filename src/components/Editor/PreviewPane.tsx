@@ -56,7 +56,7 @@ export interface PreviewPaneProps {
   readOnly: boolean;
   openTrigger: AppSettings["links"]["openTrigger"];
   confirmBeforeOpen: boolean;
-  requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
+  requestExternalConfirm: (kind: ExternalLinkKind, value: string, executable?: boolean) => Promise<boolean>;
   /** `anchorSlug` is the parsed `#slug` half of a `memo:...#slug` link (`docs/plans/v1.2.0/
    * cross-tab-anchor-links/PLAN.md` §2), `null` when the link carried no anchor. */
   onOpenMemoLink: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
@@ -205,7 +205,7 @@ export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(funct
       get confirmBeforeOpen() {
         return configRef.current.confirmBeforeOpen;
       },
-      requestExternalConfirm: (kind, value) => configRef.current.requestExternalConfirm(kind, value),
+      requestExternalConfirm: (kind, value, executable) => configRef.current.requestExternalConfirm(kind, value, executable),
       onOpenMemoLink: (targetTabId, memoName, anchorSlug) => configRef.current.onOpenMemoLink(targetTabId, memoName, anchorSlug),
       // `setLightboxSrc` is a React state setter — referentially stable across renders, so (unlike
       // the props-derived fields above) it needs no `configRef` indirection to stay fresh.

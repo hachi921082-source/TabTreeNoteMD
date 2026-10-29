@@ -16,7 +16,7 @@
 import type { EditorView } from "@codemirror/view";
 import { toggleCheckboxRange } from "../checkboxClick";
 import { resolveAndOpenMemoLink, linkClickMatchesTrigger, FILE_PATH_RE } from "../links";
-import { linkOpenExternal } from "../../ipc/link";
+import { openExternalWithConfirm } from "../../ipc/link";
 import type { AppSettings, ExternalLinkKind } from "../../shared/models";
 
 export interface PreviewInteractionsConfig {
@@ -32,7 +32,7 @@ export interface PreviewInteractionsConfig {
   readOnly: boolean;
   openTrigger: AppSettings["links"]["openTrigger"];
   confirmBeforeOpen: boolean;
-  requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
+  requestExternalConfirm: (kind: ExternalLinkKind, value: string, executable?: boolean) => Promise<boolean>;
   /** `anchorSlug` is the parsed `#slug` half of a `memo:...#slug` link (`docs/plans/v1.2.0/
    * cross-tab-anchor-links/PLAN.md` §2), `null` when the link carried no anchor. */
   onOpenMemoLink: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
@@ -105,11 +105,7 @@ export function getPreviewLinkCopyValue(target: EventTarget | null, container: H
 }
 
 async function openExternal(kind: ExternalLinkKind, value: string, config: PreviewInteractionsConfig, extendedSearchText?: string): Promise<void> {
-  if (config.confirmBeforeOpen) {
-    const confirmed = await config.requestExternalConfirm(kind, value);
-    if (!confirmed) return;
-  }
-  await linkOpenExternal(kind, value, config.tabId ?? undefined, extendedSearchText);
+  await openExternalWithConfirm(kind, value, { currentTabId: config.tabId ?? undefined, extendedSearchText, confirmBeforeOpen: config.confirmBeforeOpen, requestExternalConfirm: config.requestExternalConfirm });
 }
 
 function handleAnchorClick(e: MouseEvent, anchor: HTMLAnchorElement, container: HTMLElement, config: PreviewInteractionsConfig): void {

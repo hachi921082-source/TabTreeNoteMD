@@ -35,6 +35,9 @@ pub enum ErrorCode {
     /// its random name while locking a tab / recovering an interrupted lock. On `tab_lock` the
     /// lock is aborted and every already-renamed folder is renamed back.
     ImageFolderRenameFailed,
+    /// GitHub issue #308: `link_open_external` が実行ファイル・スクリプトのパスを、フロントの確認済み
+    /// フラグ無しで受け取った。開かずにこの結果を返し、フロントが確認ダイアログを出して `confirmed: true` で再要求する。
+    ConfirmRequired,
     Unknown,
 }
 
