@@ -200,7 +200,9 @@ fn allow_launched_process_foreground() {
 fn allow_launched_process_foreground() {}
 
 /// 開く前に確認を必須とする実行ファイル・スクリプト系の拡張子(小文字、ドット無し)。issue #308。
+/// 確認が必要な代表例であり、網羅ではない(ここに無い拡張子の実行物は確認なしで開く)。
 const EXECUTABLE_EXTENSIONS: &[&str] = &[
+    "py", "pyw", "pl", "rb", "sh", "wsc", "chm", "dll", "ocx", "vb", "docm", "xlsm", "pptm", "iso", "vhd", "vhdx", "jnlp",
     "exe", "bat", "cmd", "com", "scr", "ps1", "ps1xml", "ps2", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "ws", "hta", "lnk", "url", "msi", "msp", "mst", "reg", "cpl", "jar", "pif", "application", "gadget", "msc", "inf", "sct", "scf", "msh", "msh1", "msh2", "mshxml", "appref-ms", "settingcontent-ms", "diagcab", "appx", "msix", "appinstaller", "xll", "wll", "library-ms",
 ];
 
@@ -209,8 +211,10 @@ const EXECUTABLE_EXTENSIONS: &[&str] = &[
 /// 末尾の空白・ドット(Windowsが無視する `foo.exe ` / `foo.exe.`)を取り除いてから拡張子を判定する。
 fn is_executable_file_path(path: &str) -> bool {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    // ドライブ文字だけの要素(`C:`)以外では、最初の `:` 以降はストリーム指定。
-    let name = if name.len() == 2 && name.as_bytes()[1] == b':' { "" } else { name.split(':').next().unwrap_or("") };
+    // ドライブ相対パス(`C:payload.exe`)は先頭のドライブ指定を除いてから、最初の `:` 以降(ストリーム指定)を捨てる。
+    let b = name.as_bytes();
+    let name = if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' { &name[2..] } else { name };
+    let name = name.split(':').next().unwrap_or("");
     let name = name.trim_end_matches([' ', '.']);
     match name.rsplit_once('.') {
         Some((_, ext)) => {
@@ -420,7 +424,7 @@ mod tests {
 
     #[test]
     fn executable_extensions_are_detected_case_insensitively_and_through_tricks() {
-        for p in ["C:\\a\\payload.exe", "payload.EXE", "x/y.Bat", "a.cmd", "a.ps1", "a.vbs", "a.js", "a.lnk", "a.msi", "a.reg", "a.hta", "a.jar", "a.application", "payload.exe ", "payload.exe.", "payload.exe. .", "payload.exe:stream", "payload.exe::$DATA", "dir.d\\a.scr", "報告書.exe"] {
+        for p in ["C:\\a\\payload.exe", "payload.EXE", "x/y.Bat", "a.cmd", "a.ps1", "a.vbs", "a.js", "a.lnk", "a.msi", "a.reg", "a.hta", "a.jar", "a.application", "payload.exe ", "payload.exe.", "payload.exe. .", "payload.exe:stream", "payload.exe::$DATA", "dir.d\\a.scr", "報告書.exe", "C:payload.exe", "C:payload.exe:s", "D:a.EXE ", "a.py", "a.docm"] {
             assert!(is_executable_file_path(p), "{p}");
         }
         for p in ["notes.txt", "a.md", "a.exe.txt", "exe", "C:\\dir.exe\\readme.txt", "C:", "a.pdf:exe", "no_ext", "a.", ""] {
