@@ -22,9 +22,14 @@
 - Branch `V1.2.0`, local == origin (after this file's commit is pushed), nothing in progress.
 - **No open GitHub issues.**
 - Working tree: `src-tauri/Cargo.toml` shows modified — line endings only. Never commit it.
-- `/security-review` of `V1.2.0` (whole branch vs `master`, 2026-10-29): no high-confidence finding; one
-  MEDIUM candidate (executable file-path links opened without confirmation) → fixed as #308. Not read in
-  full: `tab_lock.rs` (mostly), `tree.rs`, `watch/*`.
+- `/security-review` of `V1.2.0` (whole branch vs `master`, 2026-10-29), two passes: (1) link/path/sanitize/
+  crypto areas → one MEDIUM candidate (executable file-path links opened unconfirmed) → fixed as #308;
+  (2) previously unread areas (`tab_lock.rs`, `tree.rs`, `tab.rs`, `settings.rs`, search, `watch/*`, `store/*`,
+  trash/folder-transfer, lock frontend) → one finding (`fileMap` token/memo_name path traversal) → fixed
+  as #311. Still not read in full: `tree.rs` L1100–1370 (`memo_set_*`, `mutate_node_field`,
+  `memo_get_properties`; lock check confirmed by grep only), `search.rs` after L260,
+  `watch/conflict.rs`, `fs/self_write_registry.rs`, `settings/app_settings_store.rs`,
+  `store/memo_file_service.rs`, and the three password/recovery dialogs (grepped only).
 
 ## 2. Next action
 
@@ -43,6 +48,8 @@ earlier doc/issue without the user asking (see §5).
 | #301 | #305 | Non-ASCII email detection, live = preview, `mailto:` href |
 | #306 | #307 | Preview links an ASCII email directly after Japanese text (same as live) |
 | #308 | #309 | Executable/script file-path links always need a confirm dialog (backend returns `CONFIRM_REQUIRED` unless `confirmed`) |
+| (#308 follow-up) | #310 | Settings screen hint under 「開く前に確認する」: executable/script links are always confirmed |
+| #311 | #312 | Locked-tab `fileMap` / `imageFolders` validated at decrypt and marker load; token/memo-name paths resolved as direct children (blocks out-of-folder delete/overwrite) |
 
 All entries are in `RESOLVED-ISSUES.md`; limits of #300/#301/#306 are in `spec.v1.2.0.md` §14.
 
@@ -57,7 +64,10 @@ All entries are in `RESOLVED-ISSUES.md`; limits of #300/#301/#306 are in `spec.v
   whole-branch review requested afterwards covers them.
 - **#308:** confirm dialog required (not a hard block) for executable/script extensions; enforcement is in
   the backend. Limits: extension-based only, no symlink/junction resolution, `file:///` URL form untouched,
-  settings-screen help text for `confirmBeforeOpen` not updated.
+  settings-screen hint added in #310.
+- **#311:** invalid `fileMap`/`imageFolders` reject the whole payload/marker (reported as `DecryptFailed`);
+  memo names with trailing dot/space stay allowed; a pre-lock check for names Windows cannot create
+  (e.g. `COM1.md`, which could make a later decrypt fail) was offered and **declined by the user** — don't re-propose.
 
 ## 5. Lessons from this session
 
