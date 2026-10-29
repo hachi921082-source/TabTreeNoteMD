@@ -185,7 +185,7 @@ export function correctEmailRange(raw: string): string {
  * 最後のラベルが ASCII の直後に非 ASCII が続く形(`ユーザー@example.com日本語`)なら、URL(`correctUrlRange`)と同じく
  * ASCII の部分で切る。切った結果が ASCII のみになるものは対象外(既存の検出が扱う)。
  * URL 内の `@` などとの重複排除は呼び出し側の責務(コード範囲・既存リンク範囲との重複排除)。 */
-export function findNonAsciiEmailTokens(text: string): { index: number; raw: string }[] {
+export function findNonAsciiEmailTokens(text: string, includeAsciiAfterNonAscii = false): { index: number; raw: string }[] {
   const results: { index: number; raw: string }[] = [];
   NON_ASCII_EMAIL_CANDIDATE_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -204,7 +204,15 @@ export function findNonAsciiEmailTokens(text: string): { index: number; raw: str
       index += boundary;
     }
     raw = raw.replace(/[-_]+$/, "");
-    if (!NON_ASCII_RE.test(raw) || !looksLikeEmail(raw)) continue;
+    // #306: 日本語の直後に空白なしで続く ASCII のみのメール(`連絡先はuser@example.com`)は、GFM(ライブビュー)は
+    // リンクにするが `linkify-it`(プレビュー)は見つけない。プレビューだけが `includeAsciiAfterNonAscii` で補う
+    // (ライブビューは GFM が検出済みなので不要)。直前が非 ASCII のときだけ対象にし、通常の ASCII メールは従来どおり `linkify-it` に任せる
+    // 直前が非 ASCII の句読点・括弧(`（user@example.com）`)の場合も同様。GFM は直前が `_` のときは開始しない
+    const afterNonAscii = boundary >= 0 || (m.index > 0 && NON_ASCII_RE.test(text[m.index - 1]));
+    if (!NON_ASCII_RE.test(raw)) {
+      if (!includeAsciiAfterNonAscii || !afterNonAscii || raw.startsWith("_")) continue;
+    }
+    if (!looksLikeEmail(raw)) continue;
     results.push({ index, raw });
   }
   return results;
