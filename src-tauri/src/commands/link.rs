@@ -9,8 +9,8 @@
 //! default handler" API (`tauri_plugin_opener`), never shell string concatenation
 //! (`[spec §2.8]`). A relative `filePath` value is resolved to absolute using `current_tab_id`'s
 //! folder as base before opening. The `AppSettings.links.confirmBeforeOpen` gate is entirely the
-//! frontend's responsibility (`link/PLAN.md` §2) — this command performs no confirmation, it is a
-//! pure "open now" action.
+//! frontend's responsibility (`link/PLAN.md` §2) — ただし実行ファイル・スクリプトの `FilePath` だけは例外で
+//! (issue #308)、`confirmed` が true でなければ開かず `ErrorCode::ConfirmRequired` を返す。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -151,7 +151,7 @@ pub enum ExternalLinkKind {
 ///   already guards against for `<img src>` (`docs/DECISIONS.md`: "Image `src` Allowlist: Reject
 ///   `..` Path-Traversal Segments").
 #[tauri::command]
-pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, extended_search_text: Option<String>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
+pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, extended_search_text: Option<String>, confirmed: Option<bool>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
     let opener = app.opener();
     allow_launched_process_foreground();
     let result = match kind {
@@ -166,6 +166,11 @@ pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String,
                     return AppResult::err(err);
                 }
             };
+            // 実行ファイル・スクリプトは `confirmBeforeOpen` 設定に関係なく、確認済みでなければ開かない(#308)。
+            if is_executable_file_path(&resolved) && !confirmed.unwrap_or(false) {
+                tracing::info!(value, "link_open_external: executable file path requires confirmation");
+                return AppResult::err_code(ErrorCode::ConfirmRequired, "opening an executable file requires confirmation");
+            }
             opener.open_path(resolved, None::<String>)
         }
     };
@@ -193,6 +198,28 @@ fn allow_launched_process_foreground() {
 
 #[cfg(not(windows))]
 fn allow_launched_process_foreground() {}
+
+/// 開く前に確認を必須とする実行ファイル・スクリプト系の拡張子(小文字、ドット無し)。issue #308。
+const EXECUTABLE_EXTENSIONS: &[&str] = &[
+    "exe", "bat", "cmd", "com", "scr", "ps1", "ps1xml", "ps2", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "ws", "hta", "lnk", "url", "msi", "msp", "mst", "reg", "cpl", "jar", "pif", "application", "gadget", "msc", "inf", "sct", "scf", "msh", "msh1", "msh2", "mshxml", "appref-ms", "settingcontent-ms", "diagcab", "appx", "msix", "appinstaller", "xll", "wll", "library-ms",
+];
+
+/// `path` の最終要素の拡張子が実行ファイル・スクリプト系かを返す(issue #308)。大文字小文字は無視。
+/// 回避を防ぐため、最終要素の `:` 以降(NTFS代替データストリーム `foo.exe:stream`、`foo.exe::$DATA`)と、
+/// 末尾の空白・ドット(Windowsが無視する `foo.exe ` / `foo.exe.`)を取り除いてから拡張子を判定する。
+fn is_executable_file_path(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    // ドライブ文字だけの要素(`C:`)以外では、最初の `:` 以降はストリーム指定。
+    let name = if name.len() == 2 && name.as_bytes()[1] == b':' { "" } else { name.split(':').next().unwrap_or("") };
+    let name = name.trim_end_matches([' ', '.']);
+    match name.rsplit_once('.') {
+        Some((_, ext)) => {
+            let ext = ext.trim().to_lowercase();
+            EXECUTABLE_EXTENSIONS.contains(&ext.as_str())
+        }
+        None => false,
+    }
+}
 
 fn normalize_url(value: &str) -> String {
     let lower = value.to_ascii_lowercase();
@@ -389,6 +416,16 @@ mod tests {
         parent.children = vec![child];
         assert!(tree_contains_memo(&[parent.clone()], "Child"));
         assert!(!tree_contains_memo(&[parent], "Nonexistent"));
+    }
+
+    #[test]
+    fn executable_extensions_are_detected_case_insensitively_and_through_tricks() {
+        for p in ["C:\\a\\payload.exe", "payload.EXE", "x/y.Bat", "a.cmd", "a.ps1", "a.vbs", "a.js", "a.lnk", "a.msi", "a.reg", "a.hta", "a.jar", "a.application", "payload.exe ", "payload.exe.", "payload.exe. .", "payload.exe:stream", "payload.exe::$DATA", "dir.d\\a.scr", "報告書.exe"] {
+            assert!(is_executable_file_path(p), "{p}");
+        }
+        for p in ["notes.txt", "a.md", "a.exe.txt", "exe", "C:\\dir.exe\\readme.txt", "C:", "a.pdf:exe", "no_ext", "a.", ""] {
+            assert!(!is_executable_file_path(p), "{p}");
+        }
     }
 
     #[test]
