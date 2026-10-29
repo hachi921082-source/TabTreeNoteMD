@@ -86,6 +86,10 @@ Keep this in sync whenever a section is added, renamed, or moved below.
 - **§13 Split-View Orientation Setting (New — GitHub issue #295 / PR #297, added 2026-10-27)** — new
   `editorDefaults.splitOrientation` (`horizontal` default / `vertical`) chosen in the settings dialog;
   split view only. Decided.
+- **§14 Non-ASCII URL and Email Link Detection (Bug Fix — GitHub issues #300 / #301 / #306, added 2026-10-29)**
+  — live view and preview detect the same link range for URLs/emails containing non-ASCII characters
+  (internationalized domains, CJK/Arabic punctuation, full-width brackets); preview "Copy link" keeps
+  the as-written URL. Known limits recorded. Decided.
 - **Open Questions for User**
 
 ---
@@ -763,6 +767,43 @@ Decided (GitHub issue #295); no open points.
 
 ---
 
+## 14. Non-ASCII URL and Email Link Detection (Bug Fix — GitHub issues #300 / #301 / #306, added 2026-10-29)
+
+Bug fix for link detection. The live view (`@lezer/markdown` GFM autolink) and the preview
+(`linkify-it`) previously disagreed on bare URLs/emails containing non-ASCII characters. Both now use the
+same range rules (PR #304, #305, #307).
+
+### 14.1 URLs (#300)
+
+- **Internationalized domains** (`https://ドメイン名例.jp/`) are linked in the live view too (previously
+  preview only). The OS opener receives the punycode form; the live view passes the URL as written.
+- **End of range**: a bare URL ends before non-ASCII punctuation / closing brackets (`。、」）` etc., Arabic `،`),
+  and trailing ASCII punctuation is stripped (`. , ) !`), same as GFM. Surrounding Japanese text before the URL
+  is not part of it.
+- **Kept inside URLs**: `・` `〜` `～` (e.g. `https://ja.wikipedia.org/wiki/ジョン・レノン`).
+- **Preview copy** ("リンクをコピー", added by issue #299): copies the as-written URL
+  (`https://例.jp/日本語`), carried in a `data-source-url` attribute (DOMPurify allowlist).
+- **Known limits**: kana directly attached to a URL stays part of it (`.../a日本語です`; indistinguishable from
+  a real Japanese path); `https://x.jp/日本語・次の文` stays one URL; URLs are also cut at emoji and other
+  symbol characters (`\p{S}`), identically in both views.
+
+### 14.2 Emails (#301, #306)
+
+- Emails whose local part and/or domain contain non-ASCII (`ユーザー@example.com`, `用户@例子.中国`, `user@例子.jp`)
+  are linked in both views; preview href is `mailto:` (domain punycode, local part percent-encoded), copy value is the
+  as-written address without `mailto:`.
+- Range: cut at punctuation/full-width brackets and at non-ASCII directly after the domain
+  (`user@example.com日本語` → `user@example.com`). An `@` inside a URL is never an email.
+- An ASCII email directly after Japanese text (`連絡先はuser@example.com`) is linked from the ASCII side only,
+  in both views.
+- **Known limits**: Japanese text directly before a non-ASCII local part joins it (`宛先ユーザー@x.jp` is one
+  email); a local part starting with `.`/`-` after Japanese (`日本語.john@example.com`) is linked by the live view
+  only (GFM-derived); clicking an email in the preview opens the percent-encoded/punycode `mailto:` form.
+
+Decided (GitHub issues #300/#301/#306); no open points.
+
+---
+
 ## Open Questions for User
 
-None. All thirteen items (§1–§13) are fully decided.
+None. All fourteen items (§1–§14) are fully decided.
