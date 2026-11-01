@@ -170,7 +170,7 @@ export function TabBar({
   // Keyboard-shortcut tab switching (`shared/shortcuts.ts`). Mouse-wheel
   // switching intentionally not implemented.
   useEffect(() => {
-    const shortcuts = resolveShortcuts(undefined);
+    const shortcuts = resolveShortcuts(settings?.shortcuts);
     const handleKeyDown = (e: KeyboardEvent) => {
       if (orderIds.length === 0) return;
       const combo = comboFromEvent(e);
@@ -185,7 +185,7 @@ export function TabBar({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [orderIds, activeTabId, selectTab]);
+  }, [orderIds, activeTabId, selectTab, settings?.shortcuts]);
 
   // Cross-Tab Quick Open trigger (`docs/plans/v1.1.0/quick-open/PLAN.md` §4, default `Ctrl+O`) —
   // global, focus-unconstrained (works regardless of what currently has focus, same treatment as
