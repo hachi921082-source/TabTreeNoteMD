@@ -15,7 +15,7 @@ export const DEFAULT_BRANCH = "V1.0.0";
 type GitRunner = (args: string) => string;
 
 const runGit: GitRunner = (args) =>
-  execSync(`git ${args}`, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  execSync(`git ${args}`, { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).toString().trim();
 
 // 設定画面に出す版表示を組み立てる(GitHub issue #323)。
 // 例: `v1.2.0` / `v1.2.0 (fix/foo, 1a2b3c4)` / `v1.2.0 (fix/foo, 1a2b3c4, dirty)`。
