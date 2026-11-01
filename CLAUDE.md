@@ -4,7 +4,7 @@
 
 ## Old Repository (Reference Only)
 
-- Path: `c:\Users\m9112\vscode2\TabTreeNote`. **Reference only; do not perform Edit/Write/commits.** For details on reference destinations, see [docs/DECISIONS.md](docs/DECISIONS.md).
+- Path: `%USERPROFILE%\vscode2\TabTreeNote`. **Reference only; do not perform Edit/Write/commits.** For details on reference destinations, see [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Documentation for This Repository
 
