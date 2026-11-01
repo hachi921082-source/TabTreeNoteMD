@@ -30,8 +30,6 @@ export const en: Record<keyof typeof ja, string> = {
   // ---- tab.* ---------------------------------------------------------------
   "tab.createNewTitle": "Create New Tab",
   "tab.createNewLabel": "Tab (folder) name",
-  "tab.duplicateNameTitle": "Duplicate Tab Name",
-  "tab.duplicateNameLabel": "Enter a different name",
 
   // ---- TabBar.tsx ------------------------------------------------------------
   "tabBar.registerExisting": "Register Existing Folder",
