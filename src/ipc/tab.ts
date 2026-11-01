@@ -42,6 +42,13 @@ export async function tabRename(id: string, newName: string): Promise<Result<Tab
   return invoke<Result<TabInfo>>("tab_rename", { id, newName });
 }
 
+/** Sets or clears (`label: null`) the distinguishing label shown for a locked tab in place of the
+ * bare 🔒 glyph (`docs/spec.v1.2.0.md` §10). Works regardless of lock/session state, unlike
+ * `tabRename`. */
+export async function tabSetLockLabel(id: string, label: string | null): Promise<Result<TabInfo>> {
+  return invoke<Result<TabInfo>>("tab_set_lock_label", { id, label });
+}
+
 export async function tabReorder(order: string[]): Promise<Result<void>> {
   return invoke<Result<void>>("tab_reorder", { order });
 }

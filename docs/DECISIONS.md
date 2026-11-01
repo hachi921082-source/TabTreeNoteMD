@@ -321,6 +321,45 @@ tooltips that also need to reference the locked tab's placeholder name).
 
 **Where elaborated**: `detailed-spec.md` §3.2's placeholder-name bullet, restated as decided.
 
+**Superseded 2026-08-22 — see "Locked Tab Distinguishing Label" below.** With several locked tabs at
+once (GitHub issue #202), the bare glyph alone made every locked tab visually identical; the plain
+"no text" default is now overridden by an optional, user-settable per-tab label. This entry is kept
+for history.
+
+## Locked Tab Distinguishing Label: User-Settable, Editable Anytime via Context Menu (2026-08-22)
+
+**Decision**: supersedes the "🔒 Glyph Alone" decision above. Multiple locked tabs at once (GitHub
+issue #202, reported after several test-fixture tabs ended up locked with no way to tell them apart
+without unlocking each one) made the bare-glyph-only default impractical in practice. Rather than an
+automatic, generated identifier, the label is entirely user-authored:
+
+- A new tab right-click context-menu item (e.g. "ロック名を設定"/"Set lock label") opens a
+  single-text-input prompt (reusing the existing `PromptDialog` pattern already used identically for
+  lock/unlock/permanent-unlock in `TabBar.tsx`) to set or change the label, at any time — not only at
+  lock-setup time.
+- New persisted field on the tab record (e.g. `AppSettings.tabs[i].lockLabel: string | null`), keyed
+  to the tab's internal `id` — stable regardless of the underlying folder's real name/path, and
+  unaffected if that folder is later renamed (see "separately noted" gap recorded on issue #202 about
+  external folder renames in general, which is unrelated to this).
+- Until the user sets one, display falls back to the original bare 🔒 — this is an opt-in enhancement,
+  not a new mandatory default for every locked tab.
+- Must still never reference or hint at the real tab/folder name — the label is the user's own free
+  text, entirely under their control (same privacy intent as the original decision).
+
+**Rejected alternative — auto-generated sequential label ("LockTabA"/"LockTabB"/...)**: considered
+first (assigned in lock order, permanently fixed per tab, never reused even after a tab's deletion —
+to avoid a stale letter later being reassigned to an unrelated tab — continuing past "Z" via a
+spreadsheet-column-style `AA`/`AB`/... scheme for effectively unlimited capacity). Rejected because
+permanently skipping a deleted tab's letter (e.g. no tab ever being "B" again after the original "B"
+is removed) was judged visually/conceptually unpleasant, and a generated letter carries no actual
+memory hook to the tab's real content the way a user's own chosen label would.
+
+**Where elaborated**: `spec.v1.2.0.md` §10 (user-facing decided behavior) and `detailed-spec.v1.2.0.md`
+§10 (data model, command, and context-menu/display elaboration). GitHub issue #202 and its comment thread
+still carry the full decision history (including the rejected alternative's own sub-decisions on
+gap-handling and overflow past "Z"), but the decided behavior itself is now also reflected in the spec
+files `developer-lite` works from.
+
 ## Icon Submenu Clarified as the `label.color` Picker; Concrete Palette Adopted from Legacy; `label.kind` Confirmed Reserved (2026-08-01)
 
 **Background**: `spec.md` §2.2 confirms a right-click "Icon" submenu on tree memos, but neither
@@ -403,7 +442,7 @@ In the old v3's node lock, initially "not discarded when switching tabs", but th
 ## Implementation Policy: No Legacy Code Reference — Build from Scratch (2026-08-01)
 
 **Decision**: `developer-lite` does not read, copy, or adapt source code from the old repository
-(`c:\Users\m9112\vscode2\TabTreeNote`) during implementation. Every feature is implemented from
+(`%USERPROFILE%\vscode2\TabTreeNote`) during implementation. Every feature is implemented from
 `spec.md`/`detailed-spec.md`/the feature's own `PLAN.md` only — those are treated as sufficient and
 self-contained. This supersedes the project's earlier "reference the old repo's code during
 implementation" policy.
@@ -507,3 +546,150 @@ starts at `#`/H1 is unaffected (identical output to the prior absolute-indentati
 **Rejected alternative**: keeping absolute-level indentation (the original v1 implementation) — rejected
 because a document whose shallowest heading isn't `#` then produces a TOC with no flat top-level item at
 all, which reads as visually broken.
+
+## Quick Open Default Shortcut: `Ctrl+O` (2026-08-16)
+
+**Background**: `spec.v1.1.0.md` §3.1 originally confirmed `Ctrl+Shift+P` as Quick Open's default shortcut,
+reasoning only against `docs/plans/window-operation/PLAN.md`'s original 16-action shortcut table (ruling
+out `Ctrl+P`/`Ctrl+K`). It did not check the app's actual current default keymap,
+`src/shared/shortcuts.ts`'s `DEFAULT_SHORTCUTS`, where `Ctrl+Shift+P` was already bound to
+`markdown.paneModeCycle` (added later by `docs/plans/markdown/markdown-preview/PLAN.md` §6.3, a plan that
+postdates `window-operation/PLAN.md`'s table). This was a real, live default-shortcut collision between two
+v1.1.0/v1.0.0 features, raised by `developer-lite` in `docs/QA.md` during `docs/plans/v1.1.0/quick-open/
+PLAN.md` planning.
+
+**Decision**: Quick Open's default shortcut is `Ctrl+O`, verified as unused in `DEFAULT_SHORTCUTS` as of
+this writing (checked directly against `src/shared/shortcuts.ts`, not just `window-operation/PLAN.md`'s
+table). `markdown.paneModeCycle`'s existing `Ctrl+Shift+P` binding is left untouched. `Ctrl+O` is also a
+reasonably mnemonic choice ("Open") for a feature whose purpose is to jump-open a memo, echoing the same
+mnemonic (if not identical key) VS Code's own "Quick Open" uses. Reflected in `spec.v1.1.0.md` §3.1 and
+`detailed-spec.v1.1.0.md` §3.3.
+
+**Rejected alternative**: reassigning `markdown.paneModeCycle`'s default away from `Ctrl+Shift+P` to free
+it up for Quick Open — rejected because that binding is already implemented/shipped in v1.0.0, and
+reassigning it would break existing users' muscle memory for no benefit over simply picking a different,
+unused combo for the newer feature instead.
+
+**Process note**: this collision existed because the original conflict-check only cross-referenced
+`window-operation/PLAN.md`'s shortcut table, which is a point-in-time snapshot that predates
+later-added bindings (`markdown.paneModeCycle`, `markdown.pdfExport`, etc.). Future shortcut
+conflict-checks during spec/detailed-spec work should verify directly against the live
+`src/shared/shortcuts.ts` `DEFAULT_SHORTCUTS` map, not only `window-operation/PLAN.md`'s original table,
+to avoid this recurring as more shortcuts get added by later plans.
+
+## Tab-Lock Auto-Relock Scope: Foreground Active Tab Only, Backgrounded Sessions Explicitly Out of Scope (2026-08-16)
+
+**Background**: `spec.v1.1.0.md` §5.1 originally justified a single global inactivity timer on the premise
+that "a session is already discarded the instant the user leaves its tab (`[spec §4.1 pt.5]`)," so "at
+most one locked session can ever be alive at a time." That premise is factually false for the
+already-implemented, frozen v1.0.0 Tab Lock feature: `docs/plans/tab-lock/PLAN.md`'s "Implementation
+Notes" and the shipped `src/state/useTabLock.ts` both confirm Tab Lock supports more than one
+concurrently-active session — e.g. a cross-tab drag-and-drop onto a locked tab unlocks that tab in place
+(password entered at drop time) without the drag-source tab ever losing focus, so the dropped-onto tab's
+session can stay alive in the background indefinitely, since it never itself becomes the active tab and so
+never triggers the "leaving the tab" teardown. `developer-lite` raised this in `docs/QA.md` during
+`docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` planning, since it blocks the timer-scope architecture
+decision (single global vs. per-session-aware).
+
+**Decision**: Auto-Relock's inactivity timer covers the foreground active tab's session only, exactly as
+`spec.v1.1.0.md` §5.1 already literally stated — no change to the feature's actual behavior or
+architecture (still a single global timer, not a per-session one). What changed is that the spec now states
+this scope limitation **explicitly** as a deliberate, accepted boundary rather than resting on the false
+"at most one session alive" premise: a backgrounded, drop-created Tab-Lock session has no lifecycle
+end-trigger at all today (not "leaving the tab" — it was never entered — and, with this scope, not
+Auto-Relock's timer either), and this feature knowingly does not close that gap. Reflected in
+`spec.v1.1.0.md` §5.1 ("Deliberately does not cover backgrounded sessions") and
+`detailed-spec.v1.1.0.md` §3.5 (timer lifecycle bullet).
+
+**Rejected alternative**: widening Auto-Relock to also watch backgrounded/drop-created sessions (e.g. a
+per-session timer, or extending the single global timer's reach to every live session, not just the
+foreground one) — presented to the user as an option alongside the narrower scope; declined to keep this
+feature's scope small, treating the backgrounded-session gap as a pre-existing condition of Tab Lock's
+multi-session model that is unrelated to and not newly introduced by Auto-Relock, not something this
+feature is obligated to fix as a side effect. Closing that gap, if ever pursued, remains available as its
+own separate future feature.
+
+## Preview-Pane `memo:` Link Non-ASCII Name Encoding Bug: Bundled into v1.2.0's §9 Fix, Not Deferred (2026-08-20)
+
+**Background**: `spec.v1.2.0.md` §9 (elaborating `[spec §4.2]`/`[spec §2.8]`) fixes a bug where
+markdown-it's `normalizeLink` rule percent-encodes a rendered `<a href>` in the preview pane, while the
+corresponding lookup target (a heading's `id`, set directly from `scanHeadings()`'s raw slug) is never
+encoded — breaking resolution for any non-ASCII (in practice, almost any Japanese) `#slug` anchor. The
+originally-decided fix (`decodeURIComponent` in `previewInteractions.ts`'s `handleAnchorClick`) was
+scoped only to that function's `#`-prefixed branch. While elaborating §4 (`memo:TabName/MemoName#slug`
+cross-tab anchor links) and §9 into `detailed-spec.v1.2.0.md`, `designer-lite` re-ran §9's own root-cause
+investigation (the same `mdurl`/`markdown-it` package inspection technique) against a `memo:` target
+instead of a bare `#slug` target, and confirmed the **identical** encoding defect also corrupts
+`memo:TabName/MemoName` hrefs whenever the tab name or memo name — not just an anchor slug — contains a
+non-ASCII character (empirically: `mdurl.encode(mdurl.format(mdurl.parse('memo:Work/日記#見出し')))` →
+`memo:Work/%E6%97%A5%E8%A8%98#%E8%A6%8B%E5%87%BA%E3%81%97`). This is a **pre-existing bug in today's
+baseline `memo:` cross-tab links** (`[spec §2.8]`), not introduced by v1.2.0's §4 — but it silently breaks
+§4's new feature for any Japanese-named tab/memo when clicked from the preview or split pane, since the
+memo-target half of a `memo:TabName/MemoName#slug` link would fail to resolve regardless of whether the
+anchor half is even present. Live view is unaffected in both the original `#slug` case and this adjacent
+`memo:` case, for the same reason: live view's link/anchor detection reads raw CodeMirror source text
+directly and never passes through markdown-it's HTML-rendering pipeline, so no encoding is ever
+introduced there. Since this was a genuinely new finding not decided or delegated anywhere in
+`spec.v1.2.0.md`, it was escalated to `QA.md` as `Q-v1.2.0-1` rather than silently patched in during the
+detailed-spec pass, per this project's process.
+
+**Decision**: fix the `memo:`-prefixed branch of `handleAnchorClick` (`src/editor/preview/
+previewInteractions.ts`) with the identical `decodeURIComponent` treatment already decided for the
+`#`-prefixed branch, **in the same v1.2.0 implementation pass** — not deferred to a later issue. Reasons
+for bundling now rather than later: (1) it is the same fix, on the same file, following the same
+already-decided pattern — no new design work, just applying an already-approved technique to a second,
+adjacent branch of the same function; (2) it is a **correctness prerequisite** for §4 (the new
+`memo:TabName/MemoName#slug` cross-tab anchor feature) actually working on Japanese-named tabs/memos in
+`preview`/`split` mode — shipping §4 without this fix would mean the feature silently fails for the
+majority of this app's own real-world tab/memo names (a Japanese-first personal note app), which would be
+a poor first impression of a brand-new feature; (3) the fix is small and low-risk (one additional
+`decodeURIComponent` call site, isolated to preview-pane click handling, no schema/data-model change).
+Reflected in `spec.v1.2.0.md` §9 (bundled-follow-up paragraph) and `detailed-spec.v1.2.0.md` §4.4/§9/§12.
+
+**Rejected alternative**: track the `memo:`-branch fix as a separate, later issue/patch (`developer-lite`'s
+original framing when escalating `Q-v1.2.0-1`, presented as one of two options) — rejected specifically
+because of point (2) above: unlike most "adjacent gap, could be deferred" findings, this one is not
+merely adjacent to §4, it is load-bearing for §4's own stated purpose in the common case for this app's
+actual users, so deferring it would ship a headline v1.2.0 feature in a state that looks broken for most
+realistic inputs rather than genuinely deferring an unrelated concern.
+
+## i18n Mechanism: Hand-Rolled React Context, Not `react-i18next` Package (2026-08-20)
+
+**Decision**: v1.2.0's UI-internationalization mechanism (`[spec v1.2.0 §1.4]`, which delegated the exact
+library/mechanism to the detailed-spec pass) is a small hand-rolled React Context + `useT()` hook
+(`src/i18n/`), not the `react-i18next` package itself.
+
+**Rationale**: `[spec v1.2.0 §1.4]` itself frames the request as "a `react-i18next`-**like** mechanism,"
+not the package by name. This app's architecture doc (`docs/plans/project-architecture/PLAN.md`) states
+the app deliberately uses "plain hooks... no external state library," confirmed by inspection: every
+other cross-cutting piece of app state (`useSettings.ts`, `useTree.ts`, `useTabs.ts`, etc.) is a plain
+hook, and `package.json` has zero state-management dependencies today (`redux`/`zustand`/`jotai` all
+absent). Adopting `react-i18next` would be the first external state-management dependency in the app,
+contradicting that established architectural choice, for a need (runtime string lookup + re-render on
+language change) a ~40-line Context/hook fully covers.
+
+**Where elaborated**: `detailed-spec.v1.2.0.md` §1.1.
+
+## Preview-Pane Zoom CSS Mechanism: `zoom` Property, Not `transform: scale()` (2026-08-20)
+
+**Decision**: v1.2.0's preview-pane zoom (`[spec v1.2.0 §6]`, which specified the range/steps/scope but
+not the CSS mechanism) is implemented with the CSS `zoom` property (e.g. `style={{ zoom: "${percent}%" }}`
+on `PreviewPane.tsx`'s content element), not `transform: scale(...)`.
+
+**Rationale**: `zoom` triggers real layout reflow at the new size (text rewraps, images/tables resize
+within their containers at the new effective width) — matching `[spec v1.2.0 §6]`'s "affects... text
+size, images, tables" description of a genuine content-size change, not merely a visual magnification.
+`transform: scale()` does not reflow layout — it visually magnifies a box whose layout box stays at its
+original size, clipping content past 100% or leaving dead space below 100%, requiring extra width/height
+compensation math `zoom` needs none of. `zoom` is a long-standing Chromium/WebView2-native CSS property
+(not W3C standard, but universally supported in every Chromium-based engine — this app's one and only
+rendering target per its Tauri+WebView2 architecture, so no cross-browser-compatibility concern applies).
+It also interacts correctly, with no extra work, with `[MDEditor-spec §4]`'s existing wide-table
+horizontal-scroll rule and the preview's `max-width: 100%` image rule, since `zoom` affects the box's own
+effective CSS pixel size for every descendant's percentage/auto calculations.
+
+**Caveat**: this interaction is argued from code/CSS semantics only, not visually confirmed — whether the
+table horizontal-scroll container and image `max-width` actually look right at the range's upper bound
+(180%) in a real running preview pane is left as a manual check for the user during/after implementation.
+
+**Where elaborated**: `detailed-spec.v1.2.0.md` §6.2.

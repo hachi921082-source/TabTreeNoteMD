@@ -18,7 +18,7 @@
 use std::path::Path;
 use std::sync::RwLock;
 
-use crate::commands::tree::{collect_names, load_and_reconcile};
+use crate::commands::tree::{collect_names, find_node, load_and_reconcile};
 use crate::model::app_settings::AppSettings;
 use crate::store::memo_file_service::decode_memo_body;
 
@@ -36,6 +36,10 @@ pub struct IndexEntry {
     pub memo_name: String,
     pub plaintext: String,
     pub plaintext_name: String,
+    /// Mirrors `MetaTreeNode.favorite` (absence coerced to `false`) — `docs/plans/v1.1.0/favorites/PLAN.md`
+    /// §3, `[spec v1.1.0 §4.3]`. Kept in sync by `set_favorite` and preserved across `upsert`'s
+    /// in-place-update branch (see that method's doc comment).
+    pub favorite: bool,
 }
 
 /// Linear scan over `entries` is acceptable at "hundreds to thousands of memos" scale
@@ -74,11 +78,13 @@ impl SearchIndex {
                 let file_path = folder.join(format!("{name}.md"));
                 let Ok(bytes) = std::fs::read(&file_path) else { continue };
                 let (decoded, _encoding) = decode_memo_body(&bytes);
+                let favorite = find_node(&loaded.tree, &name).and_then(|n| n.favorite).unwrap_or(false);
                 fresh.push(IndexEntry {
                     tab_id: tab.id.clone(),
                     memo_name: name.clone(),
                     plaintext: to_plaintext(&decoded),
                     plaintext_name: name,
+                    favorite,
                 });
             }
         }
@@ -98,6 +104,12 @@ impl SearchIndex {
     /// the memo's decoded (not yet plaintext-converted) Markdown source; the conversion (§3,
     /// `to_plaintext` below) happens here, once, at the single choke point every patch call site
     /// goes through.
+    ///
+    /// `favorite` is left untouched on the existing-entry-update branch (rename, ordinary save, and
+    /// `docs/plans/v1.1.0/folder-import/PLAN.md`'s Overwrite-collision re-import must not clear an
+    /// already-favorited memo's status) — only the brand-new-entry branch defaults it to `false`,
+    /// matching `MetaTreeNode.favorite`'s own absent-by-default rule
+    /// (`docs/plans/v1.1.0/favorites/PLAN.md` §3).
     pub fn upsert(&self, tab_id: &str, memo_name: &str, raw_body: &str) {
         let plaintext = to_plaintext(raw_body);
         let mut entries = self.entries.write().expect("search index lock poisoned");
@@ -112,6 +124,7 @@ impl SearchIndex {
                 memo_name: memo_name.to_string(),
                 plaintext,
                 plaintext_name: memo_name.to_string(),
+                favorite: false,
             }),
         }
     }
@@ -121,6 +134,17 @@ impl SearchIndex {
     pub fn remove(&self, tab_id: &str, memo_name: &str) {
         let mut entries = self.entries.write().expect("search index lock poisoned");
         entries.retain(|e| !(e.tab_id == tab_id && e.memo_name.eq_ignore_ascii_case(memo_name)));
+    }
+
+    /// Patches `(tab_id, memo_name)`'s `favorite` flag (`docs/plans/v1.1.0/favorites/PLAN.md` §2-3),
+    /// same case-insensitive match `upsert`/`remove` use. A no-op if no matching entry exists — the
+    /// locked-tab case (`commands/tree.rs::memo_set_favorite`'s only caller today still succeeds at
+    /// the `MetaTreeNode.favorite` mutation itself; only this index side-effect is skipped).
+    pub fn set_favorite(&self, tab_id: &str, memo_name: &str, favorite: bool) {
+        let mut entries = self.entries.write().expect("search index lock poisoned");
+        if let Some(existing) = entries.iter_mut().find(|e| e.tab_id == tab_id && e.memo_name.eq_ignore_ascii_case(memo_name)) {
+            existing.favorite = favorite;
+        }
     }
 
     /// Bulk-removes every entry for `tab_id` — called when a tab is locked
@@ -356,6 +380,43 @@ mod tests {
     }
 
     #[test]
+    fn upsert_of_a_brand_new_entry_defaults_favorite_to_false() {
+        let index = SearchIndex::new();
+        index.upsert("tab-1", "Diary", "hello world");
+        assert!(!index.snapshot()[0].favorite);
+    }
+
+    #[test]
+    fn upsert_preserves_favorite_across_an_in_place_update() {
+        let index = SearchIndex::new();
+        index.upsert("tab-1", "Diary", "first version");
+        index.set_favorite("tab-1", "Diary", true);
+        // Ordinary re-save / rename / Overwrite-collision re-import path — must not clear favorite.
+        index.upsert("tab-1", "Diary", "second version");
+        let snap = index.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert!(snap[0].favorite, "favorite must survive an existing-entry upsert");
+        assert!(snap[0].plaintext.contains("second version"));
+    }
+
+    #[test]
+    fn set_favorite_matches_case_insensitively_like_upsert_and_remove() {
+        let index = SearchIndex::new();
+        index.upsert("tab-1", "Diary", "content");
+        index.set_favorite("tab-1", "diary", true);
+        assert!(index.snapshot()[0].favorite);
+        index.set_favorite("tab-1", "DIARY", false);
+        assert!(!index.snapshot()[0].favorite);
+    }
+
+    #[test]
+    fn set_favorite_is_a_harmless_no_op_for_a_missing_entry() {
+        let index = SearchIndex::new();
+        index.set_favorite("tab-1", "Nonexistent", true);
+        assert!(index.snapshot().is_empty());
+    }
+
+    #[test]
     fn purge_tab_removes_only_that_tabs_entries() {
         let index = SearchIndex::new();
         index.upsert("tab-1", "A", "content a");
@@ -381,12 +442,14 @@ mod tests {
             name: "Open".to_string(),
             folder_path: unlocked_dir.to_string_lossy().into_owned(),
             locked: Some(false),
+            lock_label: None,
         });
         settings.tabs.push(crate::model::app_settings::TabSettingsEntry {
             id: "locked-tab".to_string(),
             name: "\u{1F512}".to_string(),
             folder_path: locked_dir.to_string_lossy().into_owned(),
             locked: Some(true),
+            lock_label: None,
         });
 
         let index = SearchIndex::new();
@@ -397,9 +460,41 @@ mod tests {
         assert_eq!(snap[0].memo_name, "Diary");
         assert!(snap[0].plaintext.contains("Diary"));
         assert!(snap[0].plaintext.contains("hello there"));
+        assert!(!snap[0].favorite, "no metadata file means favorite is absent, coerced to false");
         assert!(!snap.iter().any(|e| e.tab_id == "locked-tab"));
 
         std::fs::remove_dir_all(&unlocked_dir).ok();
         std::fs::remove_dir_all(&locked_dir).ok();
+    }
+
+    #[test]
+    fn rebuild_all_reads_a_favorited_nodes_flag_from_persisted_metadata() {
+        use crate::commands::tree::save_tab_meta;
+        use crate::fs::self_write_registry::SelfWriteRegistry;
+        use crate::model::tab_meta::TAB_META_SCHEMA_VERSION;
+        use crate::model::tree::MetaTreeNode;
+
+        let dir = tempdir();
+        std::fs::write(dir.join("Starred.md"), "starred content").unwrap();
+        let mut node = MetaTreeNode::default_for_new_file("Starred".to_string());
+        node.favorite = Some(true);
+        save_tab_meta(&dir, TAB_META_SCHEMA_VERSION, "test".to_string(), &[node], None, &SelfWriteRegistry::new()).unwrap();
+
+        let mut settings = AppSettings::default();
+        settings.tabs.push(crate::model::app_settings::TabSettingsEntry {
+            id: "fav-tab".to_string(),
+            name: "Fav".to_string(),
+            folder_path: dir.to_string_lossy().into_owned(),
+            locked: Some(false),
+            lock_label: None,
+        });
+
+        let index = SearchIndex::new();
+        index.rebuild_all(&settings);
+        let snap = index.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert!(snap[0].favorite);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

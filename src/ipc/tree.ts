@@ -3,7 +3,7 @@
 // §6; `docs/plans/memo-tree/PLAN.md` §3). No business logic here.
 import { invoke } from "@tauri-apps/api/core";
 import type { Result } from "../shared/result";
-import type { LabelColor, MemoEditorSettings, MemoMoveResult, MemoProperties, MoveTarget, TreeSnapshot } from "../shared/models";
+import type { LabelColor, MemoEditorSettings, MemoMoveResult, MemoMutationResult, MemoProperties, MoveTarget, TreeSnapshot } from "../shared/models";
 
 export async function treeOpen(tabId: string): Promise<Result<TreeSnapshot>> {
   return invoke<Result<TreeSnapshot>>("tree_open", { tabId });
@@ -19,14 +19,14 @@ export async function memoCreateChild(tabId: string, name: string, parent: strin
 }
 
 /** Also the backend for F2 rename (single-selection only, enforced by the caller). */
-export async function memoRename(tabId: string, path: string, newName: string): Promise<Result<TreeSnapshot>> {
-  return invoke<Result<TreeSnapshot>>("memo_rename", { tabId, path, newName });
+export async function memoRename(tabId: string, path: string, newName: string): Promise<Result<MemoMutationResult>> {
+  return invoke<Result<MemoMutationResult>>("memo_rename", { tabId, path, newName });
 }
 
 /** `forceDirect: true` is only sent after the user explicitly consents to a direct (non-trash)
  * delete, following a prior `TRASH_FAILED` response (`[spec §5.8]`). */
-export async function memoDelete(tabId: string, paths: string[], forceDirect = false): Promise<Result<TreeSnapshot>> {
-  return invoke<Result<TreeSnapshot>>("memo_delete", { tabId, paths, forceDirect });
+export async function memoDelete(tabId: string, paths: string[], forceDirect = false): Promise<Result<MemoMutationResult>> {
+  return invoke<Result<MemoMutationResult>>("memo_delete", { tabId, paths, forceDirect });
 }
 
 export async function memoMove(tabId: string, paths: string[], target: MoveTarget): Promise<Result<MemoMoveResult>> {
@@ -51,6 +51,11 @@ export async function memoSetEditLock(tabId: string, path: string, locked: boole
   return invoke<Result<TreeSnapshot>>("memo_set_edit_lock", { tabId, path, locked });
 }
 
+/** Cross-tab favorite flag (`docs/plans/v1.1.0/favorites/PLAN.md` §2, `[spec v1.1.0 §4.1]`). */
+export async function memoSetFavorite(tabId: string, path: string, favorite: boolean): Promise<Result<TreeSnapshot>> {
+  return invoke<Result<TreeSnapshot>>("memo_set_favorite", { tabId, path, favorite });
+}
+
 export async function memoGetProperties(tabId: string, path: string): Promise<Result<MemoProperties>> {
   return invoke<Result<MemoProperties>>("memo_get_properties", { tabId, path });
 }
@@ -60,4 +65,13 @@ export async function memoGetProperties(tabId: string, path: string): Promise<Re
  * `memo_open_location`). */
 export async function memoOpenLocation(tabId: string, path: string): Promise<Result<void>> {
   return invoke<Result<void>>("memo_open_location", { tabId, path });
+}
+
+/** `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §4 — persists `tabId`'s "last viewed memo" pointer.
+ * `memoName: null` records "nothing viewed" (not a normal call site today, see that plan's "Not
+ * called by" list — no current caller passes `null`, but the backend command accepts it). No
+ * `TreeSnapshot` round-trip: the frontend already holds the authoritative tree/selection state for
+ * this narrow, tree-structure-independent mutation. */
+export async function treeSetLastViewed(tabId: string, memoName: string | null): Promise<Result<void>> {
+  return invoke<Result<void>>("tree_set_last_viewed", { tabId, memoName });
 }

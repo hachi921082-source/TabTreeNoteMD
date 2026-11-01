@@ -1,100 +1,102 @@
 # Session Handoff
 
-> Written to carry context into a fresh conversation when the previous one has grown too large.
-> Read this once at the start of the new session, then treat it as disposable — once its content is
-> either acted on or absorbed back into `spec.md` / `DECISIONS.md` / `QA.md` / commits, this file can be
-> deleted. It is not a permanent part of the documentation set (unlike `spec.md`, `DECISIONS.md`,
-> `detailed-spec.md`, `QA.md`, which `docs/plans/README.md` and `CLAUDE.md` already index).
+> Written to carry context into a fresh conversation. Read once at the start of the new session,
+> then treat as disposable — delete once acted on / absorbed into `spec.v1.2.0.md` / `DECISIONS.md` /
+> `RESOLVED-ISSUES.md` / commits. Not a permanent part of the documentation set.
+>
+> **Verify against actual state before acting** (`git status`, `git log`, `git branch -a`,
+> `gh issue list`) — snapshot written 2026-10-29.
 
-## Where the project stands
+## Index
 
-- `docs/spec.md`, `docs/detailed-spec.md`, `docs/DECISIONS.md`, `docs/QA.md` are all up to date with
-  every decision made this session (see below). `QA.md` currently has **no open items**.
-- `docs/plans/` now exists (created this session) with 12 independent per-feature `PLAN.md` files plus
-  `docs/plans/README.md` as an index. Per `.claude/agents/README.md`'s workflow, this is the
-  "implementation planning" stage output — **no implementation code exists yet** (`src/` has not been
-  started). Every plan is marked "planning complete, not yet implemented."
-- All 12 plans are currently **fully unblocked** — no plan has an open `QA.md`-dependent item.
+1. Where the project stands
+2. Next action
+3. Done in this session (2026-10-27 – 2026-10-29)
+4. Decisions made this session
+5. Lessons from this session
+6. Working conventions
+7. Repo-root clutter / leftover branches
 
-## Decisions made this session (already reflected in the docs above — this is a summary, not the record)
+## 1. Where the project stands
 
-This was a long session covering two phases:
+- Branch `V1.2.0`, local == origin (after this file's commit is pushed), nothing in progress.
+- **No open GitHub issues.**
+- Working tree: `src-tauri/Cargo.toml` shows modified — line endings only. Never commit it.
+- `/security-review` of `V1.2.0` (whole branch vs `master`, 2026-10-29), two passes: (1) link/path/sanitize/
+  crypto areas → one MEDIUM candidate (executable file-path links opened unconfirmed) → fixed as #308;
+  (2) previously unread areas (`tab_lock.rs`, `tree.rs`, `tab.rs`, `settings.rs`, search, `watch/*`, `store/*`,
+  trash/folder-transfer, lock frontend) → one finding (`fileMap` token/memo_name path traversal) → fixed
+  as #311. Still not read in full: `tree.rs` L1100–1370 (`memo_set_*`, `mutate_node_field`,
+  `memo_get_properties`; lock check confirmed by grep only), `search.rs` after L260,
+  `watch/conflict.rs`, `fs/self_write_registry.rs`, `settings/app_settings_store.rs`,
+  `store/memo_file_service.rs`, and the three password/recovery dialogs (grepped only).
 
-**Phase 1 — creating the initial plan set**: `docs/plans/` was created from scratch (12 feature plans +
-index), organized by feature name rather than dependency order (per user request), with a mandatory
-whole-app integration-test policy recorded in `docs/plans/README.md` for after all features are
-implemented.
+## 2. Next action
 
-**Phase 2 — a long design-review conversation that amended both `detailed-spec.md` and the plans**:
+None queued. Ask the user what to do next. Do not pick up anything Claude itself deferred in an
+earlier doc/issue without the user asking (see §5).
 
-1. **Tab Lock crash-mid-lock recovery** (formerly `QA.md` Q1): resolved as Option B — explicit
-   in-progress marker + deterministic resume/rollback. Fully specified in `detailed-spec.md` §5.9 and
-   `tab-lock/PLAN.md`.
-2. **UI-state persistence**: scroll position (persist) and toolbar position (persist) now firm
-   requirements; search/replace history confirmed session-only. New fields:
-   `MemoEditorSettings.scrollPosition`, `AppSettings.window.toolbarPosition`.
-3. **Force-delete shortcut**: confirmed `Ctrl+Delete` (was previously just an example).
-4. **Tab-lock placeholder display name**: confirmed as the 🔒 glyph alone, no text.
-5. **`label.color`**: confirmed 5-choice palette adopted verbatim from the legacy app (None/Red `#e05a5a`/
-   Blue `#4a90d9`/Green `#4caf50`/Yellow `#e0c040`). The right-click "Icon" submenu (`spec §2.2`) is this
-   picker. `label.kind` confirmed to stay reserved/unimplemented for v1 (verified via legacy code that
-   it was always a dead/unused field).
-6. **Mouse-wheel tab switching**: removed from v1 scope entirely (`spec.md` §2.1 itself edited). Click
-   and keyboard-shortcut switching unaffected.
-7. **Markdown toolbar — fully redesigned and finalized**: fixed **8×2 = 16-slot grid** (up from an
-   earlier 12-slot concept), icon set = **Lucide** (bundled locally). Bold/Italic are separate slots;
-   Undo/Redo added as toolbar actions. A "rearrange mode" (16th slot, `GripVertical` icon) lets the user
-   drag-reorder the 16 icons; OFF=click invokes action, ON=drag-only+Esc-exits+whole-toolbar tint. Icon
-   order persists (`AppSettings.window.toolbarOrder`, new field). Full layout table, icon mapping, and
-   mechanism are in `detailed-spec.md` §5.10 and `markdown-editing/PLAN.md` §4.
-8. **New v1 feature — Table of Contents (TOC)**: triggered by the toolbar's "Update" slot only (manual,
-   never live/background). Scans headings, GitHub-style slugifies them, writes a nested Markdown link
-   list into a marker-delimited block (insert-or-replace in place). Adds a new same-document
-   heading-anchor link type (`#slug`) to the Link domain — click re-scans current memo, scrolls via
-   CodeMirror, silent no-op if no match. Fully specified in `spec.md` §2.8/§4.2, `detailed-spec.md`
-   §4.6/§5.8/§5.10, `markdown-editing/PLAN.md` §8, `link/PLAN.md` §1/§5.
-9. **Toolbar "Color"/"Font size" buttons** (text decoration via `<span>`, distinct from `label.color`):
-   confirmed palettes adopted verbatim from the legacy app — Color: Red `#e53935`/Blue `#1e88e5`/
-   Green `#43a047`/Orange `#fb8c00`/Purple `#8e24aa` (+ a "clear color" control); Font size: Small `12px`/
-   Large `20px`/Extra-large `28px` (+ a "clear size" control).
-10. **Default shortcuts**: all 16 toolbar actions now get a default keybinding in
-    `window-operation/PLAN.md` §3's keymap (rebindable via the existing `AppSettings.shortcuts`
-    mechanism — no new mechanism was needed).
-11. A self-review pass confirmed no other recording gaps; `docs/plans/README.md`'s integration-test
-    example list got a new "TOC + Tab Lock" example.
+## 3. Done in this session
 
-**Process note for future sessions**: partway through, the user asked that `DECISIONS.md`/`PLAN.md`
-entries be written **concisely** — decision + concrete parameters only, skip rationale/rejected-
-alternatives narrative unless it's load-bearing for a future implementation judgment call (this is
-saved as a standing memory: `feedback_concise_docs.md`). Entries written before that point in this
-session (e.g. the Tab Lock recovery entry, the label/Icon-submenu investigation entry) are still in the
-older, more narrative style and were **not** retroactively rewritten in `DECISIONS.md`/`detailed-spec.md`
-(low priority — rarely re-read); `docs/plans/tab-lock/PLAN.md` **was** trimmed of a few non-load-bearing
-"why" sentences, since `PLAN.md` files are read often. Two rationale notes were deliberately kept in
-`tab-lock/PLAN.md` (why the marker isn't encrypted; why the marker must hold the complete mapping) because
-they prevent a plausible future "fix" that would reintroduce the exact bug they exist to close.
+| Issue | PR | What |
+|---|---|---|
+| #294 | #296 | Tree row: expand toggle/spacer no longer shrink on long names |
+| #295 | #297 | `editorDefaults.splitOrientation` (horizontal / vertical) — spec §13 |
+| #299 | #302 | Right-click "リンクをコピー" in live view and preview; only the left mouse button opens links |
+| #298 | #303 | `AllowSetForegroundWindow(ASFW_ANY)` before opening a link so the browser comes to front (Windows) |
+| #300 | #304 | Non-ASCII URL detection: live = preview range; IDN in live view; preview copy keeps as-written URL (`data-source-url`) |
+| #301 | #305 | Non-ASCII email detection, live = preview, `mailto:` href |
+| #306 | #307 | Preview links an ASCII email directly after Japanese text (same as live) |
+| #308 | #309 | Executable/script file-path links always need a confirm dialog (backend returns `CONFIRM_REQUIRED` unless `confirmed`) |
+| (#308 follow-up) | #310 | Settings screen hint under 「開く前に確認する」: executable/script links are always confirmed |
+| #311 | #312 | Locked-tab `fileMap` / `imageFolders` validated at decrypt and marker load; token/memo-name paths resolved as direct children (blocks out-of-folder delete/overwrite) |
 
-## Uncommitted state (as of this handoff)
+All entries are in `RESOLVED-ISSUES.md`; limits of #300/#301/#306 are in `spec.v1.2.0.md` §14.
 
-Nothing from this session has been committed yet. Current working tree:
+## 4. Decisions made this session
 
-- Modified: `docs/spec.md`, `docs/detailed-spec.md`, `docs/DECISIONS.md`, `docs/QA.md`
-- New (untracked): `docs/plans/` (12 `PLAN.md` files + `README.md`, 13 files total)
+- **#299:** menu shown for URL / email / file-path links only (not `memo:` / `#slug`); no menu item on non-links.
+- **#300:** cut URLs at non-ASCII punctuation and closing brackets; `・ 〜 ～` stay inside URLs; kana
+  directly attached stays part of the URL; live view and preview aligned. Still open (unanswered):
+  URLs are also cut at emoji / other `\p{S}` symbols — behaves identically in both views, intent unconfirmed.
+- **#301/#306:** non-ASCII local part → whole token is the email; ASCII email after Japanese → ASCII side only.
+- **`/security-review` was skipped** for #300/#301/#306 PRs ("全て進めて" is not an explicit yes); the
+  whole-branch review requested afterwards covers them.
+- **#308:** confirm dialog required (not a hard block) for executable/script extensions; enforcement is in
+  the backend. Limits: extension-based only, no symlink/junction resolution, `file:///` URL form untouched,
+  settings-screen hint added in #310.
+- **#311:** invalid `fileMap`/`imageFolders` reject the whole payload/marker (reported as `DecryptFailed`);
+  memo names with trailing dot/space stay allowed; a pre-lock check for names Windows cannot create
+  (e.g. `COM1.md`, which could make a later decrypt fail) was offered and **declined by the user** — don't re-propose.
 
-The user has not yet given the go-ahead to commit. Per this repo's commit convention (one file per
-commit, message states that file's role/purpose), these files should each get their own commit once the
-user confirms — the orchestrator asked for this confirmation multiple times this session without a
-definitive yes/no yet.
+## 5. Lessons from this session
 
-`CLAUDE.ja.md` also has pre-existing uncommitted changes, unrelated to this session's work. It's a
-Japanese mirror file; `CLAUDE.md`'s own "Language" section says not to create/maintain `.ja.md` mirrors
-going forward. Whether to delete it (vs. leave it) has been asked but not yet answered.
+- A copied portable `data/` keeps `settings.json`'s **absolute `folderPath`** for tabs: the isolated copy
+  silently kept editing/reading the previous test's folder (memo content looked "stale"). After copying
+  `data/` into a new scratchpad dir, rewrite `folderPath` to the new dir and check the memo tree.
+- The app is single-instance: ask the user to close their running copy; never kill a process Claude
+  didn't start (a stray old build in the repo root blocked a test launch).
+- "全て進めて良し" after a list that includes an optional `/security-review` question: confirm that item
+  separately instead of reading it as yes or no.
+- reviewer-lite findings on pre-existing behavior (e.g. #306) → split into a separate issue instead of
+  widening the PR; the user accepted this.
+- Write manual-test pass criteria as a per-section table (what is underlined / what is excluded), and
+  state expected "cannot access" outcomes for nonexistent test domains up front.
 
-## Next step
+## 6. Working conventions
 
-1. **Immediate**: get the user's go-ahead to commit the 4 modified docs + 13 new `docs/plans/` files
-   (one file per commit), and a decision on `CLAUDE.ja.md`.
-2. **After that**: per `.claude/agents/README.md`'s workflow, the next stage is **implementation**
-   (`developer-lite` begins writing code in `src/`, following the finalized `PLAN.md` files) — likely
-   starting with the two foundational plans (`project-architecture`, `persistence-fs`) that the other
-   ten depend on. No implementation has started yet.
+- Every user-visible message in Japanese.
+- Flow per issue: `fix/<slug>` from `V1.2.0` → developer-lite → reviewer-lite (static) → release
+  build → live test (Claude via isolated scratchpad copy, or user for native dialogs/real browser/mail)
+  → ask `/security-review` if paths/deletion/tab-lock/URL parsing/sanitize → ask before PR/merge → PR →
+  `gh pr merge --merge` + push → close issue → `RESOLVED-ISSUES.md` entry → delete branch (local +
+  origin) once the user approves.
+- Live tests: copy the timestamped exe into `scratchpad/<name>/` and run it there (its portable
+  `data/` stays isolated); confirm empty/expected tab list before mutating; report every created/deleted file.
+- `gh issue create` / `gh pr create`: write the body to a scratchpad file and use `--body-file`.
+- Commit messages: no file-path prefix, Japanese body, one file per commit.
+
+## 7. Repo-root clutter / leftover branches
+
+- Untracked timestamped exes, `data/`, `.tabtreenote.json` (portable data). **User manages cleanup — don't offer to delete.**
+- This session's branches are all deleted. Older merged branches may remain locally/on origin — user may delete manually.

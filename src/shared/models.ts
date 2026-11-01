@@ -14,7 +14,10 @@ export interface AppSettings {
   /** `docs/plans/appearance-theme/PLAN.md` §3 — "basic customization of colors/fonts/line
    * spacing" layered on top of the active theme's CSS variables. */
   appearance: AppearanceSettings;
-  lastOpened: { tabId: string; memoName: string } | null;
+  /** `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1: narrowed from `{ tabId, memoName }` — which
+   * memo was open now lives per-tab (`TreeSnapshot.lastViewedMemo`), not as a single app-level
+   * pointer, avoiding the two falling out of sync. */
+  lastOpened: { tabId: string } | null;
   editorDefaults: EditorDefaults;
   autosave: { plainDebounceMs: number };
   /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — preview pane re-render debounce, fully
@@ -28,6 +31,17 @@ export interface AppSettings {
    * login" setting. Actual OS registration happens via `ipc/autostart.ts`'s commands whenever
    * this is toggled from the Settings screen. */
   autostart: { enabled: boolean };
+  /** Additive field, `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1 — inactivity timeout
+   * (minutes) after which the foreground active tab's Tab-Lock session is automatically discarded.
+   * `null` (or `0`) means disabled/never. The backend always resolves an absent-from-disk value to
+   * the documented default (`15`) before this ever reaches the frontend, so `null` here always
+   * means an explicit, user-chosen "無効," never "not yet loaded." */
+  tabLockAutoRelockMinutes: number | null;
+  /** Additive field, `docs/plans/v1.2.0/i18n/PLAN.md` §2. `null` = "not yet chosen, auto-detect
+   * default" (`src/i18n/index.tsx`'s `resolveLanguage`); `"ja" | "en"` once the user has explicitly
+   * picked a language from Settings. An unrecognized value (e.g. a hand-edited settings file)
+   * falls through to the same auto-detect default, not a hard error. */
+  language: string | null;
 }
 
 /** "Basic customization" values layered on top of the active theme's CSS variables
@@ -49,6 +63,16 @@ export interface TabInfo {
   id: string;
   name: string;
   locked: boolean;
+  /** User-set distinguishing label for a locked tab, shown in place of the bare 🔒 glyph when
+   * non-null/non-empty (`docs/spec.v1.2.0.md` §10). `null` when unset. */
+  lockLabel: string | null;
+}
+
+/** Return type of `tab_permanent_unlock` / `tab_permanent_unlock_recovery_finish` (GitHub issue
+ * #273): the usual `TabInfo` plus how many image folders could not be renamed back to their memo
+ * name and keep their random name (non-fatal warning). */
+export interface PermanentUnlockResult extends TabInfo {
+  imageFoldersLeftRandom: number;
 }
 
 export interface TabSettingsEntry {
@@ -58,6 +82,9 @@ export interface TabSettingsEntry {
   /** Display cache only; the authoritative lock state lives in the tab's own
    * `.tabtreenote.json` (`docs/detailed-spec.md` §3.2). */
   locked?: boolean;
+  /** User-set distinguishing label for a locked tab (`docs/spec.v1.2.0.md` §10). Independent of
+   * lock/session state. */
+  lockLabel: string | null;
 }
 
 export interface WindowSettings {
@@ -90,7 +117,13 @@ export interface EditorDefaults {
   /** `docs/plans/markdown/markdown-preview/PLAN.md` §3 — default pane layout for a newly-opened
    * memo with no per-memo override. Default `"edit"` (today's edit-only appearance unchanged). */
   paneMode: PaneMode;
+  /** GitHub issue #295 — 分割表示時のエディタ/プレビューの並び方向。`"horizontal"`は左右、
+   * `"vertical"`は上下。既定`"horizontal"`(従来の見た目を維持)。 */
+  splitOrientation: SplitOrientation;
 }
+
+/** 分割表示の並び方向(GitHub issue #295)。 */
+export type SplitOrientation = "horizontal" | "vertical";
 
 /** Pane-layout tri-state (`docs/plans/markdown/markdown-preview/PLAN.md` §2/§4) — fully
  * independent of `viewMode` (live/source); the two toggles never interact except for the one
@@ -109,7 +142,7 @@ export type AppSettingsPatch = {
   theme?: "light" | "dark";
   uiFontScale?: number;
   appearance?: Partial<AppearanceSettings>;
-  lastOpened?: { tabId: string; memoName: string } | null;
+  lastOpened?: { tabId: string } | null;
   editorDefaults?: Partial<EditorDefaults>;
   autosave?: Partial<{ plainDebounceMs: number }>;
   preview?: Partial<{ debounceMs: number }>;
@@ -118,6 +151,8 @@ export type AppSettingsPatch = {
   eol?: Partial<{ policy: "preserve" | "crlf" | "lf" | "cr" }>;
   shortcuts?: Record<string, string>;
   autostart?: Partial<{ enabled: boolean }>;
+  tabLockAutoRelockMinutes?: number | null;
+  language?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -177,6 +212,9 @@ export interface TreeNode {
   readonly label?: Label;
   readonly editor?: MemoEditorSettings;
   readonly locked?: boolean;
+  /** Cross-tab favorite flag (`docs/plans/v1.1.0/favorites/PLAN.md` §1, `[spec v1.1.0 §4.1]`).
+   * Absent and `false` are equivalent, mirroring `locked`/`label`. */
+  readonly favorite?: boolean;
   readonly children: readonly TreeNode[];
 }
 
@@ -195,7 +233,21 @@ export interface TreeSnapshot {
   /** Which recovery dialog to show when `recoveryPending` is `true`. Always present when
    * `recoveryPending` is `true`, absent otherwise. */
   recoveryKind?: RecoveryKind;
+  /** `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §2 — this tab's raw persisted (or, for a
+   * locked-with-session tab, active-session) "last viewed memo" pointer, unreconciled against
+   * `nodes`: if it names a memo reconciliation dropped, this is the raw value regardless —
+   * `state/useTabView.ts`'s `restoreTabView` is what checks it against `nodes`/`flatOrder` before
+   * acting on it. `null` for a recovery-pending or locked-no-session snapshot. */
+  lastViewedMemo: string | null;
 }
+
+/** GitHub issue #263: non-fatal per-memo image-folder problem attached to an otherwise successful
+ * `memo_rename`/`memo_delete` (mirrors `MemoMutationWarning` in `commands/tree.rs`). The primary
+ * `.md` operation already succeeded; the caller only notifies the user (toast). */
+export type MemoMutationWarning = "IMAGE_FOLDER_RENAME_FAILED" | "IMAGE_FOLDER_DELETE_FAILED";
+
+/** `memo_rename`/`memo_delete` response: a regular `TreeSnapshot` plus an optional `warning`. */
+export type MemoMutationResult = TreeSnapshot & { warning?: MemoMutationWarning };
 
 export interface MemoProperties {
   fileName: string;
@@ -336,6 +388,20 @@ export interface SearchHit {
   tabName: string;
   memoName: string;
   matchedIn: MatchLocation;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-Tab Quick Open (`docs/plans/v1.1.0/quick-open/PLAN.md` §2; mirrors Rust
+// `commands/search.rs`'s `search_quick_open` I/O types). Distinct from `SearchHit` above — matches
+// memo display names only, never body content.
+// ---------------------------------------------------------------------------
+
+export interface QuickOpenHit {
+  tabId: string;
+  tabName: string;
+  memoName: string;
+  isLastViewed: boolean;
+  isFavorite: boolean;
 }
 
 // ---------------------------------------------------------------------------

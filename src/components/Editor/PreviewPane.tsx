@@ -19,15 +19,16 @@
 //     primitives (`toggleCheckboxRange`'s `view.dispatch`, and the shared `onOpenMemoLink` callback
 //     that ultimately triggers a normal React-driven memo switch) — see that module's own header
 //     comment.
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { EditorView } from "@codemirror/view";
 import { renderMarkdownToHtml } from "../../editor/preview/previewRenderer";
-import { attachPreviewInteractions } from "../../editor/preview/previewInteractions";
+import { attachPreviewInteractions, getPreviewLinkCopyValue } from "../../editor/preview/previewInteractions";
 import type { PreviewInteractionsConfig } from "../../editor/preview/previewInteractions";
-import { scrollPreviewToLine } from "../../editor/preview/scrollSync";
+import { syncPreviewToEditorScroll } from "../../editor/preview/scrollSync";
 import { getOrLoadImage } from "../../editor/imageLoader";
 import { computeTopVisibleLine } from "../../editor/textCommands";
 import type { AppSettings, ExternalLinkKind, PaneMode } from "../../shared/models";
+import { useT } from "../../i18n";
 import { Dialog } from "../dialogs/Dialog";
 import "./Editor.css";
 
@@ -42,6 +43,11 @@ export interface PreviewPaneProps {
    * this component is ever mounted for) keeps stretching to the full available pane width,
    * unchanged. */
   paneMode: PaneMode;
+  /** Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §2/§3) — 70-180%, applied via CSS
+   * `zoom` below. Owned by `EditorPane.tsx`; that owner is also responsible for resetting it to 100
+   * whenever `paneMode` leaves `"preview"`, so this component never needs to itself gate applying it
+   * on `paneMode === "preview"` — it's always already 100 while `paneMode === "split"`. */
+  previewZoomPercent: number;
   tabId: string | null;
   /** Image-cache scoping key (`docs/plans/markdown/image-handling/PLAN.md` §5.4) — `""` in the
    * (defensive-only; a memo is always open by the time this component mounts) case where no tab is
@@ -50,25 +56,70 @@ export interface PreviewPaneProps {
   readOnly: boolean;
   openTrigger: AppSettings["links"]["openTrigger"];
   confirmBeforeOpen: boolean;
-  requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
-  onOpenMemoLink: (tabId: string, memoName: string | null) => void;
+  requestExternalConfirm: (kind: ExternalLinkKind, value: string, executable?: boolean) => Promise<boolean>;
+  /** `anchorSlug` is the parsed `#slug` half of a `memo:...#slug` link (`docs/plans/v1.2.0/
+   * cross-tab-anchor-links/PLAN.md` §2), `null` when the link carried no anchor. */
+  onOpenMemoLink: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
 }
 
-export function PreviewPane({
-  getView,
-  renderTick,
-  debounceMs,
-  paneMode,
-  tabId,
-  memoKey,
-  readOnly,
-  openTrigger,
-  confirmBeforeOpen,
-  requestExternalConfirm,
-  onOpenMemoLink,
-}: PreviewPaneProps) {
+/** Shared "preview-render-readiness gate" (`docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §4.3)
+ * — owned by that plan, reused verbatim by `docs/plans/v1.2.0/preview-scroll-fix/PLAN.md`'s restore
+ * path. `PreviewPane`'s own `html` state updates only after a debounce, so a caller that just
+ * switched memos and immediately wants to query/read the rendered DOM (this feature's §4.2
+ * `#slug` anchor jump; that other plan's scroll-position restore) needs to wait until `html`
+ * actually reflects the target memo first, rather than racing the debounce and reading stale
+ * markup. */
+export interface PreviewPaneHandle {
+  /** Resolves `true` once the currently-rendered `html` reflects `targetMemoKey` (already true most
+   * of the time — no memo switch is in flight), or `false` if `timeoutMs` elapses first (e.g. the
+   * memo was switched away again before its preview ever rendered) — callers treat `false` as this
+   * app's standard "silently skip the jump/restore" edge-case fallback. Never rejects. */
+  waitForRender: (targetMemoKey: string, timeoutMs?: number) => Promise<boolean>;
+  /** The preview's own SCROLLABLE container (the outer `.ttn-editor-preview-pane` div — the one
+   * with `overflow-y: auto`, not the inner `.ttn-editor-preview-pane-content` div that merely holds
+   * the rendered HTML), for callers (post-`waitForRender`) needing direct DOM access — e.g. this
+   * feature's own `#slug` `querySelector`/`scrollIntoView` (subtree search/scroll both work
+   * identically starting from either div), and `docs/plans/v1.2.0/preview-scroll-fix/PLAN.md`'s
+   * `computeTopVisiblePreviewLine`, which specifically needs the element whose `scrollTop` actually
+   * changes when the user scrolls (fix for a bug caught by reviewer-lite: this used to return the
+   * inner content div, whose `scrollTop` never moves, so the save-path's read was always `null`).
+   * `null` before first mount / after unmount. */
+  getContainer: () => HTMLElement | null;
+}
+
+/** Bounded wait for `waitForRender` below — mirrors PDF export's existing per-image wait precedent
+ * (`[MDEditor-spec §6]`) rather than waiting forever if the target memo's preview never renders. */
+const DEFAULT_RENDER_WAIT_TIMEOUT_MS = 3000;
+const RENDER_WAIT_POLL_INTERVAL_MS = 50;
+
+export const PreviewPane = forwardRef<PreviewPaneHandle, PreviewPaneProps>(function PreviewPane(
+  {
+    getView,
+    renderTick,
+    debounceMs,
+    paneMode,
+    previewZoomPercent,
+    tabId,
+    memoKey,
+    readOnly,
+    openTrigger,
+    confirmBeforeOpen,
+    requestExternalConfirm,
+    onOpenMemoLink,
+  },
+  ref,
+) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
+  // Outer scrollable div (`overflow-y: auto` — see `Editor.css`'s `.ttn-editor-preview-pane`), kept
+  // as a SEPARATE ref from `containerRef` (the inner content div) specifically so `getContainer()`
+  // below can expose the element whose `scrollTop` actually reflects user scrolling — see this
+  // ref's own `PreviewPaneHandle.getContainer` doc comment for why that distinction matters.
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState("");
+  // Which `memoKey` the CURRENT `html` was actually rendered for — set only inside the debounced
+  // re-render effect's timeout callback below, alongside `setHtml` itself (`PLAN.md` §4.3).
+  const renderedForMemoKeyRef = useRef("");
 
   // Click-to-enlarge lightbox (issue #83, preview pane only). Same wiring shape as
   // `EditorPane.tsx`'s `requestExternalConfirm`/`pendingExternalLink`, minus the Promise-resolver
@@ -81,11 +132,38 @@ export function PreviewPane({
   useEffect(() => {
     const t = window.setTimeout(() => {
       const view = getView();
-      if (view) setHtml(renderMarkdownToHtml(view.state).html);
+      if (view) {
+        setHtml(renderMarkdownToHtml(view.state).html);
+        renderedForMemoKeyRef.current = memoKey;
+      }
     }, debounceMs);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderTick, debounceMs]);
+
+  // `PLAN.md` §4.3's readiness gate: polls `renderedForMemoKeyRef` rather than subscribing to `html`
+  // directly, so a caller awaiting a render that already happened (the common case — no memo switch
+  // in flight) resolves synchronously-ish without waiting a full poll tick.
+  const waitForRender = useCallback((targetMemoKey: string, timeoutMs = DEFAULT_RENDER_WAIT_TIMEOUT_MS): Promise<boolean> => {
+    if (renderedForMemoKeyRef.current === targetMemoKey) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const deadline = Date.now() + timeoutMs;
+      const poll = () => {
+        if (renderedForMemoKeyRef.current === targetMemoKey) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        window.setTimeout(poll, RENDER_WAIT_POLL_INTERVAL_MS);
+      };
+      poll();
+    });
+  }, []);
+
+  useImperativeHandle(ref, () => ({ waitForRender, getContainer: () => scrollContainerRef.current }), [waitForRender]);
 
   // Click-delegation config, read live via a ref so `attachPreviewInteractions` (below) can be
   // mounted exactly once (RENDERING.md §4's "attached once via useEffect, not re-bound every
@@ -127,8 +205,8 @@ export function PreviewPane({
       get confirmBeforeOpen() {
         return configRef.current.confirmBeforeOpen;
       },
-      requestExternalConfirm: (kind, value) => configRef.current.requestExternalConfirm(kind, value),
-      onOpenMemoLink: (targetTabId, memoName) => configRef.current.onOpenMemoLink(targetTabId, memoName),
+      requestExternalConfirm: (kind, value, executable) => configRef.current.requestExternalConfirm(kind, value, executable),
+      onOpenMemoLink: (targetTabId, memoName, anchorSlug) => configRef.current.onOpenMemoLink(targetTabId, memoName, anchorSlug),
       // `setLightboxSrc` is a React state setter — referentially stable across renders, so (unlike
       // the props-derived fields above) it needs no `configRef` indirection to stay fresh.
       onImageClick: (src) => setLightboxSrc(src),
@@ -177,7 +255,11 @@ export function PreviewPane({
       raf = window.requestAnimationFrame(() => {
         raf = 0;
         const container = containerRef.current;
-        if (container) scrollPreviewToLine(container, computeTopVisibleLine(view));
+        const scrollContainer = scrollContainerRef.current;
+        // エディタ末尾の1ビューポート分ではプレビュー末尾へ補間 (GitHub issue #279)
+        if (container && scrollContainer) {
+          syncPreviewToEditorScroll(container, scrollContainer, computeTopVisibleLine(view), view.scrollDOM);
+        }
       });
     };
     view.scrollDOM.addEventListener("scroll", handler);
@@ -192,6 +274,7 @@ export function PreviewPane({
     <>
       <div
         className="ttn-editor-preview-pane"
+        ref={scrollContainerRef}
         // Fully suppressed (`docs/MDEditor-spec.md` §2: "right-click shows no context menu at all...
         // fully suppressed, not auto-reveal-then-show"). `stopPropagation` is required in addition to
         // `preventDefault` — without it, the click would still bubble to `EditorPane.tsx`'s own
@@ -201,9 +284,10 @@ export function PreviewPane({
         // (deviates from `RENDERING.md` §4.3's literal `onContextMenu={(e) => e.preventDefault()}`
         // snippet, which alone would leave that outer app-level menu still showing — see this
         // feature's implementation report).
+        // 例外: コピー対象リンク上の右クリックのみ EditorPane のメニュー(リンクをコピー)へ伝播させる。
         onContextMenu={(e) => {
           e.preventDefault();
-          e.stopPropagation();
+          if (getPreviewLinkCopyValue(e.target, containerRef.current) === null) e.stopPropagation();
         }}
       >
         {/* Outer div above is the scroll container (full pane width/background regardless of pane
@@ -213,15 +297,23 @@ export function PreviewPane({
         <div
           className={`ttn-editor-preview-pane-content${paneMode === "preview" ? " ttn-editor-preview-pane-content-page" : ""}`}
           ref={containerRef}
+          // CSS `zoom` (not `transform: scale()` — `DECISIONS.md` "Preview-Pane Zoom CSS Mechanism")
+          // triggers a real layout reflow at the new size (text rewraps, images/tables resize within
+          // their own containers), matching the spec's "affects... text size, images, tables"
+          // description of a genuine content-size change; `transform: scale()` doesn't reflow and
+          // would need extra width/height compensation math. Universally supported across every
+          // Chromium-based engine — this app's one and only rendering target (Tauri+WebView2) — so no
+          // cross-browser concern applies.
+          style={{ zoom: `${previewZoomPercent}%` }}
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: html }}
         />
       </div>
       {lightboxSrc && (
-        <Dialog title="画像" className="ttn-lightbox-dialog" onClose={() => setLightboxSrc(null)}>
+        <Dialog title={t("previewPane.imageDialogTitle")} className="ttn-lightbox-dialog" onClose={() => setLightboxSrc(null)}>
           <img className="ttn-lightbox-image" src={lightboxSrc} alt="" />
         </Dialog>
       )}
     </>
   );
-}
+});

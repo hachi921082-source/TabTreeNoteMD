@@ -6,11 +6,12 @@
 import type { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import { unwrapColorSpans, unwrapMarkSpans } from "./decorationCommands";
 
 export interface HeadingInfo {
   /** 1-6, from the ATX `#`..`######` marker count. */
   level: number;
-  /** Heading text with the `#` marker(s) and any optional closing ATX sequence stripped. */
+  /** Heading text with `#` marker(s) and any `<span style="...">`/`<mark>` wrapping tag stripped (issue #190). */
   text: string;
   /** GitHub-style slug, already de-duplicated against every earlier heading in the same scan
    * (`-1`, `-2`, ... suffix on the second/third/... occurrence of the same base slug). */
@@ -57,10 +58,14 @@ export function scanHeadings(state: EditorState): HeadingInfo[] {
       const level = Number(match[1]);
       const lineFrom = state.doc.lineAt(node.from).from;
       const rawText = state.sliceDoc(node.from, node.to);
-      const text = rawText
-        .replace(/^#{1,6}\s*/, "")
-        .replace(/\s+#+\s*$/, "")
-        .trim();
+      const text = unwrapMarkSpans(
+        unwrapColorSpans(
+          rawText
+            .replace(/^#{1,6}\s*/, "")
+            .replace(/\s+#+\s*$/, "")
+            .trim(),
+        ),
+      ).trim();
       raw.push({ level, text, from: lineFrom });
     },
   });

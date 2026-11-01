@@ -24,6 +24,7 @@ import {
   Undo2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { TranslationKey } from "../i18n";
 
 /** Exact ID spellings are this plan's own call (`docs/plans/markdown-editing/PLAN.md` §4) — used
  * verbatim as `AppSettings.window.toolbarOrder`'s array element values. */
@@ -50,8 +51,10 @@ export type ToolbarActionId =
 export interface ToolbarActionDef {
   id: ToolbarActionId;
   icon: LucideIcon;
-  /** Tooltip / accessible label (Japanese, per this app's UI-text convention). */
-  label: string;
+  /** Tooltip / accessible label — a `TranslationKey`, not a literal string, so this module-level
+   * registry stays translatable via `useT()` at the render site
+   * (`docs/plans/v1.2.0/i18n/PLAN.md` §6). */
+  labelKey: TranslationKey;
 }
 
 /** The fixed 9-columns×2-rows grid's factory-default slot order (row-major: row 1 slots 1-9, then
@@ -80,24 +83,24 @@ export const DEFAULT_TOOLBAR_ORDER: ToolbarActionId[] = [
 ];
 
 export const TOOLBAR_ACTIONS: Record<ToolbarActionId, ToolbarActionDef> = {
-  undo: { id: "undo", icon: Undo2, label: "元に戻す" },
-  redo: { id: "redo", icon: Redo2, label: "やり直す" },
-  color: { id: "color", icon: Palette, label: "文字色" },
-  fontSize: { id: "fontSize", icon: ALargeSmall, label: "文字サイズ" },
-  heading: { id: "heading", icon: Heading, label: "見出し" },
-  list: { id: "list", icon: List, label: "リスト" },
-  bold: { id: "bold", icon: Bold, label: "太字" },
-  italic: { id: "italic", icon: Italic, label: "斜体" },
-  strikethrough: { id: "strikethrough", icon: Strikethrough, label: "取り消し線" },
-  quote: { id: "quote", icon: Quote, label: "引用" },
-  link: { id: "link", icon: Link, label: "リンク挿入" },
-  codeBlock: { id: "codeBlock", icon: Code, label: "コードブロック" },
-  tocUpdate: { id: "tocUpdate", icon: RefreshCw, label: "目次を更新" },
-  table: { id: "table", icon: Table, label: "表挿入" },
-  image: { id: "image", icon: Image, label: "画像挿入" },
-  clearFormatting: { id: "clearFormatting", icon: Eraser, label: "書式クリア" },
-  hardBreak: { id: "hardBreak", icon: CornerDownLeft, label: "強制改行" },
-  rearrangeToggle: { id: "rearrangeToggle", icon: GripVertical, label: "並べ替えモード" },
+  undo: { id: "undo", icon: Undo2, labelKey: "toolbar.action.undo" },
+  redo: { id: "redo", icon: Redo2, labelKey: "toolbar.action.redo" },
+  color: { id: "color", icon: Palette, labelKey: "toolbar.action.color" },
+  fontSize: { id: "fontSize", icon: ALargeSmall, labelKey: "toolbar.action.fontSize" },
+  heading: { id: "heading", icon: Heading, labelKey: "toolbar.action.heading" },
+  list: { id: "list", icon: List, labelKey: "toolbar.action.list" },
+  bold: { id: "bold", icon: Bold, labelKey: "toolbar.action.bold" },
+  italic: { id: "italic", icon: Italic, labelKey: "toolbar.action.italic" },
+  strikethrough: { id: "strikethrough", icon: Strikethrough, labelKey: "toolbar.action.strikethrough" },
+  quote: { id: "quote", icon: Quote, labelKey: "toolbar.action.quote" },
+  link: { id: "link", icon: Link, labelKey: "toolbar.action.link" },
+  codeBlock: { id: "codeBlock", icon: Code, labelKey: "toolbar.action.codeBlock" },
+  tocUpdate: { id: "tocUpdate", icon: RefreshCw, labelKey: "toolbar.action.tocUpdate" },
+  table: { id: "table", icon: Table, labelKey: "toolbar.action.table" },
+  image: { id: "image", icon: Image, labelKey: "toolbar.action.image" },
+  clearFormatting: { id: "clearFormatting", icon: Eraser, labelKey: "toolbar.action.clearFormatting" },
+  hardBreak: { id: "hardBreak", icon: CornerDownLeft, labelKey: "toolbar.action.hardBreak" },
+  rearrangeToggle: { id: "rearrangeToggle", icon: GripVertical, labelKey: "toolbar.action.rearrangeToggle" },
 };
 
 /** Merges a possibly-partial/stale persisted order (e.g. from a prior app version with fewer

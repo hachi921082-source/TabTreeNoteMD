@@ -10,9 +10,12 @@
 // mandate one, and every value here is a cheap settings-file write).
 import { useState } from "react";
 import type { AppSettings, AppSettingsPatch } from "../../shared/models";
-import { DEFAULT_SHORTCUTS, comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
+import { REBINDABLE_ACTION_IDS, comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { autostartSetEnabled } from "../../ipc/autostart";
+import { aboutGetThirdPartyNotices } from "../../ipc/about";
 import { Dialog } from "../dialogs/Dialog";
+import { resolveDefaultLanguage, useT } from "../../i18n";
+import type { TranslationKey } from "../../i18n";
 import "./Settings.css";
 
 export interface SettingsDialogProps {
@@ -26,42 +29,56 @@ export interface SettingsDialogProps {
 
 type SettingsTab = "general" | "shortcuts" | "editor";
 
-/** Human-readable labels for `shared/shortcuts.ts`'s action ids — UI-only concern, kept out of
- * that framework-agnostic module on purpose. */
-const SHORTCUT_LABELS: Record<string, string> = {
-  "tab.switchNext": "次のタブ",
-  "tab.switchPrev": "前のタブ",
-  "editor.save": "保存",
-  "editor.findReplace": "検索/置換を開く",
-  "tree.rename": "名前を変更",
-  "tree.forceDelete": "強制削除",
-  "markdown.undo": "元に戻す",
-  "markdown.redo": "やり直し",
-  "markdown.color": "文字色",
-  "markdown.fontSize": "文字サイズ",
-  "markdown.heading": "見出し",
-  "markdown.list": "リスト",
-  "markdown.bold": "太字",
-  "markdown.italic": "斜体",
-  "markdown.strikethrough": "取り消し線",
-  "markdown.quote": "引用",
-  "markdown.link": "リンク挿入",
-  "markdown.codeBlock": "コードブロック",
-  "markdown.tocUpdate": "目次を更新",
-  "markdown.table": "表を挿入",
-  "markdown.image": "画像を挿入",
-  "markdown.clearFormatting": "書式クリア",
-  "markdown.hardBreak": "強制改行",
-  "markdown.rearrangeToggle": "ツールバー並べ替え",
-  "markdown.toggleLiveView": "ライブ/ソース表示切替",
-  "markdown.paneModeCycle": "ペイン表示モードを切り替え",
+/** Human-readable label KEYS for `shared/shortcuts.ts`'s action ids — UI-only concern, kept out of
+ * that framework-agnostic module on purpose. `TranslationKey` values (not literal labels) so this
+ * module-level table stays translatable via `useT()` at render time, looked up under the
+ * `settings.shortcutLabel.<actionId>` namespace (`docs/plans/v1.2.0/i18n/PLAN.md` §6). */
+const SHORTCUT_LABEL_KEYS: Record<string, TranslationKey> = {
+  "tab.switchNext": "settings.shortcutLabel.tab.switchNext",
+  "tab.switchPrev": "settings.shortcutLabel.tab.switchPrev",
+  "editor.save": "settings.shortcutLabel.editor.save",
+  "editor.findReplace": "settings.shortcutLabel.editor.findReplace",
+  "tree.rename": "settings.shortcutLabel.tree.rename",
+  "tree.forceDelete": "settings.shortcutLabel.tree.forceDelete",
+  "search.quickOpen": "settings.shortcutLabel.search.quickOpen",
+  "favorites.open": "settings.shortcutLabel.favorites.open",
+  "markdown.undo": "settings.shortcutLabel.markdown.undo",
+  "markdown.redo": "settings.shortcutLabel.markdown.redo",
+  "markdown.color": "settings.shortcutLabel.markdown.color",
+  "markdown.fontSize": "settings.shortcutLabel.markdown.fontSize",
+  "markdown.heading": "settings.shortcutLabel.markdown.heading",
+  "markdown.list": "settings.shortcutLabel.markdown.list",
+  "markdown.bold": "settings.shortcutLabel.markdown.bold",
+  "markdown.italic": "settings.shortcutLabel.markdown.italic",
+  "markdown.strikethrough": "settings.shortcutLabel.markdown.strikethrough",
+  "markdown.quote": "settings.shortcutLabel.markdown.quote",
+  "markdown.link": "settings.shortcutLabel.markdown.link",
+  "markdown.codeBlock": "settings.shortcutLabel.markdown.codeBlock",
+  "markdown.tocUpdate": "settings.shortcutLabel.markdown.tocUpdate",
+  "markdown.table": "settings.shortcutLabel.markdown.table",
+  "markdown.image": "settings.shortcutLabel.markdown.image",
+  "markdown.clearFormatting": "settings.shortcutLabel.markdown.clearFormatting",
+  "markdown.hardBreak": "settings.shortcutLabel.markdown.hardBreak",
+  "markdown.rearrangeToggle": "settings.shortcutLabel.markdown.rearrangeToggle",
+  "markdown.toggleLiveView": "settings.shortcutLabel.markdown.toggleLiveView",
+  "markdown.paneModeCycle": "settings.shortcutLabel.markdown.paneModeCycle",
+  "markdown.pdfExport": "settings.shortcutLabel.markdown.pdfExport",
+  "preview.zoomIn": "settings.shortcutLabel.preview.zoomIn",
+  "preview.zoomOut": "settings.shortcutLabel.preview.zoomOut",
 };
 
 export function SettingsDialog({ settings, patchSettings, applyFetched, onClose }: SettingsDialogProps) {
+  const t = useT();
   const [tab, setTab] = useState<SettingsTab>("general");
   const [recordingActionId, setRecordingActionId] = useState<string | null>(null);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
+  // Third-party license notices dialog (Settings > General, bottom-most link). Fetched lazily on
+  // first open rather than eagerly with the rest of `AppSettings` — this is static, rarely-viewed
+  // reference text baked into the binary (`ipc/about.ts`), not part of the settings model itself.
+  const [licensesOpen, setLicensesOpen] = useState(false);
+  const [licensesText, setLicensesText] = useState<string | null>(null);
+  const [licensesError, setLicensesError] = useState<string | null>(null);
 
   const effectiveShortcuts = resolveShortcuts(settings.shortcuts);
 
@@ -105,43 +122,53 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
     else setAutostartError(result.error.message);
   };
 
+  const openLicenses = async () => {
+    setLicensesOpen(true);
+    if (licensesText !== null) return; // already fetched successfully earlier this Settings session
+    setLicensesError(null);
+    const result = await aboutGetThirdPartyNotices();
+    if (result.ok) setLicensesText(result.value);
+    else setLicensesError(result.error.message);
+  };
+
   return (
+    <>
     <Dialog
-      title="設定"
+      title={t("settings.title")}
       onClose={onClose}
       className="ttn-settings-dialog"
       footer={
         <button type="button" onClick={onClose}>
-          閉じる
+          {t("common.close")}
         </button>
       }
     >
       <span className="ttn-settings-version">{__APP_GIT_BRANCH__}</span>
       <div className="ttn-settings-tabs" role="tablist">
         <button type="button" className={`ttn-settings-tab${tab === "general" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("general")}>
-          一般
+          {t("settings.tabGeneral")}
         </button>
         <button type="button" className={`ttn-settings-tab${tab === "shortcuts" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("shortcuts")}>
-          ショートカット
+          {t("settings.tabShortcuts")}
         </button>
         <button type="button" className={`ttn-settings-tab${tab === "editor" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("editor")}>
-          エディタ
+          {t("settings.tabEditor")}
         </button>
       </div>
 
       {tab === "general" && (
         <div className="ttn-settings-body">
           <section className="ttn-settings-section">
-            <h3>外観</h3>
+            <h3>{t("settings.appearanceSection")}</h3>
             <label className="ttn-settings-row">
-              <span>テーマ</span>
+              <span>{t("settings.themeLabel")}</span>
               <select value={settings.theme} onChange={(e) => void patchSettings({ theme: e.target.value as AppSettings["theme"] })}>
-                <option value="light">ライト</option>
-                <option value="dark">ダーク</option>
+                <option value="light">{t("settings.themeLight")}</option>
+                <option value="dark">{t("settings.themeDark")}</option>
               </select>
             </label>
             <label className="ttn-settings-row">
-              <span>UI文字サイズ ({Math.round(settings.uiFontScale * 100)}%)</span>
+              <span>{t("settings.uiFontScaleTemplate").replace("{pct}", String(Math.round(settings.uiFontScale * 100)))}</span>
               <input
                 type="range"
                 min={80}
@@ -158,7 +185,7 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 built-in default) since native `<input type="color">`/`text` can't represent
                 "unset" themselves; the ↺ buttons are how the user actually clears the override. */}
             <label className="ttn-settings-row">
-              <span>アクセントカラー</span>
+              <span>{t("settings.accentColorLabel")}</span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <input
                   type="color"
@@ -166,14 +193,14 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                   onChange={(e) => void patchSettings({ appearance: { accentColor: e.target.value } })}
                 />
                 {settings.appearance.accentColor && (
-                  <button type="button" className="ttn-settings-shortcut-reset" title="既定に戻す" onClick={() => void patchSettings({ appearance: { accentColor: null } })}>
+                  <button type="button" className="ttn-settings-shortcut-reset" title={t("settings.resetToDefault")} onClick={() => void patchSettings({ appearance: { accentColor: null } })}>
                     ↺
                   </button>
                 )}
               </span>
             </label>
             <label className="ttn-settings-row">
-              <span>UIフォント</span>
+              <span>{t("settings.uiFontFamilyLabel")}</span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <input
                   type="text"
@@ -182,14 +209,14 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                   onChange={(e) => void patchSettings({ appearance: { uiFontFamily: e.target.value || null } })}
                 />
                 {settings.appearance.uiFontFamily && (
-                  <button type="button" className="ttn-settings-shortcut-reset" title="既定に戻す" onClick={() => void patchSettings({ appearance: { uiFontFamily: null } })}>
+                  <button type="button" className="ttn-settings-shortcut-reset" title={t("settings.resetToDefault")} onClick={() => void patchSettings({ appearance: { uiFontFamily: null } })}>
                     ↺
                   </button>
                 )}
               </span>
             </label>
             <label className="ttn-settings-row">
-              <span>ツリーの行間 ({settings.appearance.treeRowLineHeight.toFixed(1)})</span>
+              <span>{t("settings.treeRowLineHeightTemplate").replace("{value}", settings.appearance.treeRowLineHeight.toFixed(1))}</span>
               <input
                 type="range"
                 min={1.0}
@@ -199,19 +226,34 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 onChange={(e) => void patchSettings({ appearance: { treeRowLineHeight: Number(e.target.value) } })}
               />
             </label>
+            {/* Language switcher (`docs/plans/v1.2.0/i18n/PLAN.md` §4) — shows the EFFECTIVE
+                language (resolved default, never a blank option) when `settings.language` is
+                `null`. Option text is each language's own native name, deliberately NOT run
+                through `t()` — a language picker conventionally names each option in that
+                option's own language regardless of the currently-active UI language. */}
+            <label className="ttn-settings-row">
+              <span>{t("settings.language")}</span>
+              <select
+                value={settings.language ?? resolveDefaultLanguage()}
+                onChange={(e) => void patchSettings({ language: e.target.value })}
+              >
+                <option value="ja">日本語</option>
+                <option value="en">English</option>
+              </select>
+            </label>
           </section>
 
           <section className="ttn-settings-section">
-            <h3>リンク</h3>
+            <h3>{t("settings.linksSection")}</h3>
             <label className="ttn-settings-row">
-              <span>開くトリガー</span>
+              <span>{t("settings.linkOpenTriggerLabel")}</span>
               <select
                 value={settings.links.openTrigger}
                 onChange={(e) => void patchSettings({ links: { openTrigger: e.target.value as AppSettings["links"]["openTrigger"] } })}
               >
-                <option value="singleClick">シングルクリック</option>
-                <option value="ctrlClick">Ctrl+クリック</option>
-                <option value="doubleClick">ダブルクリック</option>
+                <option value="singleClick">{t("settings.linkTriggerSingleClick")}</option>
+                <option value="ctrlClick">{t("settings.linkTriggerCtrlClick")}</option>
+                <option value="doubleClick">{t("settings.linkTriggerDoubleClick")}</option>
               </select>
             </label>
             <label className="ttn-settings-row ttn-settings-row-checkbox">
@@ -220,12 +262,13 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 checked={settings.links.confirmBeforeOpen}
                 onChange={(e) => void patchSettings({ links: { confirmBeforeOpen: e.target.checked } })}
               />
-              <span>開く前に確認する</span>
+              <span>{t("settings.linkConfirmBeforeOpen")}</span>
             </label>
+            <p className="ttn-settings-hint">{t("settings.linkConfirmBeforeOpenHint")}</p>
           </section>
 
           <section className="ttn-settings-section">
-            <h3>スタートアップ</h3>
+            <h3>{t("settings.autostartSection")}</h3>
             <label className="ttn-settings-row ttn-settings-row-checkbox">
               <input
                 type="checkbox"
@@ -233,28 +276,60 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 disabled={autostartBusy}
                 onChange={(e) => void handleAutostartToggle(e.target.checked)}
               />
-              <span>Windowsログイン時にトレイへ自動起動する</span>
+              <span>{t("settings.autostartEnabled")}</span>
             </label>
             {autostartError && <p className="ttn-settings-error">{autostartError}</p>}
           </section>
+
+          <section className="ttn-settings-section">
+            <h3>{t("settings.tabLockSection")}</h3>
+            <label className="ttn-settings-row">
+              <span>{t("settings.autoRelockLabel")}</span>
+              <select
+                value={settings.tabLockAutoRelockMinutes ?? "disabled"}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  void patchSettings({ tabLockAutoRelockMinutes: raw === "disabled" ? null : Number(raw) });
+                }}
+              >
+                <option value={5}>{t("settings.minutesTemplate").replace("{n}", "5")}</option>
+                <option value={15}>{t("settings.minutesTemplate").replace("{n}", "15")}</option>
+                <option value={30}>{t("settings.minutesTemplate").replace("{n}", "30")}</option>
+                <option value={60}>{t("settings.minutesTemplate").replace("{n}", "60")}</option>
+                <option value="disabled">{t("settings.disabled")}</option>
+              </select>
+            </label>
+          </section>
+
+          {/* Bottom-most link on the General tab (`docs/DECISIONS.md`-adjacent compliance need:
+              distributing closed-source builds requires the third-party notices to stay
+              user-reachable from inside the app, not just the repo's `THIRD-PARTY-NOTICES.md`).
+              Deliberately outside any `<section>` — a standalone footer-style link, not a settings
+              row with its own value to change. */}
+          <button type="button" className="ttn-settings-license-link" onClick={() => void openLicenses()}>
+            {t("settings.licenseLink")}
+          </button>
         </div>
       )}
 
       {tab === "shortcuts" && (
         <div className="ttn-settings-body">
           <section className="ttn-settings-section">
-            <h3>ショートカット</h3>
+            <h3>{t("settings.tabShortcuts")}</h3>
             <div className="ttn-settings-shortcut-list">
-              {Object.keys(DEFAULT_SHORTCUTS).map((actionId) => {
+              {REBINDABLE_ACTION_IDS.map((actionId) => {
                 const isOverridden = settings.shortcuts[actionId] !== undefined;
+                const labelKey = SHORTCUT_LABEL_KEYS[actionId];
                 return (
                   <div className="ttn-settings-shortcut-row" key={actionId}>
-                    <span className="ttn-settings-shortcut-label">{SHORTCUT_LABELS[actionId] ?? actionId}</span>
+                    <span className="ttn-settings-shortcut-label">{labelKey ? t(labelKey) : actionId}</span>
                     <button type="button" className="ttn-settings-shortcut-combo" onClick={() => startRecording(actionId)}>
-                      {recordingActionId === actionId ? "キー入力待ち..." : effectiveShortcuts[actionId]}
+                      {/* `favorites.open`-style unbound actions (`shared/shortcuts.ts`'s
+                          `UNBOUND_ACTION_IDS`) resolve to `undefined` here unless user-bound. */}
+                      {recordingActionId === actionId ? t("settings.recordingKeyWait") : (effectiveShortcuts[actionId] ?? t("settings.unbound"))}
                     </button>
                     {isOverridden && (
-                      <button type="button" className="ttn-settings-shortcut-reset" title="既定に戻す" onClick={() => resetShortcut(actionId)}>
+                      <button type="button" className="ttn-settings-shortcut-reset" title={t("settings.resetToDefault")} onClick={() => resetShortcut(actionId)}>
                         ↺
                       </button>
                     )}
@@ -269,20 +344,20 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
       {tab === "editor" && (
         <div className="ttn-settings-body">
           <section className="ttn-settings-section">
-            <h3>エディタの既定値</h3>
+            <h3>{t("settings.editorDefaultsSection")}</h3>
             <label className="ttn-settings-row">
-              <span>折り返し</span>
+              <span>{t("settings.wrapLabel")}</span>
               <select
                 value={settings.editorDefaults.wrap}
                 onChange={(e) => void patchSettings({ editorDefaults: { wrap: e.target.value as AppSettings["editorDefaults"]["wrap"] } })}
               >
-                <option value="window">ウィンドウ幅で折り返す</option>
-                <option value="chars">文字数で折り返す</option>
-                <option value="none">折り返さない</option>
+                <option value="window">{t("settings.wrapWindow")}</option>
+                <option value="chars">{t("settings.wrapChars")}</option>
+                <option value="none">{t("settings.wrapNone")}</option>
               </select>
             </label>
             <label className="ttn-settings-row">
-              <span>タブ幅</span>
+              <span>{t("settings.tabWidthLabel")}</span>
               <input
                 type="number"
                 min={1}
@@ -297,7 +372,7 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 checked={settings.editorDefaults.softTab}
                 onChange={(e) => void patchSettings({ editorDefaults: { softTab: e.target.checked } })}
               />
-              <span>タブをスペースとして挿入する</span>
+              <span>{t("settings.softTabLabel")}</span>
             </label>
             <label className="ttn-settings-row ttn-settings-row-checkbox">
               <input
@@ -305,10 +380,10 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                 checked={settings.editorDefaults.showLineNumbers}
                 onChange={(e) => void patchSettings({ editorDefaults: { showLineNumbers: e.target.checked } })}
               />
-              <span>行番号を表示する</span>
+              <span>{t("settings.showLineNumbersLabel")}</span>
             </label>
             <label className="ttn-settings-row">
-              <span>フォントサイズ</span>
+              <span>{t("settings.fontSizeLabel")}</span>
               <input
                 type="number"
                 min={8}
@@ -318,22 +393,32 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
               />
             </label>
             <label className="ttn-settings-row">
-              <span>新規メモの既定のペイン表示</span>
+              <span>{t("settings.defaultPaneModeLabel")}</span>
               <select
                 value={settings.editorDefaults.paneMode}
                 onChange={(e) => void patchSettings({ editorDefaults: { paneMode: e.target.value as AppSettings["editorDefaults"]["paneMode"] } })}
               >
-                <option value="edit">編集のみ</option>
-                <option value="split">分割表示</option>
-                <option value="preview">プレビューのみ</option>
+                <option value="edit">{t("paneMode.edit")}</option>
+                <option value="split">{t("paneMode.split")}</option>
+                <option value="preview">{t("paneMode.preview")}</option>
+              </select>
+            </label>
+            <label className="ttn-settings-row">
+              <span>{t("settings.splitOrientationLabel")}</span>
+              <select
+                value={settings.editorDefaults.splitOrientation ?? "horizontal"}
+                onChange={(e) => void patchSettings({ editorDefaults: { splitOrientation: e.target.value as AppSettings["editorDefaults"]["splitOrientation"] } })}
+              >
+                <option value="horizontal">{t("settings.splitOrientation.horizontal")}</option>
+                <option value="vertical">{t("settings.splitOrientation.vertical")}</option>
               </select>
             </label>
           </section>
 
           <section className="ttn-settings-section">
-            <h3>プレビュー</h3>
+            <h3>{t("settings.previewSection")}</h3>
             <label className="ttn-settings-row">
-              <span>プレビュー再描画の遅延 (ミリ秒)</span>
+              <span>{t("settings.previewDebounceLabel")}</span>
               <input
                 type="number"
                 min={50}
@@ -346,9 +431,9 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
           </section>
 
           <section className="ttn-settings-section">
-            <h3>自動保存</h3>
+            <h3>{t("settings.autosaveSection")}</h3>
             <label className="ttn-settings-row">
-              <span>自動保存の遅延 (ミリ秒)</span>
+              <span>{t("settings.autosaveDebounceLabel")}</span>
               <input
                 type="number"
                 min={200}
@@ -361,23 +446,40 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
           </section>
 
           <section className="ttn-settings-section">
-            <h3>改行コード</h3>
+            <h3>{t("settings.eolSection")}</h3>
             <label className="ttn-settings-row">
-              <span>保存時のポリシー</span>
+              <span>{t("settings.eolPolicyLabel")}</span>
               <select value={settings.eol.policy} onChange={(e) => void patchSettings({ eol: { policy: e.target.value as AppSettings["eol"]["policy"] } })}>
-                <option value="preserve">読み込み時の形式を維持</option>
+                <option value="preserve">{t("settings.eolPreserve")}</option>
                 <option value="crlf">CRLF</option>
                 <option value="lf">LF</option>
                 <option value="cr">CR</option>
               </select>
             </label>
             <label className="ttn-settings-row">
-              <span>文字コード</span>
-              <span>UTF-8（固定）</span>
+              <span>{t("settings.encodingLabel")}</span>
+              <span>{t("settings.encodingFixedUtf8")}</span>
             </label>
           </section>
         </div>
       )}
     </Dialog>
+    {licensesOpen && (
+      <Dialog
+        title={t("settings.licenseDialogTitle")}
+        onClose={() => setLicensesOpen(false)}
+        className="ttn-license-dialog"
+        footer={
+          <button type="button" onClick={() => setLicensesOpen(false)}>
+            {t("common.close")}
+          </button>
+        }
+      >
+        {licensesError && <p className="ttn-settings-error">{licensesError}</p>}
+        {!licensesError && licensesText === null && <p>{t("common.loading")}</p>}
+        {!licensesError && licensesText !== null && <pre className="ttn-settings-license-text">{licensesText}</pre>}
+      </Dialog>
+    )}
+    </>
   );
 }

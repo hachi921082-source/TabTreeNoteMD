@@ -7,6 +7,8 @@ import type { UseCrossTabSearchResult } from "../../state/useCrossTabSearch";
 import type { MatchLocation } from "../../shared/models";
 import { Dialog } from "../dialogs/Dialog";
 import { errorMessageFor } from "../../shared/errorMessages";
+import { useT } from "../../i18n";
+import type { TranslationKey } from "../../i18n";
 import "./Search.css";
 
 export interface CrossTabSearchDialogProps {
@@ -19,13 +21,14 @@ export interface CrossTabSearchDialogProps {
   onOpenHit: (tabId: string, memoName: string) => void;
 }
 
-const MATCH_LABELS: Record<MatchLocation, string> = {
-  name: "名前",
-  body: "本文",
-  both: "名前・本文",
+const MATCH_LABEL_KEYS: Record<MatchLocation, TranslationKey> = {
+  name: "crossTabSearch.matchName",
+  body: "crossTabSearch.matchBody",
+  both: "crossTabSearch.matchBoth",
 };
 
 export function CrossTabSearchDialog({ search, onClose, onOpenHit }: CrossTabSearchDialogProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -38,47 +41,47 @@ export function CrossTabSearchDialog({ search, onClose, onOpenHit }: CrossTabSea
   };
 
   return (
-    <Dialog title="全文検索" onClose={onClose} className="ttn-crosstab-search-dialog">
+    <Dialog title={t("crossTabSearch.title")} onClose={onClose} className="ttn-crosstab-search-dialog">
       <form className="ttn-crosstab-search-form" onSubmit={handleSubmit}>
         <div className="ttn-crosstab-search-row">
           <input
             ref={inputRef}
             type="text"
-            placeholder="検索語を入力..."
+            placeholder={t("crossTabSearch.queryPlaceholder")}
             value={search.query}
             onChange={(e) => search.setQuery(e.target.value)}
           />
           <button type="submit" disabled={search.loading}>
-            検索
+            {t("common.search")}
           </button>
         </div>
         <div className="ttn-crosstab-search-scope">
           <label>
             <input type="radio" name="ttn-crosstab-search-scope" checked={search.scope === "all"} onChange={() => search.setScope("all")} />
-            全タブ
+            {t("crossTabSearch.scopeAll")}
           </label>
           <label>
             <input type="radio" name="ttn-crosstab-search-scope" checked={search.scope === "current"} onChange={() => search.setScope("current")} />
-            現在のタブ
+            {t("crossTabSearch.scopeCurrent")}
           </label>
         </div>
         <div className="ttn-crosstab-search-options">
           <label>
             <input type="checkbox" checked={search.options.caseSensitive} onChange={() => search.toggleOption("caseSensitive")} />
-            大文字小文字区別
+            {t("crossTabSearch.caseSensitive")}
           </label>
           <label>
             <input type="checkbox" checked={search.options.regex} onChange={() => search.toggleOption("regex")} />
-            正規表現
+            {t("search.regexp")}
           </label>
         </div>
       </form>
 
-      {search.lastErrorCode && <p className="ttn-crosstab-search-error">{errorMessageFor(search.lastErrorCode)}</p>}
+      {search.lastErrorCode && <p className="ttn-crosstab-search-error">{errorMessageFor(search.lastErrorCode, t)}</p>}
 
       <div className="ttn-crosstab-search-results">
-        {search.loading && <p className="ttn-crosstab-search-status">検索中...</p>}
-        {!search.loading && search.query && search.hits.length === 0 && !search.lastErrorCode && <p className="ttn-crosstab-search-status">一致する結果はありません</p>}
+        {search.loading && <p className="ttn-crosstab-search-status">{t("crossTabSearch.searching")}</p>}
+        {!search.loading && search.query && search.hits.length === 0 && !search.lastErrorCode && <p className="ttn-crosstab-search-status">{t("search.noResults")}</p>}
         {!search.loading &&
           search.hits.map((hit) => (
             <button
@@ -89,7 +92,7 @@ export function CrossTabSearchDialog({ search, onClose, onOpenHit }: CrossTabSea
             >
               <span className="ttn-crosstab-search-hit-memo">{hit.memoName}</span>
               <span className="ttn-crosstab-search-hit-tab">{hit.tabName}</span>
-              <span className="ttn-crosstab-search-hit-match">{MATCH_LABELS[hit.matchedIn]}</span>
+              <span className="ttn-crosstab-search-hit-match">{t(MATCH_LABEL_KEYS[hit.matchedIn])}</span>
             </button>
           ))}
       </div>

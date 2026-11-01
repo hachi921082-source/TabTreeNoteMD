@@ -26,9 +26,9 @@ import type { DecorationSet, PluginValue, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNodeRef } from "@lezer/common";
 import { checkboxDecoration } from "./checkboxClick";
-import { findColorSpans, findImageTags, findMarkSpans } from "./markdownSpanParser";
+import { findColorSpans, findImageTags, findMarkSpans, findMathSpans } from "./markdownSpanParser";
 import type { DetectedLink, LinkKind } from "./links";
-import { linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens } from "./links";
+import { correctUrlRange, linkClickMatchesTrigger, looksLikeEmail, openDetectedLink, scanBareFilePathTokens, scanBareMemoTokens, scanNonAsciiEmailTokens, scanNonAsciiUrlTokens } from "./links";
 import { getOrLoadImage, hasImageLoadFailed } from "./imageLoader";
 import type { AppSettings, ExternalLinkKind } from "../shared/models";
 
@@ -60,15 +60,23 @@ export interface MarkdownDecorationConfig {
   confirmBeforeOpen: boolean;
   /** Reuses the shared "open memo" path (`docs/plans/memo-tree/PLAN.md`, the same one tree click
    * and search-result click use) — `memoName: null` for the `memo:TabName/` (tab-only) resolved
-   * form. */
-  onOpenMemo: (tabId: string, memoName: string | null) => void;
+   * form. `anchorSlug` is the parsed `#slug` half of a `memo:...#slug` link (`docs/plans/v1.2.0/
+   * cross-tab-anchor-links/PLAN.md` §2), `null` when the link carried no anchor. */
+  onOpenMemo: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
   /** Shows the shared non-blocking confirm dialog and resolves to whether the user confirmed;
    * only awaited when `confirmBeforeOpen` is true (`docs/plans/link/PLAN.md` §4). */
-  requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
+  requestExternalConfirm: (kind: ExternalLinkKind, value: string, executable?: boolean) => Promise<boolean>;
   /** Identifies the currently-open memo for image-cache scoping (§5.4 of
    * `docs/plans/markdown/image-handling/PLAN.md`). `null` only when no memo is open at all, in
    * which case no `Image`/`<img>` node can be reached anyway (there is no document to decorate). */
   memoKey: string | null;
+  /** Already-translated checkbox-widget tooltip strings (`checkboxClick.ts`'s `CheckboxWidget`) —
+   * resolved via `useT()` by the React layer (this module/`checkboxClick.ts` has no React context
+   * of its own) and reconfigured on `liveViewCompartment` whenever `markdownConfig` changes,
+   * including a language change (`docs/plans/v1.2.0/i18n/PLAN.md` §6/§7 follow-up). Shown while the
+   * box IS checked ("click to uncheck") / is NOT checked ("click to check") respectively. */
+  checkboxUncheckTooltip: string;
+  checkboxCheckTooltip: string;
 }
 
 const DEFAULT_CONFIG: MarkdownDecorationConfig = {
@@ -79,6 +87,8 @@ const DEFAULT_CONFIG: MarkdownDecorationConfig = {
   onOpenMemo: () => {},
   requestExternalConfirm: async () => true,
   memoKey: null,
+  checkboxUncheckTooltip: "",
+  checkboxCheckTooltip: "",
 };
 
 export const markdownConfigFacet = Facet.define<MarkdownDecorationConfig, MarkdownDecorationConfig>({
@@ -196,6 +206,76 @@ class ImageWidget extends WidgetType {
   }
 }
 
+/** Path data copied from `lucide-react`'s own `Sigma` icon (`node_modules/lucide-react/dist/esm/
+ * icons/sigma.mjs`, `lucide-react@1.28.0` as pinned in `package.json` at implementation time) — not
+ * imported directly, since that per-icon module is an untyped internal build-output path (no sibling
+ * `.d.ts`, unlike the package's public `import { Sigma } from "lucide-react"` React-component
+ * surface `toolbarSlots.ts`/`MarkdownToolbar.tsx` already use elsewhere). `WidgetType.toDOM()`
+ * builds a raw CodeMirror-owned DOM node that React cannot render into (`docs/plans/v1.2.0/
+ * math-rendering/PLAN.md` §3's own constraint), so `createSigmaIconSvg` below hand-assembles the
+ * identical `<svg>` markup the `<Sigma />` component would produce via plain DOM APIs instead —
+ * same icon, same already-bundled dependency's own path data, zero new dependency. Re-copy this
+ * path data (and `SIGMA_ICON_VIEWBOX_ATTRS` below) if `lucide-react` is ever upgraded and the icon's
+ * shape changes upstream. */
+const SIGMA_ICON_PATH_D =
+  "M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2";
+
+/** `lucide-react`'s own `defaultAttributes` (`node_modules/lucide-react/dist/esm/
+ * defaultAttributes.mjs`) that every icon's `<svg>` root carries, reproduced here verbatim (minus
+ * `width`/`height`, sized down separately below for this badge's own small inline footprint). */
+const SIGMA_ICON_VIEWBOX_ATTRS: Record<string, string> = {
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  "stroke-width": "2",
+  "stroke-linecap": "round",
+  "stroke-linejoin": "round",
+};
+
+function createSigmaIconSvg(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "12");
+  svg.setAttribute("height", "12");
+  for (const [key, value] of Object.entries(SIGMA_ICON_VIEWBOX_ATTRS)) svg.setAttribute(key, value);
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("cm-md-math-placeholder-icon");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", SIGMA_ICON_PATH_D);
+  svg.appendChild(path);
+  return svg;
+}
+
+/** Live-view "this is a math formula" badge (`docs/plans/v1.2.0/math-rendering/PLAN.md` §3) —
+ * follows `ImagePlaceholderWidget`'s own precedent one-for-one: a short, non-interactive
+ * `Decoration.replace` widget standing in for the raw `$...$`/`$$...$$` source text while the
+ * current selection doesn't touch it (see `buildMathWidgetRanges`'s call site in `build()` below,
+ * same `touchesSelection`-gated reveal-on-cursor-touch pattern every other `Decoration.replace`
+ * widget in this file already follows — this file's own header comment explains why: hidden text
+ * must always be revealed the moment the selection touches it, so there is never a hidden-vs-visible
+ * character-count mismatch to reason about). Unlike `ImageWidget`, genuinely non-interactive: no
+ * `ignoreEvent()` override (the `WidgetType` base class default, `return true`, means CodeMirror
+ * treats clicks on this widget as ordinary cursor placement — no special click handling registered
+ * anywhere for it, matching `PLAN.md` §3's explicit "clicking the math badge does nothing special"
+ * requirement). */
+class MathPlaceholderWidget extends WidgetType {
+  constructor(readonly raw: string) {
+    super();
+  }
+
+  eq(other: MathPlaceholderWidget): boolean {
+    return other.raw === this.raw;
+  }
+
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = "cm-md-math-placeholder";
+    el.appendChild(createSigmaIconSvg());
+    el.appendChild(document.createTextNode(" formula"));
+    el.title = this.raw;
+    return el;
+  }
+}
+
 /** Collects a `Link`/`Image` node's `LinkMark` children (in document order) and its `URL` child,
  * if any. Reference-style links (`[ref][1]`, no `URL` child) and any other shape this returns
  * `null` `url` for are left entirely undecorated — safe default, raw text still renders normally. */
@@ -276,6 +356,10 @@ class MarkdownDecorationsPlugin implements PluginValue {
     // `memo:`/file-path token scan, so a bare token that happens to sit inside a `[label](url)`'s
     // parenthesized URL isn't separately, redundantly detected as its own bare auto-link.
     const linkNodeRanges: Range2[] = [];
+    // ツリーで検出した裸 URL(範囲補正後)と `<url>` 形式のオートリンクの範囲。非 ASCII ドメイン URL の
+    // 走査(`scanNonAsciiUrlTokens`)だけがこれを除外に使う(`linkNodeRanges` に混ぜると既存の
+    // memo:/ファイルパス走査の挙動が変わるため別リストにしている)
+    const urlNodeRanges: Range2[] = [];
 
     const addMark = (from: number, to: number, deco: Decoration) => {
       if (from < to) ranges.push(deco.range(from, to));
@@ -336,7 +420,11 @@ class MarkdownDecorationsPlugin implements PluginValue {
           case "TaskMarker": {
             const text = state.sliceDoc(node.from, node.to);
             const checked = /\[[xX]\]/.test(text);
-            addReplace(node.from, node.to, checkboxDecoration(checked, node.from, node.to, config.readOnly));
+            addReplace(
+              node.from,
+              node.to,
+              checkboxDecoration(checked, node.from, node.to, config.readOnly, config.checkboxUncheckTooltip, config.checkboxCheckTooltip),
+            );
             break;
           }
           case "Link":
@@ -350,7 +438,9 @@ class MarkdownDecorationsPlugin implements PluginValue {
             if (node.name === "Image") {
               if (!touchesSelection(state, node.from, node.to)) {
                 const altText = state.sliceDoc(labelFrom, labelTo);
-                addReplace(node.from, node.to, Decoration.replace({ widget: buildImageWidget(urlText, altText, config) }));
+                // `@lezer/markdown` の URL ノードは山括弧形 `<新 メモ/001.png>` の `<` `>` を含むので外す(GitHub issue #266)
+                const src = urlText.length >= 2 && urlText.startsWith("<") && urlText.endsWith(">") ? urlText.slice(1, -1) : urlText;
+                addReplace(node.from, node.to, Decoration.replace({ widget: buildImageWidget(src, altText, config) }));
                 imageRanges.push({ from: node.from, to: node.to });
               }
               break;
@@ -366,13 +456,19 @@ class MarkdownDecorationsPlugin implements PluginValue {
           case "URL": {
             const parentName = node.node.parent?.type.name;
             if (parentName === "Link" || parentName === "Image") break; // handled via the parent above
-            const text = state.sliceDoc(node.from, node.to);
+            // 非 ASCII の句読点・全角括弧・ドメイン直後の非 ASCII 文字までリンクに含めないよう範囲を補正する(#300)。
+            // 純 ASCII の URL・メールは correctUrlRange がそのまま返すので挙動は変わらない
+            const text = correctUrlRange(state.sliceDoc(node.from, node.to));
+            if (!text) break;
+            const to = node.from + text.length;
             const kind: LinkKind = looksLikeEmail(text) ? "email" : "url";
-            links.push({ from: node.from, to: node.to, kind, target: text });
-            addMark(node.from, node.to, Decoration.mark({ class: "cm-md-link" }));
+            links.push({ from: node.from, to, kind, target: text });
+            addMark(node.from, to, Decoration.mark({ class: "cm-md-link" }));
+            urlNodeRanges.push({ from: node.from, to });
             break;
           }
           case "Autolink": {
+            urlNodeRanges.push({ from: node.from, to: node.to });
             const { marks, url } = collectLinkParts(node);
             if (marks.length < 1 || !url) break;
             const text = state.sliceDoc(url.from, url.to);
@@ -390,10 +486,25 @@ class MarkdownDecorationsPlugin implements PluginValue {
     // of the Lezer grammar.
     const docText = state.doc.toString();
     const bareTokenSkipRanges = [...codeSkipRanges, ...linkNodeRanges];
+    const nonAsciiUrlSkipRanges = [...bareTokenSkipRanges, ...urlNodeRanges];
     for (let lineNo = 1; lineNo <= state.doc.lines; lineNo++) {
       const line = state.doc.line(lineNo);
       for (const link of [...scanBareMemoTokens(line.text, line.from), ...scanBareFilePathTokens(line.text, line.from)]) {
         if (overlapsAny(bareTokenSkipRanges, link.from, link.to)) continue;
+        links.push(link);
+        addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
+      }
+      // 非 ASCII ドメインの URL(`https://日本語.jp/abc` 等)は GFM autolink が検出しないので別途走査する(#300)
+      for (const link of scanNonAsciiUrlTokens(line.text, line.from)) {
+        if (overlapsAny(nonAsciiUrlSkipRanges, link.from, link.to)) continue;
+        links.push(link);
+        addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
+      }
+      // 非 ASCII を含むメール(`ユーザー@example.com` 等)も GFM autolink が検出しないので別途走査する(#301)。
+      // URL 内の `@`(`https://x.jp/@ユーザー`)を拾わないよう、ツリー・走査で検出済みの URL 範囲とも重複排除する
+      const lineUrlRanges = nonAsciiUrlSkipRanges.concat(links.filter((l) => l.from >= line.from && l.to <= line.to));
+      for (const link of scanNonAsciiEmailTokens(line.text, line.from)) {
+        if (overlapsAny(lineUrlRanges, link.from, link.to)) continue;
         links.push(link);
         addMark(link.from, link.to, Decoration.mark({ class: "cm-md-link" }));
       }
@@ -428,6 +539,21 @@ class MarkdownDecorationsPlugin implements PluginValue {
         imageRanges.push({ from: img.from, to: img.to });
       }
     }
+    // Live-view math badge (`PLAN.md` §3) — same code-fence exclusion and touch-to-reveal gating as
+    // every other `Decoration.replace` scan above.
+    for (const math of findMathSpans(docText)) {
+      if (overlapsAny(codeSkipRanges, math.from, math.to)) continue;
+      const matchedText = docText.slice(math.from, math.to);
+      // A multi-line `$$...$$` block formula's matched range spans a line break — CM6 throws
+      // `RangeError: Decorations that replace line breaks may not be specified via plugins` when a
+      // `ViewPlugin` (as opposed to a `StateField`) issues such a replace, which crashes the whole
+      // app with no error boundary to catch it (issue #194). Skip the badge for those; the raw
+      // `$$...$$` source just stays visible as plain text in live view instead.
+      if (matchedText.includes("\n")) continue;
+      if (!touchesSelection(state, math.from, math.to)) {
+        addReplace(math.from, math.to, Decoration.replace({ widget: new MathPlaceholderWidget(matchedText) }));
+      }
+    }
 
     links.sort((a, b) => a.from - b.from);
     this.links = links;
@@ -443,7 +569,13 @@ class MarkdownDecorationsPlugin implements PluginValue {
   // properties defined outside this class body but called with `this` bound to the plugin
   // instance at runtime; TypeScript's `private` is a compile-time-only, lexically-scoped check
   // that would reject that access pattern even though it's safe.
+  linkAtPos(pos: number): DetectedLink | null {
+    return this.links.find((l) => pos >= l.from && pos <= l.to) ?? null;
+  }
+
   handleMouseEvent(event: MouseEvent, view: EditorView, eventType: "click" | "dblclick"): boolean {
+    // 右クリック・中クリックではリンクを開かない(右クリックメニュー「リンクをコピー」のため)。
+    if (event.button !== 0) return false;
     const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
     if (pos == null) return false;
     const link = this.links.find((l) => pos >= l.from && pos <= l.to);
@@ -499,9 +631,17 @@ class MarkdownDecorationsPlugin implements PluginValue {
  * enclosing compartment (`codeMirrorSetup.ts`'s `liveViewCompartment`) whenever it changes, same
  * pattern as `editor/textCommands.ts`'s other compartmentalized settings. */
 export function markdownDecorationExtension(config: MarkdownDecorationConfig): Extension {
-  return [
-    markdownConfigFacet.of(config),
-    ViewPlugin.fromClass(MarkdownDecorationsPlugin, {
+  return [markdownConfigFacet.of(config), markdownDecorationsViewPlugin];
+}
+
+/** 画面座標に位置するリンクを返す。クリック判定と同じ検出結果(this.links)を再利用する。 */
+export function findLinkAtCoords(view: EditorView, x: number, y: number): DetectedLink | null {
+  const pos = view.posAtCoords({ x, y });
+  if (pos == null) return null;
+  return view.plugin(markdownDecorationsViewPlugin)?.linkAtPos(pos) ?? null;
+}
+
+const markdownDecorationsViewPlugin = ViewPlugin.fromClass(MarkdownDecorationsPlugin, {
       decorations: (plugin) => plugin.decorations,
       eventHandlers: {
         mousedown(event, view) {
@@ -520,9 +660,7 @@ export function markdownDecorationExtension(config: MarkdownDecorationConfig): E
           return this.handleMouseEvent(event, view, "dblclick");
         },
       },
-    }),
-  ];
-}
+});
 
 /** Source-view-only "this is an image reference" marker (GitHub issue #81). Source view shows raw
  * Markdown text with no decoration extension active at all (`liveViewCompartment` swaps in `[]`
@@ -599,6 +737,69 @@ class SourceImageMarkerPlugin implements PluginValue {
  * dependency; it only needs the document's syntax tree and raw text. */
 export function sourceImageMarkerExtension(): Extension {
   return ViewPlugin.fromClass(SourceImageMarkerPlugin, {
+    decorations: (plugin) => plugin.decorations,
+  });
+}
+
+/** Source-view "this is a math formula" marker (`docs/plans/v1.2.0/math-rendering/PLAN.md` §4) —
+ * a sibling plugin rather than a case folded into `SourceImageMarkerPlugin` above (`PLAN.md` §4's
+ * own explicit "two implementation shapes, developer-lite discretion" delegation): math spans have
+ * no first-class lezer syntax-tree node at all (unlike `Image`), so this plugin's `build()` is a
+ * pure regex scan (`findMathSpans`) with no `syntaxTree(state).iterate` node-type case to add —
+ * keeping it separate avoids renaming/touching the already-shipped, already-tested image-marker
+ * plugin (GitHub issue #81) just to fold in an unrelated detection mechanism, at the modest,
+ * already-established cost (`MarkdownDecorationsPlugin.build()` above does the same) of one extra
+ * `syntaxTree(state).iterate` pass per rebuild to (re)compute `codeSkipRanges` independently. Wired
+ * through its own `sourceMathMarkerCompartment` (`codeMirrorSetup.ts`), active with the exact same
+ * polarity as `sourceImageMarkerCompartment` (on while live view is off) but otherwise fully
+ * independent of it — a memo can show both an image marker and a math marker at once, each with its
+ * own distinct color (`theme.css`'s `--ttn-bg-math-marker`, deliberately different from
+ * `--ttn-bg-image-marker`, per the direct user request for visual distinguishability). */
+const SOURCE_MATH_MARKER_MARK = Decoration.mark({ class: "cm-md-source-math-marker" });
+
+class SourceMathMarkerPlugin implements PluginValue {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = this.build(view.state);
+  }
+
+  update(update: ViewUpdate): void {
+    if (update.docChanged) this.decorations = this.build(update.state);
+  }
+
+  private build(state: EditorState): DecorationSet {
+    const ranges: Range<Decoration>[] = [];
+    // Same code-fence/inline-code exclusion `SourceImageMarkerPlugin.build()` computes for its own
+    // `findImageTags` scan, computed independently here for `findMathSpans` (see this plugin's own
+    // header comment on why it's a separate tree walk rather than a shared one).
+    const codeSkipRanges: Range2[] = [];
+
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        switch (node.name) {
+          case "InlineCode":
+          case "FencedCode":
+          case "CodeBlock":
+            codeSkipRanges.push({ from: node.from, to: node.to });
+            break;
+        }
+      },
+    });
+
+    for (const math of findMathSpans(state.doc.toString())) {
+      if (overlapsAny(codeSkipRanges, math.from, math.to)) continue;
+      ranges.push(SOURCE_MATH_MARKER_MARK.range(math.from, math.to));
+    }
+
+    return Decoration.set(ranges, true);
+  }
+}
+
+/** Source-view math-marker extension (see `SourceMathMarkerPlugin` above) — same no-config shape as
+ * `sourceImageMarkerExtension`. */
+export function sourceMathMarkerExtension(): Extension {
+  return ViewPlugin.fromClass(SourceMathMarkerPlugin, {
     decorations: (plugin) => plugin.decorations,
   });
 }

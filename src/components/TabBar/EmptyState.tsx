@@ -12,6 +12,7 @@ import { useState } from "react";
 import type { UseTabsResult } from "../../state/useTabs";
 import { PromptDialog } from "../dialogs/PromptDialog";
 import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize";
+import { useT } from "../../i18n";
 import "./EmptyState.css";
 
 export interface EmptyStateProps {
@@ -25,6 +26,7 @@ function baseNameOf(path: string): string {
 }
 
 export function EmptyState({ tabsState }: EmptyStateProps) {
+  const t = useT();
   const { createTab, createNewTab, retryCreateWithName } = tabsState;
   const [pendingDialog, setPendingDialog] = useState<PendingDialog | null>(null);
 
@@ -39,21 +41,21 @@ export function EmptyState({ tabsState }: EmptyStateProps) {
 
   return (
     <div className="ttn-empty-state">
-      <p>登録されているタブがありません</p>
+      <p>{t("emptyState.noTabs")}</p>
       <button type="button" onClick={() => void handleRegisterExisting()}>
-        📂 既存フォルダを登録
+        📂 {t("tabBar.registerExisting")}
       </button>
       <button type="button" onClick={() => setPendingDialog({ kind: "createNew" })}>
-        ＋ 新しいタブを作成
+        ＋ {t("tab.createNewTitle")}
       </button>
 
       {pendingDialog?.kind === "createNew" && (
         <PromptDialog
-          title="新しいタブを作成"
-          label="タブ（フォルダ）名"
+          title={t("tab.createNewTitle")}
+          label={t("tab.createNewLabel")}
           initialValue={pendingDialog.suggestedName}
-          submitLabel="作成"
-          validate={validateNameStrict}
+          submitLabel={t("common.create")}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await createNewTab(value);
@@ -67,11 +69,11 @@ export function EmptyState({ tabsState }: EmptyStateProps) {
 
       {pendingDialog?.kind === "duplicateName" && (
         <PromptDialog
-          title="タブ名の重複"
-          label="別の名前を入力してください"
+          title={t("tab.duplicateNameTitle")}
+          label={t("tab.duplicateNameLabel")}
           initialValue={pendingDialog.suggestedName}
-          submitLabel="作成"
-          validate={validateNameStrict}
+          submitLabel={t("common.create")}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await retryCreateWithName(pendingDialog.path, value);

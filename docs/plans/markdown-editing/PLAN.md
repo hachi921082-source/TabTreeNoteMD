@@ -278,8 +278,8 @@ separate "clear size" control:
 | Choice | value |
 |---|---|
 | Small | `12px` |
-| Large | `20px` |
-| Extra-large | `28px` |
+| Large | `24px` |
+| Extra-large | `36px` |
 
 "Clear size" is a 4th, separate control, same treatment as Color's clear control.
 

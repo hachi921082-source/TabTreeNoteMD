@@ -6,7 +6,13 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const APP_SETTINGS_SCHEMA_VERSION: u32 = 1;
+// v1.1.0: bumped 1 -> 2, combined bump covering both this file's `LastOpened` narrowing (drops
+// `memoName`, `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1) and
+// `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md`'s `tabLockAutoRelockMinutes` addition — a
+// single bump for both, not two separate increments (`[detailed-spec v1.1.0 §5.4]`).
+// v1.2.0: bumped 2 -> 3, covering this file's `language` addition alone (`docs/plans/v1.2.0/i18n/
+// PLAN.md` §2) — the only new persisted field across all nine v1.2.0 items.
+pub const APP_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +47,23 @@ pub struct AppSettings {
     /// (`docs/plans/window-operation/PLAN.md` §4: "a boolean in `AppSettings`... implementation
     /// discretion for exact shape since `spec.md` only says 'setting available'").
     pub autostart: AutostartSettings,
+    /// Additive field, `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1 — inactivity timeout
+    /// (minutes) after which the foreground active tab's Tab-Lock session is automatically
+    /// discarded. `None`/`Some(0)` = disabled. `#[serde(default = "default_auto_relock_minutes")]`
+    /// so a `settings.json` predating this field (key entirely absent) resolves to the documented
+    /// default `15`, NOT to disabled — an explicit `null` written later by the Settings UI (§8)
+    /// deserializes as ordinary `Option<u32>` `None` and correctly means disabled, since
+    /// `#[serde(default = "...")]` only ever fires when the key is missing, never for an explicit
+    /// `null` value already present in the JSON.
+    #[serde(default = "default_auto_relock_minutes")]
+    pub tab_lock_auto_relock_minutes: Option<u32>,
+    /// Additive field, `docs/plans/v1.2.0/i18n/PLAN.md` §2 — `None` = "not yet chosen, auto-detect
+    /// default" (resolved on the frontend, `PLAN.md` §5); `Some("ja" | "en")` once the user has
+    /// explicitly picked a language from Settings. `#[serde(default)]` so a pre-upgrade
+    /// `settings.json` (key entirely absent) parses cleanly to `None`, same treatment as
+    /// `appearance`/`preview` above — no destructive migration needed.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +77,13 @@ pub struct TabSettingsEntry {
     /// `docs/detailed-spec.md` §3.2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
+    /// Optional user-set plaintext label shown in place of the bare 🔒 glyph for a locked tab
+    /// with no active unlock session, so multiple locked tabs remain distinguishable without
+    /// revealing the real (encrypted) name — `docs/spec.v1.2.0.md` §10. Independent of
+    /// lock/session state: readable and writable regardless of whether the tab is unlocked,
+    /// locked-with-no-session, or locked-with-an-active-session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,11 +175,16 @@ impl Default for AppearanceSettings {
     }
 }
 
+/// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1: narrowed from `{ tabId, memoName }` to just
+/// `{ tabId }` — the "which memo was open" pointer moved to each tab's own
+/// `TabMetaFile::last_viewed_memo`/`LockPayload::last_viewed_memo`, avoiding the two ever falling
+/// out of sync. A pre-upgrade `settings.json` with a `lastOpened.memoName` field simply has that
+/// field ignored by serde (unknown-field tolerance, already the default for this struct) — no
+/// destructive migration needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastOpened {
     pub tab_id: String,
-    pub memo_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -167,6 +202,18 @@ pub struct EditorDefaults {
     /// so an old-format `settings.json` still parses.
     #[serde(default)]
     pub pane_mode: PaneMode,
+    /// GitHub issue #295 — 分割表示時の並び方向。旧形式の`settings.json`にも対応するためフィールド単位で`#[serde(default)]`。
+    #[serde(default)]
+    pub split_orientation: SplitOrientation,
+}
+
+/// 分割表示の並び方向(GitHub issue #295)。既定は左右。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum SplitOrientation {
+    #[default]
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,6 +342,7 @@ impl Default for AppSettings {
                 show_line_numbers: true,
                 font_size: 14,
                 pane_mode: PaneMode::Edit,
+                split_orientation: SplitOrientation::Horizontal,
             },
             autosave: AutosaveSettings {
                 plain_debounce_ms: 1500,
@@ -312,8 +360,17 @@ impl Default for AppSettings {
             },
             shortcuts: HashMap::new(),
             autostart: AutostartSettings { enabled: false },
+            tab_lock_auto_relock_minutes: default_auto_relock_minutes(),
+            language: None,
         }
     }
+}
+
+/// `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §3 / `[spec v1.1.0 §5.4]` — the documented
+/// default of 15 minutes, used both as `AppSettings::default()`'s value and as the `serde(default
+/// = ...)` fallback for a pre-upgrade `settings.json` that never had this key at all.
+fn default_auto_relock_minutes() -> Option<u32> {
+    Some(15)
 }
 
 /// The 16-slot fixed toolbar layout's default order

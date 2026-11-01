@@ -1,0 +1,41 @@
+/* Non-blocking notification stack (`docs/plans/v1.1.0/folder-import/PLAN.md` §7) — distinct from
+   `Dialog.tsx`: no overlay, no focus trap, no Esc handling; stacks in a corner and auto-dismisses. */
+.ttn-toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1100;
+  pointer-events: none;
+}
+
+.ttn-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px var(--ttn-shadow);
+  padding: 8px 12px;
+  font-size: calc(13px * var(--ui-font-scale));
+  pointer-events: auto;
+  max-width: 360px;
+}
+
+.ttn-toast-warning {
+  border-color: var(--ttn-danger);
+}
+
+.ttn-toast button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: calc(14px * var(--ui-font-scale));
+  line-height: 1;
+  padding: 0 2px;
+}

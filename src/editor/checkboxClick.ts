@@ -27,12 +27,26 @@ class CheckboxWidget extends WidgetType {
      * still renders, but clicking it does not mutate the buffer (`[spec §2.2]`, "Edit Lock blocks
      * text editing"). */
     readonly readOnly: boolean,
+    /** Tooltip shown while the box IS checked ("click to uncheck") / is NOT checked ("click to
+     * check") — resolved via `useT()` by the React layer and threaded in through
+     * `MarkdownDecorationConfig` (`markdownDecorations.ts`, same pattern as `readOnly` above),
+     * since this `WidgetType` has no React context of its own
+     * (`docs/plans/v1.2.0/i18n/PLAN.md` §6/§7 follow-up). */
+    readonly uncheckTooltip: string,
+    readonly checkTooltip: string,
   ) {
     super();
   }
 
   eq(other: CheckboxWidget): boolean {
-    return other.checked === this.checked && other.from === this.from && other.to === this.to && other.readOnly === this.readOnly;
+    return (
+      other.checked === this.checked &&
+      other.from === this.from &&
+      other.to === this.to &&
+      other.readOnly === this.readOnly &&
+      other.uncheckTooltip === this.uncheckTooltip &&
+      other.checkTooltip === this.checkTooltip
+    );
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -41,7 +55,7 @@ class CheckboxWidget extends WidgetType {
     el.textContent = this.checked ? "☑" : "☐";
     el.setAttribute("role", "checkbox");
     el.setAttribute("aria-checked", this.checked ? "true" : "false");
-    el.title = this.readOnly ? "" : this.checked ? "クリックでチェックを外す" : "クリックでチェック";
+    el.title = this.readOnly ? "" : this.checked ? this.uncheckTooltip : this.checkTooltip;
     el.addEventListener("mousedown", (e) => {
       // Prevent CodeMirror from also placing the cursor via its own mousedown handling before
       // our toggle transaction runs — the widget fully owns this click.
@@ -65,7 +79,8 @@ export function toggleCheckboxRange(view: EditorView, from: number, to: number, 
 
 /** Builds the replace-decoration for one task-marker range. `checked` reflects the *current*
  * document text at the time of the decoration pass (recomputed every pass, so it always matches
- * the buffer — there is no separately-tracked widget state to go stale). */
-export function checkboxDecoration(checked: boolean, from: number, to: number, readOnly: boolean) {
-  return Decoration.replace({ widget: new CheckboxWidget(checked, from, to, readOnly), inclusive: false });
+ * the buffer — there is no separately-tracked widget state to go stale). `uncheckTooltip`/
+ * `checkTooltip` are the already-translated tooltip strings (`MarkdownDecorationConfig`). */
+export function checkboxDecoration(checked: boolean, from: number, to: number, readOnly: boolean, uncheckTooltip: string, checkTooltip: string) {
+  return Decoration.replace({ widget: new CheckboxWidget(checked, from, to, readOnly, uncheckTooltip, checkTooltip), inclusive: false });
 }

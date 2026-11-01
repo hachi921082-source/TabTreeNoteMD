@@ -188,10 +188,28 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
       "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "hr",
       "table", "thead", "tbody", "tr", "th", "td", "a", "strong", "em", "del", "s", "span", "mark",
       "img", "input", "div", "br",
+      // KaTeX `output: "html"` (`markdownIt.ts`'s math renderer, `docs/plans/v1.2.0/math-rendering/
+      // PLAN.md` §2.2): almost entirely `<span>`, but stretchy/variable-size constructs (`\sqrt`,
+      // `\left(`/`\right)`, `\overbrace`, accents like `\hat`/`\vec`/`\overline`, ...) render as
+      // `<svg><path>` glyphs — verified empirically at implementation time by diffing raw KaTeX
+      // output against the sanitized result for a batch of representative formulas (basic algebra,
+      // `\sqrt`, `\frac`, `\left`/`\right`, `\sum`, `matrix`, `\text`, Greek letters, `\overbrace`/
+      // `\underbrace`, accents, blackboard/calligraphic/fraktur letters): no `<math>`/MathML tag
+      // names appear anywhere (`output: "html"` truly omits the parallel MathML tree), only these
+      // two additions were needed.
+      "svg", "path",
     ],
     ALLOWED_ATTR: [
       "data-source-line", "id", "href", "style", "src", "alt", "width", "height",
       "data-relative-src", "type", "checked", "disabled", "class",
+      // Issue #235's bare-file-path click-time search widening (`markdownIt.ts`'s
+      // `bareLinkCoreRule`/`previewInteractions.ts`'s `handleAnchorClick`).
+      "data-extended-search-text",
+      // 非 ASCII を含む URL の記述どおりの文字列(`markdownIt.ts`/`previewInteractions.ts` のリンクコピー用、#299/#300)。
+      "data-source-url",
+      // KaTeX `<svg>`/`<path>` attributes (see the `ALLOWED_TAGS` comment above) — `width`/`height`
+      // are already allowlisted (shared with `<img>`), so only these five are new.
+      "aria-hidden", "d", "viewBox", "preserveAspectRatio", "xmlns",
     ],
     // DOMPurify's own default `ALLOWED_URI_REGEXP` (installed dompurify@3.4.13, `purify.cjs.js`'s
     // `IS_ALLOWED_URI` constant) only allows the `f/httpg(s)/mailto/tel/callto/sms/cid/xmpp/matrix`
@@ -199,12 +217,18 @@ export function renderMarkdownToHtml(state: EditorState): { html: string } {
     // scheme (`RENDERING.md` §9 / `previewInteractions.ts`'s `href.startsWith("memo:")` branch), so
     // without this override every `href="memo:..."` produced by `markdownIt.ts`'s link rule and its
     // bare-token autolink rule gets silently stripped here, leaving a dead `<a>` with no `href`.
-    // This is the EXACT same regex as DOMPurify's default with only `|memo` added to the scheme
-    // alternation — every other safe scheme and the relative/scheme-less fallback branches are
-    // unchanged, so genuinely dangerous schemes (`javascript:`, `data:` outside the separate
-    // `DATA_URI_TAGS` allowance, `vbscript:`, etc.) remain rejected exactly as before.
+    // This is the EXACT same regex as DOMPurify's default with `|memo` added to the scheme
+    // alternation, plus a new `[a-zA-Z]:[\\/]` alternative (found post-#235: a Windows drive-letter
+    // absolute path like `href="C:\Program Files\..."` was falling through every existing branch —
+    // the fallback scheme-less branch requires the char right after a letter run to NOT be `:`, so
+    // DOMPurify was treating the single-letter drive prefix as an unrecognized URI scheme and
+    // silently stripping `href`, same dead-link symptom as the `memo:` case above. The new
+    // alternative mirrors `links.ts`'s own `FILE_PATH_RE` drive-letter branch exactly (`[a-zA-Z]:`
+    // immediately followed by `\` or `/`), so it can't broaden beyond what `markdownIt.ts`'s
+    // bare-file-path rule actually emits — every genuinely dangerous scheme (`javascript:`, `data:`
+    // outside `DATA_URI_TAGS`, `vbscript:`, `file:`, ...) is 3+ letters and stays rejected.
     ALLOWED_URI_REGEXP:
-      /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|memo):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+      /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix|memo):|[a-zA-Z]:[\\/]|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   });
 
   return { html: clean };

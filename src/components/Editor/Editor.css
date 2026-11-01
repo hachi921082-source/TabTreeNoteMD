@@ -32,6 +32,17 @@
   width: 100%;
 }
 
+/* 上下分割(GitHub issue #295)。プレビューのみ表示時は子が1つだけなので影響しない。 */
+.ttn-editor-panes-row-vertical {
+  flex-direction: column;
+}
+
+/* 上下分割時は左線ではなく、エディタとの境界になる上線にする */
+.ttn-editor-panes-row-vertical .ttn-editor-preview-pane {
+  border-left: none;
+  border-top: 1px solid var(--ttn-border);
+}
+
 .ttn-editor-cm-container {
   /* Sole flex item when pane-mode is `"edit"` (no `.ttn-editor-preview-pane` sibling rendered) —
      `flex-grow: 1` alone already fills 100% of `.ttn-editor-panes-row` in that case; with both
@@ -52,6 +63,7 @@
 .ttn-editor-preview-pane {
   flex: 1 1 50%;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   box-sizing: border-box;
   border-left: 1px solid var(--ttn-border);
@@ -115,7 +127,11 @@
   object-fit: contain;
 }
 
-.ttn-preview-table-wrap {
+/* `.ttn-preview-math-wrap` (`docs/plans/v1.2.0/math-rendering/PLAN.md` §2.3, `markdownIt.ts`'s
+   block-math renderer rule) shares this exact same horizontal-scroll treatment as wide tables —
+   a wide `$$...$$` formula scrolls instead of shrinking its font size or overflowing the pane. */
+.ttn-preview-table-wrap,
+.ttn-preview-math-wrap {
   overflow-x: auto;
 }
 
@@ -139,6 +155,17 @@
   padding: 8px;
   border-radius: 4px;
   overflow-x: auto;
+}
+
+/* GitHub issue #229: `.ttn-editor-preview-pane-content-page` (issue #115) narrows the column to
+   approximate PDF export's page width, but `pre` above only had `overflow-x: auto` with no
+   `white-space`/`word-break` override, so code blocks scrolled instead of wrapping — unlike
+   `pdfExport.ts`'s `PRINT_STYLESHEET` `pre` rule, which this page-width mode is meant to
+   approximate. Scoped to `-content-page` only: split mode's `pre` never claimed to mirror PDF
+   output (issue #115's own scope note), so it keeps its original horizontal-scroll behavior. */
+.ttn-editor-preview-pane-content-page pre {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .ttn-editor-preview-pane code {
@@ -291,6 +318,26 @@
   font-size: 0.9em;
 }
 
+/* Live-view "this is a math formula" badge (`docs/plans/v1.2.0/math-rendering/PLAN.md` §3,
+   `editor/markdownDecorations.ts`'s `MathPlaceholderWidget`) — same non-interactive badge treatment
+   as `.cm-md-image-placeholder` above, distinguished by its own border/background color so it isn't
+   confused with the image placeholder at a glance. */
+.cm-md-math-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px dashed var(--ttn-border-strong);
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(--ttn-bg-math-marker);
+  color: var(--ttn-fg-muted);
+  font-size: 0.9em;
+}
+
+.cm-md-math-placeholder-icon {
+  flex: none;
+}
+
 /* Real `<img>` rendering in the live view (`docs/plans/markdown/image-handling/PLAN.md` §6.3). A
    purely cosmetic display cap for the editing view — `width:auto`/`height:auto` preserve aspect
    ratio and never touch the image's stored `width`/`height` attribute values in the source. */
@@ -319,4 +366,24 @@
 .cm-md-source-image-marker::before {
   content: "🖼";
   margin-right: 2px;
+}
+
+/* Source-view-only "this is a math formula" marker (`docs/plans/v1.2.0/math-rendering/PLAN.md` §4,
+   `editor/markdownDecorations.ts`'s `SourceMathMarkerPlugin`) — same `Decoration.mark`-only,
+   underlying-text-stays-editable treatment as `.cm-md-source-image-marker` above. Uses its own
+   `--ttn-bg-math-marker` custom property (`theme.css`), a distinct color from the image marker's
+   `--ttn-bg-image-marker` per the direct user request for visual distinguishability when both
+   marker kinds appear in the same memo. `::before`'s "Σ" is a plain Unicode glyph rather than the
+   live-view badge's inline SVG (`MathPlaceholderWidget`'s `createSigmaIconSvg`) since CSS generated
+   content can't embed that SVG markup directly — a small, self-contained glyph choice consistent
+   with this mark-decoration's own CSS-only nature. */
+.cm-md-source-math-marker {
+  background: var(--ttn-bg-math-marker);
+  border-radius: 3px;
+}
+
+.cm-md-source-math-marker::before {
+  content: "Σ";
+  margin-right: 2px;
+  font-weight: 600;
 }

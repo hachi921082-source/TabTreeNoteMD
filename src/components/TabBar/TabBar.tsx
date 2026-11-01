@@ -22,6 +22,17 @@
 // here, immediately to the right of the pin button per `[spec §2.1]`'s layout note ("pin sits to
 // its left") — opens `CrossTabSearchDialog`, whose "open a hit" callback is threaded down from
 // `App.tsx` since it needs both tab-switch and tree-focus state this component doesn't own.
+//
+// Cross-Tab Quick Open (`docs/plans/v1.1.0/quick-open/PLAN.md`) IS also implemented here — no
+// toolbar button of its own (shortcut-only trigger, default `Ctrl+O`), instantiating `useQuickOpen`
+// and rendering `QuickOpenDialog`, same "open a hit" callback-threaded-from-`App.tsx` pattern as
+// `CrossTabSearchDialog` above.
+//
+// Cross-Tab Favorites (`docs/plans/v1.1.0/favorites/PLAN.md` §5-§6) IS also implemented here — a
+// dedicated ★ toolbar button, immediately to the left of the pin button, with no default keyboard
+// shortcut (`favorites.open` in `shared/shortcuts.ts` has no entry in `DEFAULT_SHORTCUTS`, so it's
+// only reachable via a user-configured binding). Reuses `useQuickOpen`/`QuickOpenDialog` in their
+// second "favorites" mode rather than a separate hook/component.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -36,10 +47,13 @@ import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize"
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { windowSetAlwaysOnTop } from "../../ipc/window";
+import { useT } from "../../i18n";
 import { TitleBarControls } from "./TitleBarControls";
 import { SettingsDialog } from "../Settings/SettingsDialog";
 import { CrossTabSearchDialog } from "../Search/CrossTabSearchDialog";
 import { useCrossTabSearch } from "../../state/useCrossTabSearch";
+import { QuickOpenDialog } from "../dialogs/QuickOpenDialog";
+import { useQuickOpen } from "../../state/useQuickOpen";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -58,10 +72,29 @@ export interface TabBarProps {
   /** Opens a cross-tab search hit (`docs/plans/search-index/PLAN.md` §5) — switches tabs if
    * needed and follows tree selection. Wired from `App.tsx`, which owns both tab and tree state. */
   onOpenSearchHit: (tabId: string, memoName: string) => void;
+  /** Opens a selected Quick Open result (`docs/plans/v1.1.0/quick-open/PLAN.md` §3) — same
+   * switch-tab-and-follow-tree-selection mechanism as `onOpenSearchHit` above, kept as its own prop
+   * (not reused) since it's its own independent pending-focus state machine in `App.tsx`, matching
+   * that file's existing `openSearchHit`/`openLinkTarget` split. Also reused verbatim for selecting
+   * a Cross-Tab Favorites result (`docs/plans/v1.1.0/favorites/PLAN.md` §5 — "identical
+   * jump-to-tab-and-open behavior as Quick Open's Selecting a result") — favorites-mode's own
+   * `QuickOpenDialog` instance below is wired to this same callback, no separate prop needed. */
+  onOpenQuickOpenHit: (tabId: string, memoName: string) => void;
+  /** Double-click-active-tab jump-to-start (`docs/plans/v1.2.0/tab-double-click-jump/PLAN.md` §2)
+   * -- called only when the double-clicked tab is already the active tab (see the `<div>`'s own
+   * `onDoubleClick` guard below); a double-click on an inactive tab is unaffected, resolving as two
+   * ordinary single-click selections. Wired from `App.tsx`, which owns `EditorPane`'s imperative
+   * `toggleJumpToStart` handle. */
+  onActiveTabDoubleClick?: () => void;
 }
 
 type PendingDialog =
   | { kind: "rename"; tab: TabInfo }
+  /** GitHub issue #202 — sets/clears the distinguishing label shown for a locked tab in place of
+   * the bare 🔒 glyph (`docs/spec.v1.2.0.md` §10). Shown unconditionally (not gated on
+   * `tab.locked`) since the underlying `lockLabel` field is harmless to set on an unlocked tab
+   * too, per `docs/detailed-spec.v1.2.0.md` §10.2. */
+  | { kind: "setLockLabel"; tab: TabInfo }
   | { kind: "remove"; tab: TabInfo }
   | { kind: "duplicateName"; path: string; suggestedName: string }
   | { kind: "createNew"; suggestedName?: string }
@@ -85,7 +118,18 @@ function baseNameOf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patchSettings, applyFetched, onOpenSearchHit }: TabBarProps) {
+export function TabBar({
+  tabsState,
+  tabLockState,
+  beforeLockTab,
+  settings,
+  patchSettings,
+  applyFetched,
+  onOpenSearchHit,
+  onOpenQuickOpenHit,
+  onActiveTabDoubleClick,
+}: TabBarProps) {
+  const t = useT();
   const {
     tabs,
     activeTabId,
@@ -95,6 +139,7 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
     createNewTab,
     retryCreateWithName,
     renameTab,
+    setTabLockLabel,
     reorderTabs,
     removeTab,
     openTabLocation,
@@ -112,6 +157,10 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const crossTabSearch = useCrossTabSearch(activeTabId);
+  const quickOpen = useQuickOpen();
+  // Cross-Tab Favorites list (`docs/plans/v1.1.0/favorites/PLAN.md` §5) — the same `useQuickOpen`
+  // hook in its second "favorites" mode, per that plan's own chosen reuse approach.
+  const favorites = useQuickOpen("favorites");
 
   useEffect(() => {
     if (draggingIdRef.current) return; // don't clobber an in-progress drag's local order
@@ -137,6 +186,39 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [orderIds, activeTabId, selectTab]);
+
+  // Cross-Tab Quick Open trigger (`docs/plans/v1.1.0/quick-open/PLAN.md` §4, default `Ctrl+O`) —
+  // global, focus-unconstrained (works regardless of what currently has focus, same treatment as
+  // `markdown.paneModeCycle`/`markdown.pdfExport`'s own focus-unconstrained shortcuts in
+  // `EditorPane.tsx`), since Quick Open is meant to jump to a memo from anywhere in the app.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const shortcuts = resolveShortcuts(settings?.shortcuts);
+      if (comboFromEvent(e) === shortcuts["search.quickOpen"]) {
+        e.preventDefault();
+        quickOpen.open();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [settings?.shortcuts, quickOpen.open]);
+
+  // Cross-Tab Favorites trigger (`docs/plans/v1.1.0/favorites/PLAN.md` §6) — ships with NO default
+  // combo (`favorites.open` is absent from `DEFAULT_SHORTCUTS`), so `shortcuts["favorites.open"]`
+  // is `undefined` unless the user has bound one via Settings → Shortcuts; `comboFromEvent(e)` never
+  // equals `undefined`, so this simply never fires for a user who hasn't configured one. Same
+  // focus-unconstrained treatment as the Quick Open shortcut above.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const shortcuts = resolveShortcuts(settings?.shortcuts);
+      if (shortcuts["favorites.open"] && comboFromEvent(e) === shortcuts["favorites.open"]) {
+        e.preventDefault();
+        favorites.open();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [settings?.shortcuts, favorites.open]);
 
   const handleRegisterExisting = useCallback(
     async (path: string) => {
@@ -274,7 +356,12 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           // (`docs/DECISIONS.md` "Tab-Lock Placeholder Display Name", `tab-lock/PLAN.md` §3
           // `tab_unlock` step 7).
           const sessionRealName = tabLockState.activeSessionRealNames.get(tab.id);
-          const displayName = sessionRealName ?? tab.name;
+          // GitHub issue #202 — a locked tab with no active session shows its user-set
+          // `lockLabel` (if any) instead of the bare 🔒 glyph cached as `tab.name`, so multiple
+          // locked tabs stay distinguishable without ever revealing the real (encrypted) name.
+          // An unlocked tab, or a locked tab with an active session (`sessionRealName` above),
+          // ignores `lockLabel` entirely.
+          const displayName = sessionRealName ?? (tab.locked && tab.lockLabel ? `🔒 ${tab.lockLabel}` : tab.name);
           return (
             <div
               key={tab.id}
@@ -288,73 +375,102 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
               onMouseDown={handleMouseDownOnTab(tab.id)}
               onMouseEnter={handleMouseEnterTab(tab.id)}
               onClick={() => selectTab(tab.id)}
+              // Double-click-active-tab jump-to-start (`docs/plans/v1.2.0/tab-double-click-jump/
+              // PLAN.md` §2) -- the `tab.id === activeTabId` guard IS the entire implementation of
+              // "inactive tab unaffected": a native `dblclick` fires IN ADDITION TO, not instead
+              // of, the two `click` events a double-click sequence already produces, so an
+              // inactive tab's double-click still just resolves as two ordinary single-click
+              // selections with no extra code needed here.
+              onDoubleClick={() => {
+                if (tab.id === activeTabId) onActiveTabDoubleClick?.();
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
               }}
-              title={displayName}
+              title={tab.id === activeTabId ? `${displayName} ${t("tabBar.jumpToStartSuffix")}` : displayName}
             >
               <span className="ttn-tab-name">{displayName}</span>
             </div>
           );
         })}
-        <button type="button" className="ttn-tab-create" title="既存フォルダを登録" onClick={() => void handleCreateTab()}>
+        <button type="button" className="ttn-tab-create" title={t("tabBar.registerExisting")} onClick={() => void handleCreateTab()}>
           📂
         </button>
-        <button type="button" className="ttn-tab-create" title="新しいタブを作成" onClick={handleOpenCreateNew}>
+        <button type="button" className="ttn-tab-create" title={t("tab.createNewTitle")} onClick={handleOpenCreateNew}>
           ＋
         </button>
 
-        {/* Toolbar group, left-to-right order: pin, search, theme toggle
-            (`docs/plans/tab-management/PLAN.md` §4). The theme-toggle button
-            is added here by `appearance-theme/PLAN.md` when implemented. */}
-        <div className="ttn-tab-bar-toolbar">
-          <button
-            type="button"
-            className={`ttn-toolbar-btn${alwaysOnTop ? " ttn-toolbar-btn-active" : ""}`}
-            title={alwaysOnTop ? "最前面固定を解除" : "最前面に固定"}
-            aria-pressed={alwaysOnTop}
-            onClick={() => void handleToggleAlwaysOnTop()}
-          >
-            📌
-          </button>
-          {/* Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §5) — immediately to
-              the right of the pin button per `[spec §2.1]`'s layout note. */}
-          <button type="button" className="ttn-toolbar-btn" title="検索" aria-label="検索" onClick={crossTabSearch.open}>
-            🔍
-          </button>
-          {/* Flips which side the tree pane renders on (`docs/plans/window-operation/PLAN.md` §2).
-              The hide/show toggle itself lives on the splitter between the two panes, not here. */}
-          <button
-            type="button"
-            className="ttn-toolbar-btn"
-            title="ツリーの位置を切り替え"
-            aria-label="ツリーの位置を切り替え"
-            onClick={() => {
-              const next = (settings?.window.treeSide ?? "left") === "left" ? "right" : "left";
-              void patchSettings({ window: { treeSide: next } });
-            }}
-          >
-            {/* Trailing U+FE0E (VS15) forces text presentation, avoiding Windows' color-emoji-font
-                fallback which ignores the CSS `color` property. */}
-            ⇄︎
-          </button>
-          {/* Settings screen shell (`docs/plans/window-operation/PLAN.md` §7). */}
-          <button type="button" className="ttn-toolbar-btn" title="設定" aria-label="設定" onClick={() => setSettingsOpen(true)}>
-            ⚙︎
-          </button>
-        </div>
+        {/* GitHub issue #198 — toolbar + window controls wrapped together and pinned to the
+            visible right edge via CSS `position: sticky` (see `.ttn-tab-bar-fixed` in
+            `TabBar.css`), so they stay reachable even when tabs overflow `.ttn-tab-bar`'s own
+            horizontal scroll and the row is scrolled left. `.ttn-tab-bar` itself keeps its
+            existing `overflow-x: auto`/drag-region/OS-drop hit-testing setup untouched. */}
+        <div className="ttn-tab-bar-fixed">
+          {/* Toolbar group, left-to-right order: pin, search, theme toggle
+              (`docs/plans/tab-management/PLAN.md` §4). The theme-toggle button
+              is added here by `appearance-theme/PLAN.md` when implemented. */}
+          <div className="ttn-tab-bar-toolbar">
+            {/* Cross-Tab Favorites (`docs/plans/v1.1.0/favorites/PLAN.md` §6) — immediately to the
+                left of the pin button, mirroring how the pin button itself sits immediately to the
+                left of the search button (`[spec §2.1]`). Always visible, single click target, no
+                default keyboard shortcut (bindable via Settings → Shortcuts). */}
+            <button type="button" className="ttn-toolbar-btn" title={t("tabBar.favorites")} aria-label={t("tabBar.favorites")} onClick={favorites.open}>
+              ★
+            </button>
+            <button
+              type="button"
+              className={`ttn-toolbar-btn${alwaysOnTop ? " ttn-toolbar-btn-active" : ""}`}
+              title={alwaysOnTop ? t("tabBar.pinOff") : t("tabBar.pinOn")}
+              aria-pressed={alwaysOnTop}
+              onClick={() => void handleToggleAlwaysOnTop()}
+            >
+              📌
+            </button>
+            {/* Cross-tab full-text search (`docs/plans/search-index/PLAN.md` §5) — immediately to
+                the right of the pin button per `[spec §2.1]`'s layout note. */}
+            <button
+              type="button"
+              className="ttn-toolbar-btn"
+              title={t("tabBar.searchTooltipTemplate").replace("{combo}", resolveShortcuts(settings?.shortcuts)["search.quickOpen"])}
+              aria-label={t("common.search")}
+              onClick={crossTabSearch.open}
+            >
+              🔍
+            </button>
+            {/* Flips which side the tree pane renders on (`docs/plans/window-operation/PLAN.md` §2).
+                The hide/show toggle itself lives on the splitter between the two panes, not here. */}
+            <button
+              type="button"
+              className="ttn-toolbar-btn"
+              title={t("tabBar.toggleTreeSide")}
+              aria-label={t("tabBar.toggleTreeSide")}
+              onClick={() => {
+                const next = (settings?.window.treeSide ?? "left") === "left" ? "right" : "left";
+                void patchSettings({ window: { treeSide: next } });
+              }}
+            >
+              {/* Trailing U+FE0E (VS15) forces text presentation, avoiding Windows' color-emoji-font
+                  fallback which ignores the CSS `color` property. */}
+              ⇄︎
+            </button>
+            {/* Settings screen shell (`docs/plans/window-operation/PLAN.md` §7). */}
+            <button type="button" className="ttn-toolbar-btn" title={t("tabBar.settings")} aria-label={t("tabBar.settings")} onClick={() => setSettingsOpen(true)}>
+              ⚙︎
+            </button>
+          </div>
 
-        {/* Custom minimize/maximize/close controls, replacing the native title bar removed by
-            `decorations: false` (`docs/plans/window-operation/PLAN.md` §1). Always the rightmost
-            group. */}
-        <TitleBarControls />
+          {/* Custom minimize/maximize/close controls, replacing the native title bar removed by
+              `decorations: false` (`docs/plans/window-operation/PLAN.md` §1). Always the rightmost
+              group. */}
+          <TitleBarControls />
+        </div>
       </div>
 
       {lastErrorCode && (
         <div className="ttn-tab-bar-error" role="alert">
-          <span>{errorMessageFor(lastErrorCode)}</span>
+          <span>{errorMessageFor(lastErrorCode, t)}</span>
           <button type="button" onClick={clearLastError}>
             ×
           </button>
@@ -367,25 +483,26 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           items={[
-            { label: "名前を変更", disabled: contextTab.locked, onSelect: () => setPendingDialog({ kind: "rename", tab: contextTab }) },
-            { label: "タブの場所を開く", onSelect: () => void openTabLocation(contextTab.id) },
+            { label: t("common.rename"), disabled: contextTab.locked, onSelect: () => setPendingDialog({ kind: "rename", tab: contextTab }) },
+            { label: t("tabBar.setLockLabel"), onSelect: () => setPendingDialog({ kind: "setLockLabel", tab: contextTab }) },
+            { label: t("tabBar.openLocation"), onSelect: () => void openTabLocation(contextTab.id) },
             contextTab.locked
               ? {
-                  label: "ロック解除",
+                  label: t("tabLock.unlock"),
                   disabled: tabLockState.activeSessionRealNames.has(contextTab.id),
                   onSelect: () => setPendingDialog({ kind: "unlock", tab: contextTab }),
                 }
-              : { label: "タブをロック", onSelect: () => setPendingDialog({ kind: "lockSetup", tab: contextTab }) },
+              : { label: t("tabBar.lockTab"), onSelect: () => setPendingDialog({ kind: "lockSetup", tab: contextTab }) },
             ...(contextTab.locked
               ? [
                   {
-                    label: "完全にロック解除",
+                    label: t("tabLock.permanentUnlock"),
                     onSelect: () => setPendingDialog({ kind: "permanentUnlockConfirm", tab: contextTab }),
                   },
                 ]
               : []),
             {
-              label: "タブを削除",
+              label: t("tabBar.deleteTab"),
               // `docs/plans/tab-lock/PLAN.md` §4: locked-with-no-session rejects; an active
               // session lifts the restriction (the backend re-checks this regardless; disabling
               // it here is just the matching UI affordance).
@@ -399,10 +516,10 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {pendingDialog?.kind === "rename" && (
         <PromptDialog
-          title="タブの名前を変更"
-          label="新しい名前"
+          title={t("tabBar.renameTitle")}
+          label={t("tabBar.renameLabel")}
           initialValue={pendingDialog.tab.name}
-          validate={validateNameStrict}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await renameTab(pendingDialog.tab.id, value);
@@ -411,11 +528,25 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
         />
       )}
 
+      {pendingDialog?.kind === "setLockLabel" && (
+        <PromptDialog
+          title={t("tabBar.setLockLabelTitle")}
+          label={t("tabBar.setLockLabelLabel")}
+          initialValue={pendingDialog.tab.lockLabel ?? ""}
+          onCancel={() => setPendingDialog(null)}
+          onSubmit={async (value) => {
+            const trimmed = value.trim();
+            const result = await setTabLockLabel(pendingDialog.tab.id, trimmed === "" ? null : trimmed);
+            if (result.ok) setPendingDialog(null);
+          }}
+        />
+      )}
+
       {pendingDialog?.kind === "remove" && (
         <ConfirmDialog
-          title="タブを削除"
-          message={`「${pendingDialog.tab.name}」をタブ一覧から削除します。フォルダやファイルは削除されません。`}
-          confirmLabel="削除"
+          title={t("tabBar.deleteTab")}
+          message={t("tabBar.removeMessageTemplate").replace("{name}", pendingDialog.tab.name)}
+          confirmLabel={t("common.delete")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             await removeTab(pendingDialog.tab.id);
@@ -426,10 +557,10 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {pendingDialog?.kind === "duplicateName" && (
         <PromptDialog
-          title="タブ名の重複"
-          label="別の名前を入力してください"
+          title={t("tab.duplicateNameTitle")}
+          label={t("tab.duplicateNameLabel")}
           initialValue={pendingDialog.suggestedName}
-          validate={validateNameStrict}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await retryCreateWithName(pendingDialog.path, value);
@@ -443,11 +574,11 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {pendingDialog?.kind === "createNew" && (
         <PromptDialog
-          title="新しいタブを作成"
-          label="タブ（フォルダ）名"
+          title={t("tab.createNewTitle")}
+          label={t("tab.createNewLabel")}
           initialValue={pendingDialog.suggestedName}
-          submitLabel="作成"
-          validate={validateNameStrict}
+          submitLabel={t("common.create")}
+          validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await createNewTab(value);
@@ -461,11 +592,11 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {pendingDialog?.kind === "lockSetup" && (
         <PasswordDialog
-          title={`「${pendingDialog.tab.name}」をロック`}
+          title={t("tabLock.lockTitleTemplate").replace("{name}", pendingDialog.tab.name)}
           mode="setup"
           busy={tabLockState.busy}
-          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
-          submitLabel="ロック"
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode, t) : null}
+          submitLabel={t("tabLock.lockSubmit")}
           onCancel={() => {
             setPendingDialog(null);
             tabLockState.clearLastError();
@@ -484,11 +615,11 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {pendingDialog?.kind === "unlock" && (
         <PasswordDialog
-          title={`「${pendingDialog.tab.name}」のロック解除`}
+          title={t("tabLock.unlockTitleTemplate").replace("{name}", pendingDialog.tab.name)}
           mode="unlock"
           busy={tabLockState.busy}
-          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
-          submitLabel="ロック解除"
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode, t) : null}
+          submitLabel={t("tabLock.unlock")}
           onCancel={() => {
             setPendingDialog(null);
             tabLockState.clearLastError();
@@ -503,14 +634,14 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {pendingDialog?.kind === "permanentUnlockConfirm" && (
         <ConfirmDialog
-          title="完全にロック解除"
+          title={t("tabLock.permanentUnlock")}
           message={
             <>
-              <p>「{pendingDialog.tab.name}」を完全にロック解除すると、暗号化前の通常のタブに戻ります。この操作は取り消せません。</p>
-              <p>念のため、事前にフォルダ全体のバックアップを取っておくことをおすすめします。</p>
+              <p>{t("tabLock.permanentUnlockWarning1NamedTemplate").replace("{name}", pendingDialog.tab.name)}</p>
+              <p>{t("tabLock.permanentUnlockWarning2")}</p>
             </>
           }
-          confirmLabel="完全にロック解除"
+          confirmLabel={t("tabLock.permanentUnlock")}
           onCancel={() => setPendingDialog(null)}
           onConfirm={async () => {
             const tab = pendingDialog.tab;
@@ -526,11 +657,11 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
 
       {pendingDialog?.kind === "permanentUnlockPassword" && (
         <PasswordDialog
-          title={`「${pendingDialog.tab.name}」の完全ロック解除`}
+          title={t("tabLock.permanentUnlockPasswordTitleTemplate").replace("{name}", pendingDialog.tab.name)}
           mode="unlock"
           busy={tabLockState.busy}
-          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode) : null}
-          submitLabel="完全にロック解除"
+          errorMessage={tabLockState.lastErrorCode ? errorMessageFor(tabLockState.lastErrorCode, t) : null}
+          submitLabel={t("tabLock.permanentUnlock")}
           onCancel={() => {
             setPendingDialog(null);
             tabLockState.clearLastError();
@@ -554,6 +685,28 @@ export function TabBar({ tabsState, tabLockState, beforeLockTab, settings, patch
           onOpenHit={(tabId, memoName) => {
             onOpenSearchHit(tabId, memoName);
             crossTabSearch.close();
+          }}
+        />
+      )}
+
+      {quickOpen.isOpen && (
+        <QuickOpenDialog
+          quickOpen={quickOpen}
+          onClose={quickOpen.close}
+          onOpenHit={(tabId, memoName) => {
+            onOpenQuickOpenHit(tabId, memoName);
+            quickOpen.close();
+          }}
+        />
+      )}
+
+      {favorites.isOpen && (
+        <QuickOpenDialog
+          quickOpen={favorites}
+          onClose={favorites.close}
+          onOpenHit={(tabId, memoName) => {
+            onOpenQuickOpenHit(tabId, memoName);
+            favorites.close();
           }}
         />
       )}

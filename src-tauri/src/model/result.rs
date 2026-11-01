@@ -31,6 +31,13 @@ pub enum ErrorCode {
     /// *ordinary* (non-recovery) permanent-unlock loop, a case the lock direction's own ordinary
     /// `tab_lock` loop cannot reach (its tokens are always freshly generated and collision-checked).
     AnomalousFileState,
+    /// GitHub issue #272: a memo's `<memo>/` image folder could not be renamed to (or back from)
+    /// its random name while locking a tab / recovering an interrupted lock. On `tab_lock` the
+    /// lock is aborted and every already-renamed folder is renamed back.
+    ImageFolderRenameFailed,
+    /// GitHub issue #308: `link_open_external` が実行ファイル・スクリプトのパスを、フロントの確認済み
+    /// フラグ無しで受け取った。開かずにこの結果を返し、フロントが確認ダイアログを出して `confirmed: true` で再要求する。
+    ConfirmRequired,
     Unknown,
 }
 

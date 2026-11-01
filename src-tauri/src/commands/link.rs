@@ -9,10 +9,11 @@
 //! default handler" API (`tauri_plugin_opener`), never shell string concatenation
 //! (`[spec §2.8]`). A relative `filePath` value is resolved to absolute using `current_tab_id`'s
 //! folder as base before opening. The `AppSettings.links.confirmBeforeOpen` gate is entirely the
-//! frontend's responsibility (`link/PLAN.md` §2) — this command performs no confirmation, it is a
-//! pure "open now" action.
+//! frontend's responsibility (`link/PLAN.md` §2) — ただし実行ファイル・スクリプトの `FilePath` だけは例外で
+//! (issue #308)、`confirmed` が true でなければ開かず `ErrorCode::ConfirmRequired` を返す。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -56,7 +57,7 @@ pub enum ResolvedLink {
 /// - Anything else that doesn't exist (tab or memo) is `Unresolved` — no-op, no error dialog
 ///   (`[spec §2.8]`: "unresolved links do nothing").
 #[tauri::command]
-pub fn link_resolve(current_tab_id: String, target: String, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>, sessions: State<LockSessionStore>) -> AppResult<ResolvedLink> {
+pub fn link_resolve(current_tab_id: String, target: String, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>, sessions: State<LockSessionStore>) -> AppResult<ResolvedLink> {
     let (settings, _outcome) = store.get(&registry);
 
     let (tab_name, memo_name) = match target.split_once('/') {
@@ -150,20 +151,26 @@ pub enum ExternalLinkKind {
 ///   already guards against for `<img src>` (`docs/DECISIONS.md`: "Image `src` Allowlist: Reject
 ///   `..` Path-Traversal Segments").
 #[tauri::command]
-pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<()> {
+pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String, current_tab_id: Option<String>, extended_search_text: Option<String>, confirmed: Option<bool>, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<()> {
     let opener = app.opener();
+    allow_launched_process_foreground();
     let result = match kind {
         ExternalLinkKind::Url => opener.open_url(normalize_url(&value), None::<String>),
         ExternalLinkKind::Email => opener.open_url(normalize_mailto(&value), None::<String>),
         ExternalLinkKind::FilePath => {
             let (settings, _outcome) = store.get(&registry);
-            let resolved = match resolve_file_path(&value, current_tab_id.as_deref(), &settings) {
+            let resolved = match resolve_file_path_widened(&value, extended_search_text.as_deref(), current_tab_id.as_deref(), &settings) {
                 Ok(resolved) => resolved,
                 Err(err) => {
                     tracing::warn!(value, "link_open_external: rejected a file path as a path-traversal attempt ('..' segment or a rooted-but-not-absolute path)");
                     return AppResult::err(err);
                 }
             };
+            // 実行ファイル・スクリプトは `confirmBeforeOpen` 設定に関係なく、確認済みでなければ開かない(#308)。
+            if is_executable_file_path(&resolved) && !confirmed.unwrap_or(false) {
+                tracing::info!(value, "link_open_external: executable file path requires confirmation");
+                return AppResult::err_code(ErrorCode::ConfirmRequired, "opening an executable file requires confirmation");
+            }
             opener.open_path(resolved, None::<String>)
         }
     };
@@ -173,6 +180,48 @@ pub fn link_open_external(app: AppHandle, kind: ExternalLinkKind, value: String,
             tracing::error!(error = %err, kind = ?kind, value, "link_open_external: failed to open");
             AppResult::err_code(ErrorCode::Unknown, "failed to open the external link")
         }
+    }
+}
+
+/// 外部リンクを開く直前に呼ぶ。リンクをクリックした時点で本アプリは前面権限を持つが、既に起動中の
+/// ブラウザ等が ShellExecute 要求を受けても前面化権限が無く、タスクバー点滅だけで背面に残る
+/// (GitHub issue #298)。`AllowSetForegroundWindow(ASFW_ANY)` で起動/受信側プロセスに前面化を許可する。
+/// ベストエフォート: 失敗は警告ログのみで、リンクを開く処理は妨げない。Windows 以外では何もしない。
+#[cfg(windows)]
+fn allow_launched_process_foreground() {
+    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
+    // SAFETY: 引数は定数のみで、ポインタ等は渡さない。
+    if let Err(err) = unsafe { AllowSetForegroundWindow(ASFW_ANY) } {
+        tracing::warn!(error = %err, "link_open_external: AllowSetForegroundWindow failed (ignored)");
+    }
+}
+
+#[cfg(not(windows))]
+fn allow_launched_process_foreground() {}
+
+/// 開く前に確認を必須とする実行ファイル・スクリプト系の拡張子(小文字、ドット無し)。issue #308。
+/// 確認が必要な代表例であり、網羅ではない(ここに無い拡張子の実行物は確認なしで開く)。
+const EXECUTABLE_EXTENSIONS: &[&str] = &[
+    "py", "pyw", "pl", "rb", "sh", "wsc", "chm", "dll", "ocx", "vb", "docm", "xlsm", "pptm", "iso", "vhd", "vhdx", "jnlp",
+    "exe", "bat", "cmd", "com", "scr", "ps1", "ps1xml", "ps2", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "ws", "hta", "lnk", "url", "msi", "msp", "mst", "reg", "cpl", "jar", "pif", "application", "gadget", "msc", "inf", "sct", "scf", "msh", "msh1", "msh2", "mshxml", "appref-ms", "settingcontent-ms", "diagcab", "appx", "msix", "appinstaller", "xll", "wll", "library-ms",
+];
+
+/// `path` の最終要素の拡張子が実行ファイル・スクリプト系かを返す(issue #308)。大文字小文字は無視。
+/// 回避を防ぐため、最終要素の `:` 以降(NTFS代替データストリーム `foo.exe:stream`、`foo.exe::$DATA`)と、
+/// 末尾の空白・ドット(Windowsが無視する `foo.exe ` / `foo.exe.`)を取り除いてから拡張子を判定する。
+fn is_executable_file_path(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    // ドライブ相対パス(`C:payload.exe`)は先頭のドライブ指定を除いてから、最初の `:` 以降(ストリーム指定)を捨てる。
+    let b = name.as_bytes();
+    let name = if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' { &name[2..] } else { name };
+    let name = name.split(':').next().unwrap_or("");
+    let name = name.trim_end_matches([' ', '.']);
+    match name.rsplit_once('.') {
+        Some((_, ext)) => {
+            let ext = ext.trim().to_lowercase();
+            EXECUTABLE_EXTENSIONS.contains(&ext.as_str())
+        }
+        None => false,
     }
 }
 
@@ -219,6 +268,57 @@ fn resolve_file_path(value: &str, current_tab_id: Option<&str>, settings: &AppSe
         .map_err(|code| AppErrorPayload::new(code, "file path is invalid"))
 }
 
+/// Whitespace-delimited word-boundary end offsets of `s`, longest-prefix-first (issue #235). E.g.
+/// `"C:\Program Files (x86)\Steam"` yields offsets for `"C:\Program Files (x86)\Steam"`, then
+/// `"C:\Program Files (x86)"`, then `"C:\Program Files"`, then `"C:\Program"` — the widened
+/// candidate trimmed one trailing word at a time, never splitting mid-word. Trailing whitespace is
+/// never included in a returned prefix.
+fn candidate_prefixes(s: &str) -> Vec<&str> {
+    let mut word_ends = Vec::new();
+    let mut in_word = false;
+    for (i, c) in s.char_indices() {
+        if c.is_whitespace() {
+            if in_word {
+                word_ends.push(i);
+                in_word = false;
+            }
+        } else {
+            in_word = true;
+        }
+    }
+    if in_word {
+        word_ends.push(s.len());
+    }
+    word_ends.iter().rev().map(|&end| &s[..end]).collect()
+}
+
+/// Issue #235: `FILE_PATH_RE` (`links.ts`) deliberately stops at the first space/bracket so its
+/// decoration doesn't swallow trailing prose — but that truncates a real path that itself contains
+/// a space or `(`/`)` (e.g. `C:\Program Files (x86)\Steam\userdata`), which then fails to open
+/// since the truncated prefix doesn't exist on disk. This widens the search at CLICK time only
+/// (never at decoration/render time — a `metadata()` filesystem probe on every keystroke would be
+/// a real perf concern): given `extended_search_text` (the rest of the source line from the
+/// regex match's start to end-of-line, supplied by the frontend), tries progressively shorter
+/// whitespace-trimmed prefixes of it (longest first, via `candidate_prefixes`), resolving each
+/// through the same `resolve_file_path` traversal-safety check a plain `value` would get, and
+/// returns the resolved string of the longest one that both resolves AND exists on disk
+/// (`std::fs::metadata`). Falls back to resolving `value` (the original short regex match) as-is,
+/// existence unchecked, if no wider prefix panned out — preserving today's behavior (and its
+/// "file not found" opener failure) for a path that plain doesn't exist, or for the "prose after a
+/// short real path" case where the short match itself is what's real.
+fn resolve_file_path_widened(value: &str, extended_search_text: Option<&str>, current_tab_id: Option<&str>, settings: &AppSettings) -> Result<String, AppErrorPayload> {
+    if let Some(extended) = extended_search_text {
+        for prefix in candidate_prefixes(extended) {
+            if let Ok(resolved) = resolve_file_path(prefix, current_tab_id, settings) {
+                if Path::new(&resolved).metadata().is_ok() {
+                    return Ok(resolved);
+                }
+            }
+        }
+    }
+    resolve_file_path(value, current_tab_id, settings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,7 +333,7 @@ mod tests {
     }
 
     fn tab_entry(id: &str, name: &str, folder: &Path, locked: bool) -> TabSettingsEntry {
-        TabSettingsEntry { id: id.to_string(), name: name.to_string(), folder_path: folder.to_string_lossy().into_owned(), locked: Some(locked) }
+        TabSettingsEntry { id: id.to_string(), name: name.to_string(), folder_path: folder.to_string_lossy().into_owned(), locked: Some(locked), lock_label: None }
     }
 
     fn settings_with(tabs: Vec<TabSettingsEntry>) -> AppSettings {
@@ -243,7 +343,16 @@ mod tests {
     }
 
     fn empty_session(real_tab_name: &str, tree: Vec<MetaTreeNode>) -> LockSession {
-        LockSession { real_tab_name: real_tab_name.to_string(), tree, file_map: Vec::new(), kdf: KdfParams::generate_new(), hint: None, key: [0u8; 32] }
+        LockSession {
+            real_tab_name: real_tab_name.to_string(),
+            tree,
+            file_map: Vec::new(),
+            kdf: KdfParams::generate_new(),
+            hint: None,
+            key: [0u8; 32],
+            last_viewed_memo: None,
+            image_folders: Vec::new(),
+        }
     }
 
     #[test]
@@ -311,6 +420,16 @@ mod tests {
         parent.children = vec![child];
         assert!(tree_contains_memo(&[parent.clone()], "Child"));
         assert!(!tree_contains_memo(&[parent], "Nonexistent"));
+    }
+
+    #[test]
+    fn executable_extensions_are_detected_case_insensitively_and_through_tricks() {
+        for p in ["C:\\a\\payload.exe", "payload.EXE", "x/y.Bat", "a.cmd", "a.ps1", "a.vbs", "a.js", "a.lnk", "a.msi", "a.reg", "a.hta", "a.jar", "a.application", "payload.exe ", "payload.exe.", "payload.exe. .", "payload.exe:stream", "payload.exe::$DATA", "dir.d\\a.scr", "報告書.exe", "C:payload.exe", "C:payload.exe:s", "D:a.EXE ", "a.py", "a.docm"] {
+            assert!(is_executable_file_path(p), "{p}");
+        }
+        for p in ["notes.txt", "a.md", "a.exe.txt", "exe", "C:\\dir.exe\\readme.txt", "C:", "a.pdf:exe", "no_ext", "a.", ""] {
+            assert!(!is_executable_file_path(p), "{p}");
+        }
     }
 
     #[test]
@@ -395,6 +514,72 @@ mod tests {
         let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
         let resolved = resolve_file_path("sub\\notes.txt", Some("t1"), &settings).unwrap();
         assert_eq!(resolved, dir.join("sub").join("notes.txt").to_string_lossy().into_owned());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn candidate_prefixes_trims_one_trailing_word_at_a_time_longest_first() {
+        // No space between `(x86)` and `\Steam` — they're one whitespace-delimited word, so no
+        // prefix boundary falls between them (matches the real `C:\Program Files (x86)\Steam`
+        // path, which has no space there either).
+        let prefixes = candidate_prefixes("C:\\Program Files (x86)\\Steam and more prose");
+        assert_eq!(prefixes, vec![
+            "C:\\Program Files (x86)\\Steam and more prose",
+            "C:\\Program Files (x86)\\Steam and more",
+            "C:\\Program Files (x86)\\Steam and",
+            "C:\\Program Files (x86)\\Steam",
+            "C:\\Program Files",
+            "C:\\Program",
+        ]);
+    }
+
+    #[test]
+    fn candidate_prefixes_of_a_single_word_is_just_that_word() {
+        assert_eq!(candidate_prefixes("C:\\Program"), vec!["C:\\Program"]);
+    }
+
+    #[test]
+    fn resolve_file_path_widened_finds_the_longest_prefix_that_exists_on_disk() {
+        let dir = tempdir();
+        // A real directory whose name itself contains a space and parens — GitHub issue #235's
+        // exact repro shape (`C:\Program Files (x86)\...`).
+        let real_dir = dir.join("Program Files (x86)");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+
+        // `value` is the short, regex-truncated match (stops at the first space); `extended` is the
+        // rest-of-line the frontend would send — extends past the real directory into trailing prose
+        // that does not itself exist on disk.
+        let value = "Program";
+        let extended = "Program Files (x86) plus some trailing prose";
+        let resolved = resolve_file_path_widened(value, Some(extended), Some("t1"), &settings).unwrap();
+        assert_eq!(resolved, real_dir.to_string_lossy().into_owned());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_file_path_widened_falls_back_to_the_short_match_when_nothing_wider_exists() {
+        let dir = tempdir();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+
+        let value = "Missing";
+        let extended = "Missing Path That Does Not Exist Anywhere";
+        // No prefix of `extended` exists on disk — falls back to resolving `value` as-is (today's
+        // pre-issue-#235 behavior), existence unchecked.
+        let resolved = resolve_file_path_widened(value, Some(extended), Some("t1"), &settings).unwrap();
+        assert_eq!(resolved, dir.join("Missing").to_string_lossy().into_owned());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_file_path_widened_with_no_extended_text_behaves_like_resolve_file_path() {
+        let dir = tempdir();
+        std::fs::write(dir.join("notes.txt"), b"").unwrap();
+        let settings = settings_with(vec![tab_entry("t1", "Personal", &dir, false)]);
+        let resolved = resolve_file_path_widened("notes.txt", None, Some("t1"), &settings).unwrap();
+        assert_eq!(resolved, dir.join("notes.txt").to_string_lossy().into_owned());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

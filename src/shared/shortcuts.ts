@@ -30,6 +30,12 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "tree.rename": "F2",
   "tree.forceDelete": "Ctrl+Delete",
 
+  // Cross-Tab Quick Open (`docs/plans/v1.1.0/quick-open/PLAN.md` §4, `[spec v1.1.0 §3.1]`) — opens
+  // the memo-name jump-open overlay. `Ctrl+O` verified unused against this very map as of this
+  // writing (not `Ctrl+P`: taken by `markdown.pdfExport` below, also the native browser-print
+  // shortcut; not `Ctrl+Shift+P`: taken by `markdown.paneModeCycle` below).
+  "search.quickOpen": "Ctrl+O",
+
   // Markdown toolbar (`docs/plans/markdown-editing/PLAN.md` §4; `docs/detailed-spec.md` §5.10:
   // "every toolbar action gets a default keyboard shortcut", now 18 actions after GitHub issue
   // #176; the original 16's combos fixed by `docs/plans/window-operation/PLAN.md` §3's table).
@@ -71,10 +77,42 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   // the handler must call `event.preventDefault()` to suppress that native dialog (`MDEditor-spec.md`
   // §8's "`Ctrl+P` native-print conflict" note).
   "markdown.pdfExport": "Ctrl+P",
+
+  // `docs/plans/v1.2.0/preview-zoom/PLAN.md` §5.1 — ± buttons in the preview-mode toolbar header
+  // (`paneMode === "preview"` only). Not one of the 16 fixed grid slots and, like
+  // `markdown.paneModeCycle`/`markdown.pdfExport` above, dispatched by a separate,
+  // focus-unconstrained effect in `EditorPane.tsx` (must fire even while focus sits inside the
+  // preview pane's own DOM subtree). `Ctrl+=`/`Ctrl+-` are also WebView2/Chromium's native
+  // page-zoom shortcuts — the handler must call `event.preventDefault()` to suppress that native
+  // behavior, same reasoning as `markdown.pdfExport`'s native-print-dialog conflict. The
+  // `Ctrl+NumpadAdd`/`Ctrl+NumpadSubtract` numpad aliases are handled separately in `EditorPane.tsx`
+  // (§5.3: `Ctrl+NumpadSubtract`'s `e.key` already equals `Ctrl+-`'s via `comboFromEvent`, so it
+  // needs no extra entry here; `Ctrl+NumpadAdd`'s `e.key` differs from `Ctrl+=`'s and is checked via
+  // `e.code` outside this rebindable map instead).
+  "preview.zoomIn": "Ctrl+=",
+  "preview.zoomOut": "Ctrl+-",
 };
 
+/** Action ids that are rebindable via the Settings screen's Shortcuts tab but ship with NO default
+ * combo in `DEFAULT_SHORTCUTS` above — so the row starts unbound and only fires once (if ever) a
+ * user configures one. Kept as its own list rather than adding `undefined`-valued entries to
+ * `DEFAULT_SHORTCUTS` (whose every value is a real combo string, matched exactly against
+ * `comboFromEvent`'s output elsewhere).
+ *
+ * - `favorites.open` — Cross-Tab Favorites list (`docs/plans/v1.1.0/favorites/PLAN.md` §6,
+ *   `[spec v1.1.0 §4.6]`): always reachable via its own toolbar ★ button, so no default keyboard
+ *   shortcut is required; this only exists so the action is still rebindable for users who want one.
+ */
+export const UNBOUND_ACTION_IDS: string[] = ["favorites.open"];
+
+/** Every rebindable action id, in the order the Settings screen's Shortcuts tab should list them —
+ * `DEFAULT_SHORTCUTS`'s own keys (each with a real default combo) followed by `UNBOUND_ACTION_IDS`
+ * (no default combo, `undefined` unless user-bound). */
+export const REBINDABLE_ACTION_IDS: string[] = [...Object.keys(DEFAULT_SHORTCUTS), ...UNBOUND_ACTION_IDS];
+
 /** Merges user overrides (`AppSettings.shortcuts`) over the defaults, by
- * action-id. */
+ * action-id. An action id in `UNBOUND_ACTION_IDS` resolves to `undefined` here unless `overrides`
+ * itself supplies a combo for it — `DEFAULT_SHORTCUTS` has no entry for those ids to spread in. */
 export function resolveShortcuts(overrides: Record<string, string> | undefined): Record<string, string> {
   return { ...DEFAULT_SHORTCUTS, ...(overrides ?? {}) };
 }

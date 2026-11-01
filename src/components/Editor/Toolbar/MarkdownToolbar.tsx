@@ -13,6 +13,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { EditorView } from "@codemirror/view";
 import { Lock, Maximize2, Minimize2, Unlock } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DEFAULT_TOOLBAR_ORDER, TOOLBAR_ACTIONS, normalizeToolbarOrder } from "../../../editor/toolbarSlots";
 import type { ToolbarActionId } from "../../../editor/toolbarSlots";
 import {
@@ -37,32 +38,54 @@ import { redoCommand, undoCommand } from "../../../editor/textCommands";
 import { tocUpdateCommand } from "../../../editor/tocGenerator";
 import type { AppSettings, AppSettingsPatch, PaneMode } from "../../../shared/models";
 import type { ErrorCode } from "../../../shared/result";
+import { resolveShortcuts } from "../../../shared/shortcuts";
+import { useT } from "../../../i18n";
+import type { TranslationKey } from "../../../i18n";
 import "./MarkdownToolbar.css";
 
 /** Toolbar's Color button — closed 5-choice enum, adopted verbatim from the legacy toolbar
- * (`docs/plans/markdown-editing/PLAN.md` §4). */
-const COLOR_SWATCHES: { label: string; hex: string }[] = [
-  { label: "赤", hex: "#e53935" },
-  { label: "青", hex: "#1e88e5" },
-  { label: "緑", hex: "#43a047" },
-  { label: "橙", hex: "#fb8c00" },
-  { label: "紫", hex: "#8e24aa" },
+ * (`docs/plans/markdown-editing/PLAN.md` §4). `labelKey` (not a literal label) so this
+ * module-level constant stays translatable via `useT()` at render time
+ * (`docs/plans/v1.2.0/i18n/PLAN.md` §6). */
+const COLOR_SWATCHES: { labelKey: TranslationKey; hex: string }[] = [
+  { labelKey: "markdownToolbar.colorRed", hex: "#e53935" },
+  { labelKey: "markdownToolbar.colorBlue", hex: "#1e88e5" },
+  { labelKey: "markdownToolbar.colorGreen", hex: "#43a047" },
+  { labelKey: "markdownToolbar.colorOrange", hex: "#fb8c00" },
+  { labelKey: "markdownToolbar.colorPurple", hex: "#8e24aa" },
 ];
 
 /** Toolbar's Font-size button — closed 3-choice enum, same treatment as `COLOR_SWATCHES`. */
-const FONT_SIZE_CHOICES: { label: string; px: string }[] = [
-  { label: "小", px: "12px" },
-  { label: "大", px: "20px" },
-  { label: "特大", px: "28px" },
+const FONT_SIZE_CHOICES: { labelKey: TranslationKey; px: string }[] = [
+  { labelKey: "markdownToolbar.fontSizeSmall", px: "12px" },
+  { labelKey: "markdownToolbar.fontSizeLarge", px: "24px" },
+  { labelKey: "markdownToolbar.fontSizeExtraLarge", px: "36px" },
 ];
 
 /** Pane-mode header button's current-state label (`docs/plans/markdown/markdown-preview/PLAN.md`
  * §6.3) — a single button showing the *current* state and cycling to the next one on click. */
-const PANE_MODE_LABEL: Record<PaneMode, string> = {
-  edit: "編集のみ",
-  split: "分割表示",
-  preview: "プレビューのみ",
+const PANE_MODE_LABEL_KEY: Record<PaneMode, TranslationKey> = {
+  edit: "paneMode.edit",
+  split: "paneMode.split",
+  preview: "paneMode.preview",
 };
+
+/** Same fixed cycling order as `EditorPane.tsx`'s own `PANE_MODE_CYCLE` (`docs/plans/markdown/
+ * markdown-preview/PLAN.md` §4.1, `edit -> split -> preview -> edit -> ...`) — duplicated locally
+ * (not imported) to avoid a circular import between this file and `EditorPane.tsx`, mirroring how
+ * `PANE_MODE_LABEL` above is already a local copy rather than an import. Used to show the toolbar
+ * button's *next*-state label instead of its current state (`docs/plans/v1.2.0/
+ * pane-mode-toolbar-semantics/PLAN.md` §3). */
+const PANE_MODE_CYCLE: Record<PaneMode, PaneMode> = { edit: "split", split: "preview", preview: "edit" };
+
+/** Preview-pane zoom bounds/step (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §4/§7) — range 70-180%,
+ * 10% steps, default 100% (`EditorPane.tsx`'s own `previewZoomPercent` initial state). Exported so
+ * `EditorPane.tsx`'s `onZoomIn`/`onZoomOut` callbacks clamp to the exact same bounds this
+ * component's ± buttons use for their own at-bounds `disabled` rendering, rather than duplicating
+ * the numbers in two places. */
+export const PREVIEW_ZOOM_MIN = 70;
+export const PREVIEW_ZOOM_MAX = 180;
+export const PREVIEW_ZOOM_STEP = 10;
 
 const DEFAULT_POSITION = { x: 24, y: 24 };
 
@@ -136,6 +159,16 @@ export interface MarkdownToolbarProps {
    * elsewhere becomes a no-op (`EditorPane.tsx`'s own guards). */
   previewLocked: boolean;
   onTogglePreviewLock: () => void;
+  /** Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §2/§4) — current percentage and the
+   * three actions driving it (± buttons, and the percentage readout button's reset-to-100). Owned by
+   * `EditorPane.tsx` (session-only, resets on tab/memo switch and on leaving `"preview"` mode); this
+   * component only renders the ± / readout group and never mutates the value itself. The group below
+   * is conditionally rendered only while `paneMode === "preview"` (not always-rendered-but-disabled),
+   * since the control has no meaningful value/effect in any other pane mode. */
+  previewZoomPercent: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
   /** `true` while the memo is read-only (edit-locked, or a conflict dialog is open) — disables
    * every content-mutating slot except the rearrange toggle itself (`[spec §2.2]`). */
   readOnly: boolean;
@@ -180,6 +213,10 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     revealSplitIfPreviewOnly,
     previewLocked,
     onTogglePreviewLock,
+    previewZoomPercent,
+    onZoomIn,
+    onZoomOut,
+    onZoomReset,
     readOnly,
     tabId,
     onImageError,
@@ -188,6 +225,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
   },
   ref,
 ) {
+  const t = useT();
   const persistedOrderKey = JSON.stringify(appSettings?.window.toolbarOrder ?? null);
   const [order, setOrder] = useState<ToolbarActionId[]>(() => normalizeToolbarOrder(appSettings?.window.toolbarOrder));
   useEffect(() => {
@@ -253,6 +291,10 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     if (optimisticMinimized !== null && optimisticMinimized === settingsMinimized) setOptimisticMinimized(null);
   }, [settingsMinimized, optimisticMinimized]);
   const minimized = optimisticMinimized ?? settingsMinimized;
+  // Mirrors `minimized` for the window-state-transition effect below, which registers its listener
+  // once (`useEffect(..., [])`) and so would otherwise close over a stale value from its mount render.
+  const minimizedRef = useRef(minimized);
+  minimizedRef.current = minimized;
   // Set right before `setOptimisticMinimized` in `toggleMinimized` below, so the layout effect that
   // reacts to `minimized` changing can tell "the user just clicked the toggle" (snap/restore the
   // position) apart from "`minimized` changed because settings were reloaded from elsewhere" (in
@@ -282,6 +324,12 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
       setBasePosition(raw);
       return;
     }
+    // Guard against a transient degenerate (zero-size) pane measurement — can happen around an
+    // OS-level window-state transition (minimize in particular, GitHub issue #245) before layout has
+    // caught up to the real size. Clamping against a 0×0 box would collapse the position to (0,0) and
+    // (for an `"immediate"` persist) write that bogus value straight to settings. Skip this call
+    // entirely instead; the next real measurable resize/minimize-toggle re-triggers it.
+    if (pane.clientWidth === 0 || pane.clientHeight === 0) return;
     const clamped = clampToolbarPosition(raw, { width: panel.offsetWidth, height: panel.offsetHeight }, { width: pane.clientWidth, height: pane.clientHeight });
     setBasePosition(clamped);
     if (clamped.x === raw.x && clamped.y === raw.y) return;
@@ -372,6 +420,9 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     if (rearranging) return; // see item 5 of the GitHub issue #26 write-up: keep this simple by
     // disabling the toggle entirely while a slot reorder is in progress, rather than deciding how a
     // hidden-mid-drag grid should behave.
+    if (paneMode === "preview") return; // issue #253: preview-only mode already auto-minimizes the
+    // toolbar (see the pane-mode effect below) since the formatting grid has no edit pane to act on;
+    // block manually restoring it from this toggle too, not just the auto-minimize path.
     if (!minimized) {
       minimizeNow();
       return;
@@ -380,6 +431,73 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
     setOptimisticMinimized(false);
     void patchSettings({ window: { toolbarMinimized: false } });
   };
+
+  // OS-level window-state collapse+snap (GitHub issue #245): minimizing, maximizing, or restoring
+  // the window back to its original (un-maximized) size each jump the editor pane's rendered size by
+  // a large, discrete amount. The pane-resize `ResizeObserver` effect above just re-clamps whatever
+  // position the toolbar happened to be dragged to into the new bounds, which for a discrete jump
+  // (rather than a smooth drag) lands it somewhere that reads as arbitrary rather than predictable.
+  // Default to the same collapsed+bottom-right-snapped state `toggleMinimized`/the pane-mode
+  // auto-minimize effect above already use for a deliberate user action, reusing `minimizeNow` rather
+  // than adding a new positioning path.
+  //
+  // Deliberately does NOT fire on ordinary interactive resize-dragging (the frameless window's own
+  // edge-drag resize, `window-operation/PLAN.md` §1) — only on the discrete OS-level state transition
+  // itself. Detected by comparing `isMinimized()`/`isMaximized()` (`useWindowGeometry.ts`'s own
+  // reference pattern for both) across `onResized` ticks, rather than reacting to every tick's raw
+  // size: during an interactive drag-resize both flags stay `false` throughout (no edge, no spurious
+  // collapse); they only flip on an actual minimize/maximize/restore action, producing exactly one
+  // edge per action even though `onResized` itself can still fire several times around it.
+  //
+  // Only queries the boolean `isMinimized()`/`isMaximized()` flags here, never `outerSize()` — Tauri's
+  // `onResized` is known to fire with a degenerate/zero native size on some platforms specifically
+  // around minimize, and those two flags aren't affected by that quirk. The DOM-measurement side
+  // (`clampAndApply`, invoked indirectly here via `minimizeNow` -> the `minimized`-reacting layout
+  // effect above) has its own separate zero-size guard for the pane's *rendered* size, covering the
+  // other half of that same concern.
+  const windowStateRef = useRef<{ minimized: boolean; maximized: boolean } | null>(null);
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const checkTransition = async () => {
+      const [currentMinimized, currentMaximized] = await Promise.all([appWindow.isMinimized(), appWindow.isMaximized()]);
+      if (cancelled) return;
+      const prev = windowStateRef.current;
+      windowStateRef.current = { minimized: currentMinimized, maximized: currentMaximized };
+      if (!prev) return; // first read just establishes the baseline — nothing to compare against yet
+      const enteringMinimized = currentMinimized && !prev.minimized;
+      const enteringMaximized = currentMaximized && !prev.maximized; // from normal size OR from minimized
+      const leavingMaximized = !currentMaximized && prev.maximized; // restore-to-original-size
+      const leavingMinimized = !currentMinimized && prev.minimized; // un-minimize, to normal or maximized
+      if (enteringMinimized || enteringMaximized || leavingMaximized || leavingMinimized) {
+        if (!minimizedRef.current) {
+          minimizeNow();
+        } else {
+          // Already collapsed — `minimizeNow()`'s snap-to-corner is normally reached via the
+          // `minimized`-reacting layout effect above, which only re-fires on an actual `minimized`
+          // state change. Here `minimized` is already `true`, so `setOptimisticMinimized(true)`
+          // would be a no-op and that effect wouldn't re-run — re-run the same snap directly
+          // instead (GitHub issue #245, reopened: a second-or-later minimize/maximize/restore
+          // cycle while already collapsed used to fall through to the ordinary pane-resize
+          // re-clamp instead of re-snapping to the corner).
+          clampAndApply({ x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY }, "immediate");
+        }
+      }
+    };
+
+    void checkTransition(); // establish the baseline immediately, before the first `onResized` tick
+    void appWindow.onResized(() => void checkTransition()).then((un) => {
+      if (cancelled) un();
+      else unlisten = un;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-minimize when pane-mode enters `"preview"` (`PLAN.md` §6.2) — not fully hiding the toolbar
   // (the header, and its pane-mode toggle button, stay visible) so there's always a visible escape
@@ -493,6 +611,15 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
 
   const effectivePosition = dragPosition ?? basePosition;
 
+  // Live-bound shortcut combos for the zoom buttons' tooltips (`docs/plans/v1.2.0/preview-zoom/
+  // PLAN.md` §4) — same `resolveShortcuts` call already used elsewhere in this app (e.g.
+  // `EditorPane.tsx`'s 18-toolbar-action keydown handler, `TabBar.tsx`) — so the tooltip stays
+  // correct if the user rebinds `preview.zoomIn`/`preview.zoomOut` in Settings. The fixed
+  // `Ctrl+NumpadAdd` alias (`EditorPane.tsx` §5.3) is not separately named here — it has no Settings
+  // entry of its own to go stale against.
+  const zoomInCombo = resolveShortcuts(appSettings?.shortcuts)["preview.zoomIn"];
+  const zoomOutCombo = resolveShortcuts(appSettings?.shortcuts)["preview.zoomOut"];
+
   const invokeAction = (id: ToolbarActionId) => {
     if (id === "rearrangeToggle") {
       // Rearrange mode reorders the grid's own slots by drag, so it can't be *entered* while the
@@ -556,7 +683,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
         runOnView(quoteCommand);
         break;
       case "link":
-        runOnView(linkCommand);
+        runOnView((v) => linkCommand(v, t("editor.defaultLinkLabel")));
         break;
       case "codeBlock":
         runOnView(codeBlockCommand);
@@ -597,16 +724,16 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           ⋮⋮
         </span>
         <button type="button" className="ttn-md-toolbar-view-toggle" onClick={onToggleLiveView}>
-          {liveViewEnabled ? "ライブ表示" : "ソース表示"}
+          {liveViewEnabled ? t("markdownToolbar.viewToSource") : t("markdownToolbar.viewToLive")}
         </button>
         <button
           type="button"
           className="ttn-md-toolbar-pane-mode"
           onClick={onCyclePaneMode}
           disabled={previewLocked}
-          aria-label={`ペイン表示モードを切り替え (現在: ${PANE_MODE_LABEL[paneMode]})`}
+          aria-label={t("markdownToolbar.switchToPaneModeTemplate").replace("{mode}", t(PANE_MODE_LABEL_KEY[PANE_MODE_CYCLE[paneMode]]))}
         >
-          {PANE_MODE_LABEL[paneMode]}
+          {t(PANE_MODE_LABEL_KEY[PANE_MODE_CYCLE[paneMode]])}
         </button>
         {/* Preview-lock (GitHub issue #149) — pins the memo at effectively `"preview"`, disabling
             the pane-mode button above and every auto-reveal trigger elsewhere until unlocked again
@@ -617,8 +744,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
           className="ttn-md-toolbar-preview-lock"
           onClick={onTogglePreviewLock}
           aria-pressed={previewLocked}
-          title={previewLocked ? "プレビュー固定を解除" : "プレビューに固定"}
-          aria-label={previewLocked ? "プレビュー固定を解除" : "プレビューに固定"}
+          title={previewLocked ? t("markdownToolbar.previewLockOff") : t("markdownToolbar.previewLockOn")}
+          aria-label={previewLocked ? t("markdownToolbar.previewLockOff") : t("markdownToolbar.previewLockOn")}
         >
           {previewLocked ? <Lock size={14} /> : <Unlock size={14} />}
         </button>
@@ -626,14 +753,51 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
             (§3's "printing never mutates the document" availability rule); only disabled when no
             memo is open at all. */}
         <button type="button" className="ttn-md-toolbar-pdf-export" onClick={onPdfExport} disabled={!memoName}>
-          PDF出力
+          {t("markdownToolbar.pdfExport")}
         </button>
+        {/* Preview-pane zoom (`docs/plans/v1.2.0/preview-zoom/PLAN.md` §4) — ± / percentage-readout
+            group, conditionally rendered only while `paneMode === "preview"` (not
+            always-rendered-but-disabled — the control has no meaningful value/effect in any other
+            pane mode, mirroring `split` mode's own sub-preview always rendering at a fixed 100%). */}
+        {paneMode === "preview" && (
+          <div className="ttn-md-toolbar-zoom">
+            <button
+              type="button"
+              className="ttn-md-toolbar-zoom-btn"
+              disabled={previewZoomPercent <= PREVIEW_ZOOM_MIN}
+              onClick={onZoomOut}
+              title={t("markdownToolbar.zoomOutTemplate").replace("{combo}", zoomOutCombo)}
+              aria-label={t("markdownToolbar.zoomOutAria")}
+            >
+              －
+            </button>
+            <button
+              type="button"
+              className="ttn-md-toolbar-zoom-reset"
+              onClick={onZoomReset}
+              title={t("markdownToolbar.zoomResetTitle")}
+              aria-label={t("markdownToolbar.zoomResetAria")}
+            >
+              {previewZoomPercent}%
+            </button>
+            <button
+              type="button"
+              className="ttn-md-toolbar-zoom-btn"
+              disabled={previewZoomPercent >= PREVIEW_ZOOM_MAX}
+              onClick={onZoomIn}
+              title={t("markdownToolbar.zoomInTemplate").replace("{combo}", zoomInCombo)}
+              aria-label={t("markdownToolbar.zoomInAria")}
+            >
+              ＋
+            </button>
+          </div>
+        )}
         <button
           type="button"
           className="ttn-md-toolbar-minimize-btn"
-          title={minimized ? "ツールバーを元に戻す" : "ツールバーを最小化"}
-          aria-label={minimized ? "ツールバーを元に戻す" : "ツールバーを最小化"}
-          disabled={rearranging}
+          title={minimized ? t("markdownToolbar.restore") : t("markdownToolbar.minimize")}
+          aria-label={minimized ? t("markdownToolbar.restore") : t("markdownToolbar.minimize")}
+          disabled={rearranging || paneMode === "preview"}
           onClick={toggleMinimized}
         >
           {minimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
@@ -651,8 +815,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               key={id}
               type="button"
               className="ttn-md-toolbar-btn"
-              title={action.label}
-              aria-label={action.label}
+              title={t(action.labelKey)}
+              aria-label={t(action.labelKey)}
               disabled={disabled}
               onMouseDown={(e: ReactMouseEvent) => {
                 if (!rearranging || e.button !== 0) return;
@@ -689,8 +853,8 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               type="button"
               className="ttn-md-toolbar-swatch"
               style={{ background: c.hex }}
-              title={c.label}
-              aria-label={c.label}
+              title={t(c.labelKey)}
+              aria-label={t(c.labelKey)}
               onClick={() => {
                 runOnView((v) => applyColorSpan(v, c.hex));
                 setOpenPopover(null);
@@ -705,7 +869,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               setOpenPopover(null);
             }}
           >
-            解除
+            {t("markdownToolbar.clear")}
           </button>
         </div>
       )}
@@ -722,7 +886,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
                 setOpenPopover(null);
               }}
             >
-              {f.label}
+              {t(f.labelKey)}
             </button>
           ))}
           <button
@@ -733,7 +897,7 @@ export const MarkdownToolbar = forwardRef<MarkdownToolbarHandle, MarkdownToolbar
               setOpenPopover(null);
             }}
           >
-            解除
+            {t("markdownToolbar.clear")}
           </button>
         </div>
       )}

@@ -10,6 +10,8 @@
 //! rather than duplicating tree-reconciliation logic — the same pattern every mutating
 //! `commands/tree.rs` command already follows.
 
+use std::sync::Arc;
+
 use tauri::{AppHandle, State};
 
 use crate::commands::emit_settings_recovery_event;
@@ -68,7 +70,7 @@ pub fn editor_load(
     tab_id: String,
     path: NodePath,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     active_memo: State<ActiveMemoTracker>,
     sessions: State<LockSessionStore>,
 ) -> AppResult<MemoContent> {
@@ -161,7 +163,7 @@ pub fn editor_save(
     text: String,
     expected_hash: String,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<SaveResult> {
@@ -285,6 +287,7 @@ mod tests {
             app_version: "0.1.0".to_string(),
             tree: Some(vec![node]),
             lock: None,
+            last_viewed_memo: None,
         };
         std::fs::write(dir.join(".tabtreenote.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
 
@@ -294,6 +297,7 @@ mod tests {
             name: "Test tab".to_string(),
             folder_path: dir.to_string_lossy().into_owned(),
             locked: Some(false),
+            lock_label: None,
         });
 
         let (folder, _tab_name) = resolve_tab(&settings, "t1").unwrap();

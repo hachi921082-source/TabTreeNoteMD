@@ -8,3 +8,13 @@ src-tauri/gen/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+.claude/files/
+
+# 個人環境・ビルド成果物(誤ってコミットしない)
+.env
+.env.*
+/*.exe
+/data/
+/.tabtreenote.json
+.claude/settings.json
+.claude/settings.local.json

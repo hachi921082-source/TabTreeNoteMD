@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { editorClose, editorLoad, editorSave } from "../ipc/editor";
+import { imageRepairLegacyLinks } from "../ipc/image";
 import type { AppSettings, MemoContent } from "../shared/models";
 import type { ErrorCode } from "../shared/result";
 import { comboFromEvent, resolveShortcuts } from "../shared/shortcuts";
@@ -42,8 +43,50 @@ export interface UseEditorResult {
   /** Called by `EditorPane` on every CodeMirror doc change — the debounced-autosave timer's
    * source of truth for "did anything change." */
   notifyTextChanged: (text: string) => void;
-  /** Ctrl+S / explicit flush; also used internally by the switch/minimize/exit triggers. */
-  flushSaveNow: () => Promise<void>;
+  /** Ctrl+S / explicit flush; also used internally by the switch/minimize/exit triggers.
+   * Resolves `false` if unsaved edits remain after the attempt (save error / conflict) — used to
+   * abort an open-memo rename/cross-tab move before it (GitHub issue #267). */
+  flushSaveNow: () => Promise<boolean>;
+  /** Deleting the open memo (or an ancestor) intentionally discards it (GitHub issue #267
+   * follow-up): `suspendPendingSave` stops the debounce timer (no write, edits stay dirty) before
+   * `memo_delete`; `discardPendingEdits` marks the buffer clean after the delete succeeded so the
+   * switch-away flush doesn't write against the now-missing file (`NOT_FOUND` banner). */
+  suspendPendingSave: () => void;
+  discardPendingEdits: () => void;
+}
+
+/** レガシー画像リンク(GitHub issue #266)が含まれうる本文かの安価な事前判定: 同じ行で `![` の後に
+ * `](` があり、その後 `)` `<` 改行より前に半角スペースがある。偽なら修復コマンドを呼ばない。
+ * 正規表現はバックトラックで巨大な行に対し多項式時間になるため、線形の1パス走査で判定する
+ * (走査済みの `](` 以降の区間は読み飛ばす — 区間内の `](` から始めても同じ結果になるため)。 */
+function hasLegacyImageLinkHint(text: string): boolean {
+  const n = text.length;
+  let sawBang = false;
+  let i = 0;
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c === 10) {
+      // 改行で行の状態をリセット
+      sawBang = false;
+      i++;
+    } else if (c === 33 && text.charCodeAt(i + 1) === 91) {
+      // `![`
+      sawBang = true;
+      i += 2;
+    } else if (sawBang && c === 93 && text.charCodeAt(i + 1) === 40) {
+      // `](` 以降を `)` `<` 改行まで調べる
+      let j = i + 2;
+      for (; j < n; j++) {
+        const d = text.charCodeAt(j);
+        if (d === 32) return true;
+        if (d === 41 || d === 60 || d === 10) break;
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return false;
 }
 
 export function useEditor(
@@ -77,6 +120,14 @@ export function useEditor(
   const debounceTimerRef = useRef<number | null>(null);
   const appSettingsRef = useRef<AppSettings | null>(appSettings);
   appSettingsRef.current = appSettings;
+  // Live mirror of the `memoName` param (GitHub issue #212 follow-up) -- distinct from
+  // `memoNameRef` above, which tracks the memo this hook's internal state/refs are actually
+  // LOADED for and is only updated inside the reload effect below. This one is updated on every
+  // render, unconditionally, so the reload effect's `!memoName` guard (see its own comment) and
+  // `resolveConflictKeepMine`/`resolveConflictReloadFromDisk` can both tell whether the live prop
+  // has since diverged from what they're holding onto.
+  const memoNamePropRef = useRef<string | null>(memoName);
+  memoNamePropRef.current = memoName;
 
   // Kept live rather than only set from `editor_load`'s load-time snapshot (GitHub issue #110) —
   // see the constructor param's own doc comment above for the staleness bug this replaces.
@@ -96,32 +147,44 @@ export function useEditor(
 
   /** "Don't write if no change" (`[spec §2.6]`) applies uniformly to every trigger, not just the
    * debounce timer: compares against the last-saved text before calling `editor_save` at all. */
-  const flushSave = useCallback(async (tid: string, name: string) => {
-    if (conflictOpenRef.current) return; // `[spec §5.8]`: suspended while the conflict dialog is open
-    if (editLockedRef.current) return; // defensive: never attempted for an edit-locked memo
-    if (textRef.current === lastSavedTextRef.current) return;
+  const flushSave = useCallback(async (tid: string, name: string): Promise<boolean> => {
+    // 戻り値: 未保存の編集が残っていなければ true(#267: 改名/タブ間移動の前に失敗を検知するため)
+    if (conflictOpenRef.current) return textRef.current === lastSavedTextRef.current; // `[spec §5.8]`: suspended while the conflict dialog is open
+    if (editLockedRef.current) return true; // defensive: never attempted for an edit-locked memo
+    if (textRef.current === lastSavedTextRef.current) return true;
 
     const result = await editorSave(tid, name, textRef.current, lastSavedHashRef.current);
     if (result.ok) {
       lastSavedHashRef.current = result.value.hash;
       lastSavedTextRef.current = textRef.current;
-      return;
+      return true;
     }
     if (result.error.code === "CONFLICT") {
       conflictOpenRef.current = true;
       setConflict("save");
-      return;
+      return false;
     }
     setLastErrorCode(result.error.code);
+    return false;
   }, []);
 
-  const flushSaveNow = useCallback(async () => {
+  const flushSaveNow = useCallback(async (): Promise<boolean> => {
     clearDebounce();
     const tid = tabIdRef.current;
     const name = memoNameRef.current;
-    if (!tid || !name) return;
-    await flushSave(tid, name);
+    if (!tid || !name) return true;
+    return flushSave(tid, name);
   }, [flushSave]);
+
+  // #267 追補: 開いているメモの削除時に保留中の保存を止める/破棄する(書き込みはしない)
+  const suspendPendingSave = useCallback(() => {
+    clearDebounce();
+  }, []);
+
+  const discardPendingEdits = useCallback(() => {
+    clearDebounce();
+    lastSavedTextRef.current = textRef.current;
+  }, []);
 
   const notifyTextChanged = useCallback(
     (text: string) => {
@@ -144,8 +207,38 @@ export function useEditor(
   // before the next effect body, which gives us "flush old, then load new" for free.
   useEffect(() => {
     clearDebounce();
+
+    // GitHub issue #212 follow-up (live-CDP-verified): an external delete of the currently-open
+    // memo fires BOTH `evt:fs:external-change` (drives `useTree.ts`'s tree refresh, which then
+    // force-clears its `openMemoName` -- see that file's "open memo no longer exists" cleanup
+    // effect) and `evt:editor:conflict` (sets `conflict` below) for the same event. Without this
+    // guard, `memoName` going `null` for that reason re-runs this effect and the unconditional
+    // `setConflict(null)` a few lines down wipes the just-raised conflict before the user ever
+    // sees a chance to click a resolution button -- confirmed by live reproduction: with only
+    // `EditorPane.tsx`'s render-gating fixed (keeping `ConflictDialog` mounted while
+    // `conflict !== null`), the dialog still vanished in the same frame `memoName` went `null`,
+    // because THIS effect cleared `conflict` in that very same render pass before the browser
+    // ever painted the intermediate state. Only skips for the EXACT tab/memo the active conflict
+    // is for (`tabId === tabIdRef.current`) -- an actual tab switch or a genuinely different
+    // memo still falls through to the normal reset below. `resolveConflictKeepMine`/
+    // `resolveConflictReloadFromDisk` below already read `tabIdRef.current`/`memoNameRef.current`
+    // (not the live params), so they keep working correctly while this guard holds those refs in
+    // place, and each finishes the deferred reset once the user actually resolves the conflict.
+    if (conflictOpenRef.current && !memoName && tabId === tabIdRef.current) {
+      return;
+    }
+
     setConflict(null);
     conflictOpenRef.current = false;
+    // GitHub issue #212 follow-up: a resolve-while-`memoName`-is-null failure (deleted-file
+    // conflict resolution hitting a NOT_FOUND) sets `lastErrorCode` while `tabId`/`memoName` are
+    // unchanged from this effect's point of view (still `T`/`null`), so this effect does NOT
+    // re-run at that moment -- the banner set by the resolve handler survives untouched, giving
+    // the user a chance to actually see it (`EditorPane.tsx`'s `!memoName` branches now render
+    // it). Only once the user genuinely moves on -- a real tab switch or opening a different memo,
+    // either of which changes `tabId`/`memoName` and re-runs this effect past the guard above --
+    // does this line clear the stale code, before it can leak onto that new, unrelated memo/tab.
+    setLastErrorCode(null);
 
     if (!tabId || !memoName) {
       tabIdRef.current = null;
@@ -160,13 +253,24 @@ export function useEditor(
       const result = await editorLoad(tabId, memoName);
       if (cancelled) return;
       if (result.ok) {
+        // GitHub issue #266: 編集ロックでないメモは、開いた時点でレガシー画像リンク(空白入り裸形)を
+        // 山括弧形に直す。エディタの初期内容として渡すので Undo 履歴には載らない。保存は通常の
+        // 経路(flushSave → editor_save)で行い、`.bak`・ロックセッションの暗号化もそのまま効く。
+        let repairedText: string | null = null;
+        if (!result.value.editLocked && !editLockedRef.current && hasLegacyImageLinkHint(result.value.text)) {
+          const repaired = await imageRepairLegacyLinks(tabId, result.value.text);
+          if (cancelled) return;
+          if (repaired.ok) repairedText = repaired.value;
+        }
         tabIdRef.current = tabId;
         memoNameRef.current = memoName;
-        textRef.current = result.value.text;
+        textRef.current = repairedText ?? result.value.text;
+        // 最終保存済みは読み込んだ内容のまま(修復分を未保存の変更として flushSave に書かせる)
         lastSavedTextRef.current = result.value.text;
         lastSavedHashRef.current = result.value.hash;
-        setContent(result.value);
+        setContent(repairedText !== null ? { ...result.value, text: repairedText } : result.value);
         setLoadGeneration((g) => g + 1);
+        if (repairedText !== null) void flushSave(tabId, memoName);
       } else {
         setLastErrorCode(result.error.code);
       }
@@ -245,9 +349,8 @@ export function useEditor(
     };
   }, [flushSaveNow]);
 
-  // `evt:editor:conflict` (`docs/plans/editor-save/PLAN.md` §3) — not yet emitted by anything
-  // until `persistence-fs/PLAN.md`'s folder watcher is actually wired up to a running tab
-  // folder; this listener is a forward seam, harmless while nothing fires the event.
+  // `evt:editor:conflict` (`docs/plans/editor-save/PLAN.md` §3), emitted by the folder watcher
+  // (GitHub issue #211) whenever the currently-open memo changes on disk out from under this tab.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
@@ -290,6 +393,14 @@ export function useEditor(
     }
     conflictOpenRef.current = false;
     setConflict(null);
+    // GitHub issue #212 follow-up: the reload effect's guard above may have deferred resetting
+    // `tabIdRef`/`memoNameRef` (external delete raced the tree's own cleanup) -- finish that reset
+    // now if the live `memoName` prop has since moved on, so a later, unrelated memo open doesn't
+    // inherit this dead memo's identity.
+    if (memoNamePropRef.current !== name) {
+      tabIdRef.current = null;
+      memoNameRef.current = null;
+    }
   }, []);
 
   const resolveConflictReloadFromDisk = useCallback(async () => {
@@ -312,6 +423,11 @@ export function useEditor(
     }
     conflictOpenRef.current = false;
     setConflict(null);
+    // GitHub issue #212 follow-up: same deferred-reset finish as `resolveConflictKeepMine` above.
+    if (memoNamePropRef.current !== name) {
+      tabIdRef.current = null;
+      memoNameRef.current = null;
+    }
   }, []);
 
   return {
@@ -326,5 +442,7 @@ export function useEditor(
     resolveConflictReloadFromDisk,
     notifyTextChanged,
     flushSaveNow,
+    suspendPendingSave,
+    discardPendingEdits,
   };
 }

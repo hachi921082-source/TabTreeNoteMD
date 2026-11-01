@@ -4,6 +4,7 @@
 // on-disk conflict without making an explicit choice.
 import { Dialog } from "../dialogs/Dialog";
 import type { ConflictKind } from "../../state/useEditor";
+import { useT } from "../../i18n";
 
 export interface ConflictDialogProps {
   kind: ConflictKind;
@@ -12,27 +13,25 @@ export interface ConflictDialogProps {
 }
 
 export function ConflictDialog({ kind, onKeepMine, onReloadFromDisk }: ConflictDialogProps) {
-  const message =
-    kind === "save"
-      ? "このメモは保存しようとした時点で、外部で内容が変更されていました。"
-      : "このメモは開いている間に、外部で内容が変更されました。";
+  const t = useT();
+  const message = kind === "save" ? t("conflict.saveMessage") : t("conflict.openMessage");
 
   return (
     <Dialog
-      title="外部でファイルが変更されています"
+      title={t("errors.CONFLICT")}
       footer={
         <>
           <button type="button" onClick={onReloadFromDisk}>
-            ディスクから再読み込み（自分の変更を破棄）
+            {t("conflict.reloadFromDisk")}
           </button>
           <button type="button" onClick={onKeepMine}>
-            自分の内容を保持して上書き
+            {t("conflict.keepMine")}
           </button>
         </>
       }
     >
       <p>{message}</p>
-      <p>どちらの内容を残すか選択してください。</p>
+      <p>{t("conflict.chooseMessage")}</p>
     </Dialog>
   );
 }

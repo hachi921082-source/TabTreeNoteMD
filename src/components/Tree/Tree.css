@@ -166,11 +166,14 @@
   cursor: pointer;
   font-size: calc(10px * var(--ui-font-scale));
   color: var(--ttn-fg-muted);
+  /* 長い名前の行で縮んでアイコン位置がずれるのを防ぐ(#294) */
+  flex: 0 0 auto;
 }
 
 .ttn-tree-toggle-spacer {
   width: 16px;
   display: inline-block;
+  flex: 0 0 auto;
 }
 
 .ttn-tree-row-file-icon {
@@ -178,6 +181,7 @@
 }
 
 .ttn-tree-row-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }

@@ -2,19 +2,24 @@
 // `docs/plans/memo-tree/PLAN.md`'s TreeView, `docs/plans/editor-save/PLAN.md`'s EditorPane, and
 // `docs/plans/tab-lock/PLAN.md`'s lock/unlock session state (see
 // docs/plans/project-architecture/PLAN.md).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTabs } from "./state/useTabs";
 import { useTree } from "./state/useTree";
+import { useTabView } from "./state/useTabView";
 import { useSettings } from "./state/useSettings";
 import { useTabLock } from "./state/useTabLock";
+import { useTabLockAutoRelock } from "./state/useTabLockAutoRelock";
+import { useToast } from "./state/useToast";
 import { useWindowGeometry } from "./state/useWindowGeometry";
 import { useAppearance } from "./state/useAppearance";
+import { I18nProvider } from "./i18n";
 import { TabBar } from "./components/TabBar/TabBar";
 import { EmptyState } from "./components/TabBar/EmptyState";
 import { TreeView } from "./components/Tree/TreeView";
 import { EditorPane } from "./components/Editor/EditorPane";
 import type { EditorPaneHandle } from "./components/Editor/EditorPane";
 import { TreeSplitter } from "./components/Layout/TreeSplitter";
+import { Toast } from "./components/Toast/Toast";
 import { locateNode } from "./shared/treeOps";
 import { editorClose } from "./ipc/editor";
 
@@ -22,13 +27,43 @@ const DEFAULT_TREE_WIDTH = 260;
 
 function App() {
   const tabsState = useTabs();
-  const treeState = useTree(tabsState.activeTabId);
+  const editorRef = useRef<EditorPaneHandle>(null);
+  // #267: 開いているメモの改名/タブ間移動の前に保留中の保存を確定させる(エディタ未表示なら何もしない)
+  const flushOpenMemoSave = useCallback(async () => (await editorRef.current?.flushSaveNow()) ?? true, []);
+  // #267 追補: 開いているメモの削除時は保留中の保存を書かずに止め、削除成功で破棄する
+  const pendingSaveControl = useMemo(
+    () => ({
+      suspend: () => editorRef.current?.suspendPendingSave(),
+      discard: () => editorRef.current?.discardPendingEdits(),
+    }),
+    [],
+  );
+  const treeState = useTree(tabsState.activeTabId, flushOpenMemoSave, pendingSaveControl);
+  const tabView = useTabView(treeState);
   const settingsState = useSettings();
-  const tabLockState = useTabLock(tabsState.activeTabId, tabsState.refresh, treeState.refresh);
+  // Single app-wide notification queue (`state/useToast.ts`) — shared by `TreeView`'s folder-import
+  // toasts and `useTabLockAutoRelock`'s inactivity warning/auto-relock toasts below, so both render
+  // in one stack instead of two independently-positioned ones (`docs/plans/v1.1.0/
+  // tab-lock-auto-relock/PLAN.md` §6). Also passed to `useTabLock` for the permanent-unlock
+  // image-folder warning (GitHub issue #273).
+  const toastState = useToast();
+  const tabLockState = useTabLock(tabsState.activeTabId, tabsState.refresh, treeState.refresh, toastState);
+
+  // Ordinary in-session tab switch (click, `tab.switchNext`/`switchPrev` shortcuts — both funnel
+  // through `TabBar`'s own `selectTab` calls) also queues a `restoreTabView` request
+  // (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §5). Deliberately NOT used by `openSearchHit`/
+  // `openLinkTarget` below (those call `tabsState.selectTab` directly, unwrapped) — selecting a
+  // cross-tab search hit or `memo:` link target opens a *specific* memo itself, bypassing
+  // `restoreTabView` for that switch (`PLAN.md` §6).
+  const selectTabAndRestore = useCallback(
+    (id: string) => {
+      tabsState.selectTab(id);
+      tabView.requestRestore(id);
+    },
+    [tabsState, tabView],
+  );
   useWindowGeometry(settingsState.settings, settingsState.patch);
   useAppearance(settingsState.settings);
-
-  const editorRef = useRef<EditorPaneHandle>(null);
 
   // `docs/plans/tab-lock/PLAN.md` §3 `tab_lock` step 2: "If any memo in this tab ... is
   // currently open with unsaved changes, the frontend must force a save-confirm (auto-save-and-
@@ -54,6 +89,17 @@ function App() {
     },
     [treeState],
   );
+
+  // `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §7: the inactivity-timeout/app-focus-loss
+  // teardown triggers reuse `beforeLockTab` verbatim as their own "flush pending edit, then close"
+  // step — same routine `tab_lock` already uses before locking a tab, no new teardown logic.
+  useTabLockAutoRelock({
+    activeTabId: tabsState.activeTabId,
+    tabLockState,
+    settings: settingsState.settings,
+    toast: toastState,
+    flushAndCloseActiveMemo: beforeLockTab,
+  });
 
   const openMemoOverride = treeState.openMemoName ? locateNode(treeState.nodes, treeState.openMemoName)?.node.editor : undefined;
   // Live Edit Lock state for the open memo (GitHub issue #12) — read from the current tree state
@@ -92,40 +138,86 @@ function App() {
     setPendingSearchFocus(null);
   }, [pendingSearchFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
 
-  // `memo:` link click -> "open memo" (`docs/plans/link/PLAN.md` §2, §5): same tab-switch +
-  // `focusOnMemo` mechanism as `openSearchHit` above, kept as its own independent state machine
-  // (not merged into `openSearchHit`) since a resolved link's `memoName` may be `null` for the
-  // `memo:TabName/` (tab-only, no memo selected) form — a tab switch with nothing to focus.
-  const [pendingLinkFocus, setPendingLinkFocus] = useState<{ tabId: string; memoName: string } | null>(null);
-  const openLinkTarget = useCallback(
-    (tabId: string, memoName: string | null) => {
+  // Quick Open result -> "open memo" (`docs/plans/v1.1.0/quick-open/PLAN.md` §3): identical
+  // tab-switch + `focusOnMemo` mechanism as `openSearchHit` above (`focusOnMemo` itself already
+  // calls `tree_set_last_viewed` via `useTree.ts`'s `persistLastViewed`, which is exactly this
+  // feature's required `restoreTabView`-bypass — `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §6).
+  // Kept as its own independent pending-focus state machine, not merged into `openSearchHit`, same
+  // "each open-memo trigger source gets its own state machine" convention `openLinkTarget` below
+  // already follows.
+  const [pendingQuickOpenFocus, setPendingQuickOpenFocus] = useState<{ tabId: string; memoName: string } | null>(null);
+  const openQuickOpenHit = useCallback(
+    (tabId: string, memoName: string) => {
       if (tabId === treeState.activeTabId) {
-        if (memoName) treeState.focusOnMemo(memoName);
+        treeState.focusOnMemo(memoName);
+      } else {
+        tabsState.selectTab(tabId);
+        setPendingQuickOpenFocus({ tabId, memoName });
+      }
+    },
+    [tabsState, treeState],
+  );
+  useEffect(() => {
+    if (!pendingQuickOpenFocus || treeState.activeTabId !== pendingQuickOpenFocus.tabId) return;
+    if (!treeState.flatOrder.includes(pendingQuickOpenFocus.memoName)) return;
+    treeState.focusOnMemo(pendingQuickOpenFocus.memoName);
+    setPendingQuickOpenFocus(null);
+  }, [pendingQuickOpenFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
+
+  // `memo:` link click -> "open memo" (`docs/plans/link/PLAN.md` §2, §5; `#slug` anchor suffix added
+  // by `docs/plans/v1.2.0/cross-tab-anchor-links/PLAN.md` §2/§3): same tab-switch + `focusOnMemo`
+  // mechanism as `openSearchHit` above, kept as its own independent state machine (not merged into
+  // `openSearchHit`) since a resolved link's `memoName` may be `null` for the `memo:TabName/`
+  // (tab-only, no memo selected) form — a tab switch with nothing to focus.
+  //
+  // BOTH the cross-tab and same-tab cases route through the same deferred `pendingLinkFocus` ->
+  // effect -> `focusOnMemo` pipeline below (unlike `openSearchHit`/`openQuickOpenHit`, which call
+  // `focusOnMemo` synchronously for the same-tab case) — opening a *different* memo within the same
+  // tab is already async (`focusOnMemo` triggers `EditorPane.tsx`'s `editor_load` IPC round-trip via
+  // its own load-generation effect), so an anchor jump can never apply synchronously even then; both
+  // branches need the identical "stash the anchor, let the effect call `focusOnMemo` once the target
+  // is actually reachable" treatment (`PLAN.md` §3).
+  const [pendingLinkFocus, setPendingLinkFocus] = useState<{ tabId: string; memoName: string; anchorSlug: string | null } | null>(null);
+  // `pendingAnchorToken` is a DEDICATED monotonic counter for the anchor-jump signal threaded down
+  // into `EditorPane.tsx` — deliberately NOT `treeState.focusEditorToken` (which also bumps for
+  // ordinary tree-row-click/arrow-nav opens that carry no anchor at all), so `EditorPane.tsx`'s own
+  // consumption guard can tell "this load is the one a `#slug` link asked for" apart from any later,
+  // unrelated load that would otherwise incorrectly replay a stale anchor (`PLAN.md` §3).
+  const pendingAnchorTokenCounterRef = useRef(0);
+  const pendingAnchorSlugRef = useRef<string | null>(null);
+  const pendingAnchorTokenRef = useRef(0);
+  const openLinkTarget = useCallback(
+    (tabId: string, memoName: string | null, anchorSlug: string | null) => {
+      // #191: self-ref anchor (target already open) never re-fires the deferred load pipeline, so jump immediately instead.
+      if (anchorSlug != null && tabId === treeState.activeTabId && memoName != null && memoName === treeState.openMemoName) {
+        editorRef.current?.jumpToAnchor(anchorSlug);
         return;
       }
-      tabsState.selectTab(tabId);
-      if (memoName) setPendingLinkFocus({ tabId, memoName });
+      if (tabId !== treeState.activeTabId) tabsState.selectTab(tabId);
+      if (memoName) setPendingLinkFocus({ tabId, memoName, anchorSlug });
     },
     [tabsState, treeState],
   );
   useEffect(() => {
     if (!pendingLinkFocus || treeState.activeTabId !== pendingLinkFocus.tabId) return;
     if (!treeState.flatOrder.includes(pendingLinkFocus.memoName)) return;
+    pendingAnchorSlugRef.current = pendingLinkFocus.anchorSlug;
+    pendingAnchorTokenCounterRef.current += 1;
+    pendingAnchorTokenRef.current = pendingAnchorTokenCounterRef.current;
     treeState.focusOnMemo(pendingLinkFocus.memoName);
     setPendingLinkFocus(null);
   }, [pendingLinkFocus, treeState.activeTabId, treeState.flatOrder, treeState.focusOnMemo]);
 
-  // Startup auto-open of the last-opened memo (`[spec §2.6]`: "On startup automatically open the
-  // last-opened memo (`AppSettings.lastOpened`). If tab/memo is deleted, do nothing.";
-  // `[detailed-spec §5.6]`). Once both `tabsState`/`settingsState` have finished their initial
-  // load, switch to `lastOpened.tabId` (if it's still in `AppSettings.tabs`) so its tree fetches
-  // and goes through §3.5 reconciliation, then hand off to the effect below via
-  // `pendingStartupOpen` — same two-step "switch tab, wait for its tree, then `focusOnMemo`"
-  // pattern already used above for cross-tab search hits / `memo:` links. Guarded by a ref so it
-  // only ever runs once per app session; a stale/deleted tab or memo silently does nothing (no
-  // error, no fallback memo), matching the spec text exactly.
+  // Startup restore (`docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §5 "App startup"; supersedes the
+  // old app-level `lastOpened.memoName` mechanism — `AppSettings.lastOpened` is now `{ tabId } |
+  // null`, `[spec §2.6]`'s "On startup automatically open the last-opened memo" now means "switch
+  // to that tab, then apply the same per-tab restore an ordinary tab switch uses",
+  // `[detailed-spec v1.1.0 §2.2]`). Once both `tabsState`/`settingsState` have finished their
+  // initial load, switch to `lastOpened.tabId` (if it's still in `AppSettings.tabs`) and queue a
+  // restore for it — `useTabView`'s own effect applies it once that tab's tree has actually
+  // loaded. Guarded by a ref so this only ever runs once per app session; a stale/deleted tab
+  // silently does nothing (no error, no fallback tab), matching the spec text exactly.
   const startupAutoOpenAttempted = useRef(false);
-  const [pendingStartupOpen, setPendingStartupOpen] = useState<{ tabId: string; memoName: string } | null>(null);
   useEffect(() => {
     if (startupAutoOpenAttempted.current) return;
     if (tabsState.loading || settingsState.loading) return;
@@ -134,38 +226,23 @@ function App() {
     if (!lastOpened) return;
     if (!tabsState.tabs.some((t) => t.id === lastOpened.tabId)) return;
     if (tabsState.activeTabId !== lastOpened.tabId) tabsState.selectTab(lastOpened.tabId);
-    setPendingStartupOpen(lastOpened);
-  }, [tabsState.loading, settingsState.loading, tabsState.tabs, tabsState.activeTabId, settingsState.settings, tabsState]);
-  useEffect(() => {
-    if (!pendingStartupOpen) return;
-    if (treeState.activeTabId !== pendingStartupOpen.tabId) return;
-    // Wait for that tab's tree fetch (and §3.5 reconciliation) to actually finish before deciding
-    // — unlike the search/link-focus effects above, this must reach a definitive one-shot
-    // decision (found -> open, not found -> do nothing) rather than keep waiting indefinitely.
-    if (treeState.loading) return;
-    if (treeState.flatOrder.includes(pendingStartupOpen.memoName)) {
-      treeState.focusOnMemo(pendingStartupOpen.memoName);
-    }
-    setPendingStartupOpen(null);
-  }, [pendingStartupOpen, treeState.activeTabId, treeState.loading, treeState.flatOrder, treeState.focusOnMemo]);
+    tabView.requestRestore(lastOpened.tabId);
+  }, [tabsState.loading, settingsState.loading, tabsState.tabs, tabsState.activeTabId, settingsState.settings, tabsState, tabView]);
 
-  // Persist `AppSettings.lastOpened` whenever a memo becomes the open one (`[spec §2.6]`) — covers
-  // every "open memo" path (row click, arrow-nav preview, `focusOnMemo`, including the startup
-  // auto-open above) since they all funnel through `treeState.openMemoName`. No debounce needed
-  // here (unlike the splitter-drag/toolbar-position patches elsewhere in this file) since this
-  // isn't edited continuously; guarded against redundant writes (`[detailed-spec §5.6]`'s "don't
-  // write if no change") and against firing before settings have loaded. Deliberately does NOT
-  // write when a memo closes (`openMemoName` -> `null`, e.g. tab switch/lock) — `lastOpened` tracks
-  // the *last* opened memo, not the currently-open one, which is exactly what makes it useful for
-  // the startup effect above.
+  // Persist `AppSettings.lastOpened.tabId` — "which tab was last active," narrowed from the old
+  // `{ tabId, memoName }` shape (which memo was open now lives per-tab, `PLAN.md` §1, written via
+  // `state/useTree.ts`'s own `persistLastViewed` at the memo-open call sites). Same trigger/dedup
+  // this app used before this feature: whenever a memo becomes the open one (row click, arrow-nav
+  // preview, `focusOnMemo`) — not on every plain tab switch with nothing open, a pre-existing scope
+  // limit this feature does not change.
   useEffect(() => {
     if (settingsState.loading || !settingsState.settings) return;
     const tabId = treeState.activeTabId;
     const memoName = treeState.openMemoName;
     if (!tabId || !memoName) return;
     const current = settingsState.settings.lastOpened;
-    if (current && current.tabId === tabId && current.memoName === memoName) return;
-    void settingsState.patch({ lastOpened: { tabId, memoName } });
+    if (current && current.tabId === tabId) return;
+    void settingsState.patch({ lastOpened: { tabId } });
   }, [treeState.activeTabId, treeState.openMemoName, settingsState.settings, settingsState.loading, settingsState.patch]);
 
   // Tree pane width/side/hide-toggle (`docs/plans/window-operation/PLAN.md` §2). `previewTreeWidth`
@@ -194,7 +271,7 @@ function App() {
       className={`app-tree-pane app-tree-pane-${treeSide}${treeCollapsed ? " app-tree-pane-collapsed" : ""}`}
       style={{ width: treeCollapsed ? 0 : treeWidth }}
     >
-      <TreeView tree={treeState} tabLock={tabLockState} appSettings={settingsState.settings} />
+      <TreeView tree={treeState} tabLock={tabLockState} appSettings={settingsState.settings} toast={toastState} />
     </div>
   );
   const splitter = (
@@ -209,41 +286,49 @@ function App() {
   );
 
   return (
-    <div className="app-shell">
-      <TabBar
-        tabsState={tabsState}
-        tabLockState={tabLockState}
-        beforeLockTab={beforeLockTab}
-        settings={settingsState.settings}
-        patchSettings={settingsState.patch}
-        applyFetched={settingsState.applyFetched}
-        onOpenSearchHit={openSearchHit}
-      />
-      <div className="app-content">
-        {!tabsState.loading && tabsState.tabs.length === 0 ? (
-          <EmptyState tabsState={tabsState} />
-        ) : (
-          <>
-            {treeSide === "left" && treePane}
-            {treeSide === "left" && splitter}
-            <EditorPane
-              ref={editorRef}
-              tabId={treeState.activeTabId}
-              memoName={treeState.openMemoName}
-              focusEditorToken={treeState.focusEditorToken}
-              appSettings={settingsState.settings}
-              memoEditorOverride={openMemoOverride}
-              isMemoEditLocked={openMemoLocked}
-              setEditorOverride={treeState.setEditorOverride}
-              patchSettings={settingsState.patch}
-              onOpenMemoLink={openLinkTarget}
-            />
-            {treeSide === "right" && splitter}
-            {treeSide === "right" && treePane}
-          </>
-        )}
+    <I18nProvider settings={settingsState.settings}>
+      <div className="app-shell">
+        <TabBar
+          tabsState={{ ...tabsState, selectTab: selectTabAndRestore }}
+          tabLockState={tabLockState}
+          beforeLockTab={beforeLockTab}
+          settings={settingsState.settings}
+          patchSettings={settingsState.patch}
+          applyFetched={settingsState.applyFetched}
+          onOpenSearchHit={openSearchHit}
+          onOpenQuickOpenHit={openQuickOpenHit}
+          onActiveTabDoubleClick={() => editorRef.current?.toggleJumpToStart()}
+        />
+        <Toast toasts={toastState.toasts} onDismiss={toastState.dismissToast} />
+        <div className="app-content">
+          {!tabsState.loading && tabsState.tabs.length === 0 ? (
+            <EmptyState tabsState={tabsState} />
+          ) : (
+            <>
+              {treeSide === "left" && treePane}
+              {treeSide === "left" && splitter}
+              <EditorPane
+                ref={editorRef}
+                tabId={treeState.activeTabId}
+                memoName={treeState.openMemoName}
+                focusEditorToken={treeState.focusEditorToken}
+                appSettings={settingsState.settings}
+                memoEditorOverride={openMemoOverride}
+                isMemoEditLocked={openMemoLocked}
+                setEditorOverride={treeState.setEditorOverride}
+                patchSettings={settingsState.patch}
+                onOpenMemoLink={openLinkTarget}
+                pendingAnchorSlug={pendingAnchorSlugRef.current}
+                pendingAnchorToken={pendingAnchorTokenRef.current}
+                toast={toastState}
+              />
+              {treeSide === "right" && splitter}
+              {treeSide === "right" && treePane}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </I18nProvider>
   );
 }
 

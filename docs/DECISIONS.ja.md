@@ -29,7 +29,7 @@
 
 ## 旧リポジトリの参照先（実装時に使う）
 
-実装ロジックを確認したい場合は旧リポジトリ（`c:\Users\m9112\vscode2\TabTreeNote`、参照専用・編集禁止）の該当ファイルをReadで参照し、必要なコードを本リポジトリへコピーしてから改修する。
+実装ロジックを確認したい場合は旧リポジトリ（`%USERPROFILE%\vscode2\TabTreeNote`、参照専用・編集禁止）の該当ファイルをReadで参照し、必要なコードを本リポジトリへコピーしてから改修する。
 
 - `spec.md`（本リポジトリにも同じ内容をコピー済み。旧リポジトリのDESIGN.md/DESIGNv3.md/00-core-principles.md/data-model.md/post-M7-changes.md/post-M10-changes.md/issue.mdを統合した要件ベースライン）
 - `src/main/crypto/*`（暗号化・ノードロック実装。タブロックの実装時の参考になる）

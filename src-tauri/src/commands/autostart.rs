@@ -14,6 +14,8 @@
 //! the registry entry outside the app). Treated the same as
 //! `TabSettingsEntry.locked`'s "display cache only" caveat.
 
+use std::sync::Arc;
+
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -29,7 +31,7 @@ pub fn autostart_set_enabled(
     app: AppHandle,
     enabled: bool,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
 ) -> AppResult<AppSettings> {
     let manager = app.autolaunch();
     let os_result = if enabled { manager.enable() } else { manager.disable() };

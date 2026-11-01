@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer};
 
 use super::app_settings::{
     AppSettings, AppearanceSettings, AutosaveSettings, AutostartSettings, EditorDefaults, EncodingSettings,
-    EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, PaneMode, PreviewSettings, TabSettingsEntry,
+    EolPolicy, EolSettings, LastOpened, LinkSettings, OpenTrigger, PaneMode, PreviewSettings, SplitOrientation, TabSettingsEntry,
     Theme, ToolbarPosition, TreeSide, WindowSettings, WrapMode,
 };
 
@@ -62,6 +62,17 @@ pub struct AppSettingsPatch {
     pub shortcuts: Option<HashMap<String, String>>,
     #[serde(default)]
     pub autostart: Option<AutostartSettingsPatch>,
+    /// Additive field, `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1/§8. Nullable ("set to
+    /// disabled" vs "leave unchanged"), same `double_option` treatment as `last_opened`/
+    /// `toolbar_position`/`accent_color` above — a patch that never mentions this key must leave
+    /// the stored value untouched, while a patch carrying an explicit `null` (the Settings UI's
+    /// "無効" choice) must clear it to disabled.
+    #[serde(default, deserialize_with = "double_option")]
+    pub tab_lock_auto_relock_minutes: Option<Option<u32>>,
+    /// Additive field, `docs/plans/v1.2.0/i18n/PLAN.md` §2. Nullable ("reset to auto-detect" vs
+    /// "leave unchanged"), same `double_option` treatment as `tab_lock_auto_relock_minutes` above.
+    #[serde(default, deserialize_with = "double_option")]
+    pub language: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -127,6 +138,9 @@ pub struct EditorDefaultsPatch {
     /// Additive field, `docs/plans/markdown/markdown-preview/PLAN.md` §3.
     #[serde(default)]
     pub pane_mode: Option<PaneMode>,
+    /// GitHub issue #295。
+    #[serde(default)]
+    pub split_orientation: Option<SplitOrientation>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -221,6 +235,12 @@ impl AppSettingsPatch {
         if let Some(autostart_patch) = self.autostart {
             autostart_patch.apply_to(&mut current.autostart);
         }
+        if let Some(v) = self.tab_lock_auto_relock_minutes {
+            current.tab_lock_auto_relock_minutes = v;
+        }
+        if let Some(v) = self.language {
+            current.language = v;
+        }
     }
 }
 
@@ -304,6 +324,9 @@ impl EditorDefaultsPatch {
         if let Some(v) = self.pane_mode {
             current.pane_mode = v;
         }
+        if let Some(v) = self.split_orientation {
+            current.split_orientation = v;
+        }
     }
 }
 
@@ -379,10 +402,7 @@ mod tests {
     #[test]
     fn double_option_distinguishes_absent_from_explicit_null() {
         let mut current = AppSettings::default();
-        current.last_opened = Some(LastOpened {
-            tab_id: "t1".into(),
-            memo_name: "Shopping list".into(),
-        });
+        current.last_opened = Some(LastOpened { tab_id: "t1".into() });
 
         // Key absent -> leave unchanged.
         let patch: AppSettingsPatch = serde_json::from_str("{}").unwrap();
@@ -393,6 +413,17 @@ mod tests {
         let patch: AppSettingsPatch = serde_json::from_str(r#"{"lastOpened":null}"#).unwrap();
         patch.apply_to(&mut current);
         assert!(current.last_opened.is_none());
+    }
+
+    /// `docs/plans/v1.1.0/tab-memo-memory/PLAN.md` §1: a pre-upgrade `lastOpened` patch carrying
+    /// the now-removed `memoName` field must still parse (unknown-field tolerance is this struct's
+    /// default), with just `tabId` applied.
+    #[test]
+    fn last_opened_patch_tolerates_a_pre_upgrade_memo_name_field() {
+        let mut current = AppSettings::default();
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"lastOpened":{"tabId":"t1","memoName":"Shopping list"}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.last_opened, Some(LastOpened { tab_id: "t1".into() }));
     }
 
     #[test]
@@ -414,6 +445,17 @@ mod tests {
         // Untouched sibling `EditorDefaults` fields must survive the merge.
         assert_eq!(current.editor_defaults.wrap, WrapMode::Window);
         assert_eq!(current.editor_defaults.font_size, 14);
+    }
+
+    #[test]
+    fn split_orientation_defaults_to_horizontal_and_patch_merges() {
+        // GitHub issue #295 — 既定は左右、パッチで上下に切り替わり他フィールドは不変。
+        let mut current = AppSettings::default();
+        assert_eq!(current.editor_defaults.split_orientation, SplitOrientation::Horizontal);
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"editorDefaults":{"splitOrientation":"vertical"}}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.editor_defaults.split_orientation, SplitOrientation::Vertical);
+        assert_eq!(current.editor_defaults.pane_mode, PaneMode::Edit);
     }
 
     #[test]
@@ -446,6 +488,51 @@ mod tests {
         patch.apply_to(&mut current);
         assert!(current.appearance.accent_color.is_none());
         assert_eq!(current.appearance.ui_font_family.as_deref(), Some("Meiryo"), "untouched sibling field must survive the merge");
+    }
+
+    /// `docs/plans/v1.1.0/tab-lock-auto-relock/PLAN.md` §1: the field-absent-from-JSON case (a
+    /// pre-upgrade `settings.json`) must resolve to the documented default `15`, not to disabled —
+    /// distinct from an explicit `null`, which DOES mean disabled (next test).
+    #[test]
+    fn missing_auto_relock_field_in_a_pre_existing_settings_json_falls_back_to_the_documented_default() {
+        let json = serde_json::to_value(AppSettings::default()).unwrap();
+        let mut without_field = json.as_object().unwrap().clone();
+        without_field.remove("tabLockAutoRelockMinutes");
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(without_field)).unwrap();
+        assert_eq!(parsed.tab_lock_auto_relock_minutes, Some(15));
+    }
+
+    /// An explicit `null` already written to `settings.json` (e.g. by a prior "無効" selection)
+    /// must deserialize as disabled, not silently fall back to the default like the absent-key case
+    /// above — the two must stay distinguishable.
+    #[test]
+    fn explicit_null_auto_relock_field_deserializes_as_disabled() {
+        let json = serde_json::to_value(AppSettings::default()).unwrap();
+        let mut with_null = json.as_object().unwrap().clone();
+        with_null.insert("tabLockAutoRelockMinutes".to_string(), serde_json::Value::Null);
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(with_null)).unwrap();
+        assert_eq!(parsed.tab_lock_auto_relock_minutes, None);
+    }
+
+    #[test]
+    fn auto_relock_patch_distinguishes_absent_from_explicit_null_and_a_value() {
+        let mut current = AppSettings::default();
+        assert_eq!(current.tab_lock_auto_relock_minutes, Some(15));
+
+        // Key absent -> leave unchanged.
+        let patch: AppSettingsPatch = serde_json::from_str("{}").unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.tab_lock_auto_relock_minutes, Some(15));
+
+        // Key present with a value -> set it.
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"tabLockAutoRelockMinutes":30}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.tab_lock_auto_relock_minutes, Some(30));
+
+        // Key present with explicit null -> disabled.
+        let patch: AppSettingsPatch = serde_json::from_str(r#"{"tabLockAutoRelockMinutes":null}"#).unwrap();
+        patch.apply_to(&mut current);
+        assert_eq!(current.tab_lock_auto_relock_minutes, None);
     }
 
     #[test]

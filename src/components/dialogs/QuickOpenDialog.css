@@ -1,0 +1,82 @@
+/* Cross-Tab Quick Open overlay (`docs/plans/v1.1.0/quick-open/PLAN.md` §3). */
+
+.ttn-quick-open-dialog {
+  min-width: 420px;
+}
+
+.ttn-quick-open-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: calc(14px * var(--ui-font-scale));
+  background: var(--ttn-bg);
+  color: var(--ttn-fg);
+  border: 1px solid var(--ttn-border);
+}
+
+.ttn-quick-open-results {
+  margin-top: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ttn-quick-open-status {
+  color: var(--ttn-fg-muted);
+  font-size: calc(12px * var(--ui-font-scale));
+  margin: 8px 0 0;
+}
+
+.ttn-quick-open-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: calc(13px * var(--ui-font-scale));
+}
+
+.ttn-quick-open-row:hover {
+  background: var(--ttn-bg-hover-surface);
+}
+
+.ttn-quick-open-row-highlighted {
+  background: var(--ttn-bg-hover-surface);
+  outline: 1px solid var(--ttn-accent);
+}
+
+.ttn-quick-open-row-memo {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ttn-quick-open-row-tab {
+  color: var(--ttn-fg-muted);
+  font-size: calc(11px * var(--ui-font-scale));
+}
+
+.ttn-quick-open-star {
+  border: none;
+  background: none;
+  color: var(--ttn-fg-subtle);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: calc(14px * var(--ui-font-scale));
+  line-height: 1;
+}
+
+.ttn-quick-open-star-active {
+  color: #d4a017;
+}
+
+/* Read-only favorites-mode star (`docs/plans/v1.1.0/favorites/PLAN.md` §5) — a `<span>`, not a
+   `<button>`, so it has no default pointer cursor; explicit override in case a future rule changes
+   that default, so it never looks like a click target here. */
+.ttn-quick-open-star[aria-hidden="true"] {
+  cursor: default;
+}

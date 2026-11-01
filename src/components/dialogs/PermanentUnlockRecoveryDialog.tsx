@@ -16,6 +16,7 @@ import { RecoveryDialog } from "./RecoveryDialog";
 import { errorMessageFor } from "../../shared/errorMessages";
 import type { UseTabLockResult } from "../../state/useTabLock";
 import type { PermanentUnlockRecoveryStatus } from "../../shared/models";
+import { useT } from "../../i18n";
 
 export interface PermanentUnlockRecoveryDialogProps {
   tabId: string;
@@ -23,6 +24,7 @@ export interface PermanentUnlockRecoveryDialogProps {
 }
 
 export function PermanentUnlockRecoveryDialog({ tabId, tabLock }: PermanentUnlockRecoveryDialogProps) {
+  const t = useT();
   const [status, setStatus] = useState<PermanentUnlockRecoveryStatus | null>(null);
   /** The password verified during the `passwordRequired` stage, if this session ever went
    * through one — cached so the final `classified` stage's Finish/Restore calls reuse it instead
@@ -46,22 +48,22 @@ export function PermanentUnlockRecoveryDialog({ tabId, tabLock }: PermanentUnloc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId]);
 
-  const errorMessage = tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode) : null;
+  const errorMessage = tabLock.lastErrorCode ? errorMessageFor(tabLock.lastErrorCode, t) : null;
 
   if (!status) return null;
 
   if (status.kind === "alreadyFinished") {
     return (
       <Dialog
-        title="完全ロック解除の復旧"
+        title={t("permanentUnlockRecovery.title")}
         onClose={() => tabLock.clearLastError()}
         footer={
           <button type="button" disabled={tabLock.busy} onClick={() => void tabLock.finishPermanentUnlockRecovery(tabId, undefined)}>
-            {tabLock.busy ? "処理中..." : "ロック解除を完了する"}
+            {tabLock.busy ? t("common.processing") : t("permanentUnlockRecovery.finish")}
           </button>
         }
       >
-        <p className="ttn-recovery-summary">前回の完全ロック解除処理はすでに完了しています。仕上げの処理を行ってください。</p>
+        <p className="ttn-recovery-summary">{t("permanentUnlockRecovery.alreadyFinishedMessage")}</p>
         {errorMessage && <div className="ttn-dialog-error">{errorMessage}</div>}
       </Dialog>
     );
@@ -70,7 +72,7 @@ export function PermanentUnlockRecoveryDialog({ tabId, tabLock }: PermanentUnloc
   if (status.kind === "passwordRequired") {
     return (
       <Dialog
-        title="完全ロック解除の復旧"
+        title={t("permanentUnlockRecovery.title")}
         onClose={() => tabLock.clearLastError()}
         footer={
           <button
@@ -86,13 +88,13 @@ export function PermanentUnlockRecoveryDialog({ tabId, tabLock }: PermanentUnloc
               });
             }}
           >
-            {tabLock.busy ? "処理中..." : "続行"}
+            {tabLock.busy ? t("common.processing") : t("permanentUnlockRecovery.continue")}
           </button>
         }
       >
-        <p className="ttn-recovery-summary">前回のこのタブの完全ロック解除処理が完了しませんでした。続行するにはパスワードを入力してください。</p>
+        <p className="ttn-recovery-summary">{t("permanentUnlockRecovery.passwordRequiredMessage")}</p>
         <label className="ttn-dialog-field">
-          <span>パスワード</span>
+          <span>{t("passwordDialog.password")}</span>
           <input type="password" autoFocus value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} />
         </label>
         {errorMessage && <div className="ttn-dialog-error">{errorMessage}</div>}

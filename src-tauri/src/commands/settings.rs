@@ -1,6 +1,8 @@
 //! `settings_get` / `settings_set` Tauri commands
 //! (`docs/plans/project-architecture/PLAN.md` §4; `docs/plans/persistence-fs/PLAN.md` §6).
 
+use std::sync::Arc;
+
 use tauri::{AppHandle, State};
 
 use crate::commands::emit_settings_recovery_event;
@@ -11,7 +13,7 @@ use crate::model::result::{AppResult, ErrorCode};
 use crate::settings::app_settings_store::AppSettingsStore;
 
 #[tauri::command]
-pub fn settings_get(app: AppHandle, store: State<AppSettingsStore>, registry: State<SelfWriteRegistry>) -> AppResult<AppSettings> {
+pub fn settings_get(app: AppHandle, store: State<AppSettingsStore>, registry: State<Arc<SelfWriteRegistry>>) -> AppResult<AppSettings> {
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
     AppResult::ok(settings)
@@ -22,7 +24,7 @@ pub fn settings_set(
     app: AppHandle,
     patch: AppSettingsPatch,
     store: State<AppSettingsStore>,
-    registry: State<SelfWriteRegistry>,
+    registry: State<Arc<SelfWriteRegistry>>,
 ) -> AppResult<AppSettings> {
     match store.patch(patch, &registry) {
         Ok((settings, outcome)) => {

@@ -16,7 +16,7 @@
 import type { EditorView } from "@codemirror/view";
 import { toggleCheckboxRange } from "../checkboxClick";
 import { resolveAndOpenMemoLink, linkClickMatchesTrigger, FILE_PATH_RE } from "../links";
-import { linkOpenExternal } from "../../ipc/link";
+import { openExternalWithConfirm } from "../../ipc/link";
 import type { AppSettings, ExternalLinkKind } from "../../shared/models";
 
 export interface PreviewInteractionsConfig {
@@ -32,8 +32,10 @@ export interface PreviewInteractionsConfig {
   readOnly: boolean;
   openTrigger: AppSettings["links"]["openTrigger"];
   confirmBeforeOpen: boolean;
-  requestExternalConfirm: (kind: ExternalLinkKind, value: string) => Promise<boolean>;
-  onOpenMemoLink: (tabId: string, memoName: string | null) => void;
+  requestExternalConfirm: (kind: ExternalLinkKind, value: string, executable?: boolean) => Promise<boolean>;
+  /** `anchorSlug` is the parsed `#slug` half of a `memo:...#slug` link (`docs/plans/v1.2.0/
+   * cross-tab-anchor-links/PLAN.md` §2), `null` when the link carried no anchor. */
+  onOpenMemoLink: (tabId: string, memoName: string | null, anchorSlug: string | null) => void;
   /** Click-to-enlarge lightbox (issue #83, preview pane only — live-view's own image click
    * behavior, #80, is untouched by this). Called with the clicked `<img>`'s current `src`, which by
    * click time is already the resolved `blob:` URL from `getOrLoadImage`'s cache (`PreviewPane.tsx`'s
@@ -77,12 +79,33 @@ function classifyExternalLink(href: string): { kind: ExternalLinkKind; value: st
   return { kind: "url", value: href };
 }
 
-async function openExternal(kind: ExternalLinkKind, value: string, config: PreviewInteractionsConfig): Promise<void> {
-  if (config.confirmBeforeOpen) {
-    const confirmed = await config.requestExternalConfirm(kind, value);
-    if (!confirmed) return;
-  }
-  await linkOpenExternal(kind, value, config.tabId ?? undefined);
+/** markdown-it が非ASCII文字をパーセントエンコードしたhrefを元の表記へ戻す。`%20`等のASCII分は書かれたまま残す。 */
+function decodeNonAsciiPercent(href: string): string {
+  return href.replace(/(?:%[89A-Fa-f][0-9A-Fa-f])+/g, (m) => {
+    try {
+      return decodeURIComponent(m);
+    } catch {
+      return m;
+    }
+  });
+}
+
+/** 右クリックされた要素がコピー対象リンク(URL/メール/ファイルパス)のアンカー内なら、そのリンク先文字列を返す。
+ * `memo:` と `#見出し` リンク、アンカー外は null。 */
+export function getPreviewLinkCopyValue(target: EventTarget | null, container: HTMLElement | null): string | null {
+  const anchor = (target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
+  if (!anchor || (container && !container.contains(anchor))) return null;
+  const href = anchor.getAttribute("href") ?? "";
+  if (!href || href.startsWith("memo:") || href.startsWith("#")) return null;
+  // 非 ASCII を含む URL は、記述どおりの文字列(`markdownIt.ts` が `data-source-url` に載せる)を優先する。
+  // href は markdown-it がホスト名を punycode 化・パスを %XX 化した値なので、そこからは復元できない(#299/#300)
+  const sourceUrl = anchor.dataset.sourceUrl;
+  if (sourceUrl) return classifyExternalLink(sourceUrl).value;
+  return decodeNonAsciiPercent(classifyExternalLink(href).value);
+}
+
+async function openExternal(kind: ExternalLinkKind, value: string, config: PreviewInteractionsConfig, extendedSearchText?: string): Promise<void> {
+  await openExternalWithConfirm(kind, value, { currentTabId: config.tabId ?? undefined, extendedSearchText, confirmBeforeOpen: config.confirmBeforeOpen, requestExternalConfirm: config.requestExternalConfirm });
 }
 
 function handleAnchorClick(e: MouseEvent, anchor: HTMLAnchorElement, container: HTMLElement, config: PreviewInteractionsConfig): void {
@@ -91,11 +114,27 @@ function handleAnchorClick(e: MouseEvent, anchor: HTMLAnchorElement, container: 
   e.preventDefault();
   const href = anchor.getAttribute("href") ?? "";
   if (href.startsWith("memo:")) {
-    void resolveAndOpenMemoLink(config.tabId, href, config.onOpenMemoLink);
+    // markdown-it's `normalizeLink` percent-encodes non-ASCII hrefs (mdurl); decode before resolving
+    // so the memo-name portion matches the raw (unencoded) tab/memo names. A malformed percent-sequence
+    // degrades to a silent no-op, matching this app's "unresolved link = do nothing" convention.
+    let decodedHref: string;
+    try {
+      decodedHref = decodeURIComponent(href);
+    } catch {
+      return;
+    }
+    void resolveAndOpenMemoLink(config.tabId, decodedHref, config.onOpenMemoLink);
     return;
   }
   if (href.startsWith("#")) {
-    const slug = href.slice(1);
+    // Same encoding mismatch as the `memo:` branch above: the heading `id` attribute is set from
+    // the raw (unencoded) slug, but this href was percent-encoded by markdown-it's `normalizeLink`.
+    let slug: string;
+    try {
+      slug = decodeURIComponent(href.slice(1));
+    } catch {
+      return;
+    }
     // Scoped to the preview's own container (not `document.getElementById`), matching
     // RENDERING.md §7's "within the preview pane's own internal scroll container" — avoids
     // colliding with an unrelated same-id element elsewhere in the app.
@@ -105,7 +144,12 @@ function handleAnchorClick(e: MouseEvent, anchor: HTMLAnchorElement, container: 
   }
   if (!linkClickMatchesTrigger(e, config.openTrigger, "click")) return;
   const { kind, value } = classifyExternalLink(href);
-  void openExternal(kind, value, config);
+  // Issue #235: `data-extended-search-text` is only ever set for a `filePath`-shaped bare token
+  // (`markdownIt.ts`'s `bareLinkCoreRule`); undefined for every other anchor shape (a real
+  // `[text](url)`/`[text](memo:...)` link, `linkify`'s own bare URL/email detection), where it's
+  // correctly ignored by `linkOpenExternal`/the backend.
+  const extendedSearchText = kind === "filePath" ? (anchor.dataset.extendedSearchText ?? undefined) : undefined;
+  void openExternal(kind, value, config, extendedSearchText);
 }
 
 /** Attaches one delegated `click` listener to `container`. Returns a cleanup function removing it

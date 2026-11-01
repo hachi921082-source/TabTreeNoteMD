@@ -9,6 +9,17 @@
 // `.ttn-editor-error` banner (the same mechanism already used for save/load failures), rather than
 // introducing a second, parallel notification UI for this one feature.
 //
+// GitHub issue #244's real-OS-drag-and-drop image insert does NOT live here as a CodeMirror
+// `domEventHandlers` extension (an earlier attempt, merged as PR #246, added `dragover`/`drop`
+// HTML5 DOM handlers here — that never fires for a genuine Explorer drag, since Tauri's native
+// drag-drop interception, `tauri.conf.json`'s `dragDropEnabled`, conflicts with the browser's own
+// HTML5 DnD events on Windows; see `TabBar.tsx`'s OS-folder-drop listener and
+// `MarkdownToolbar.tsx`'s slot-reordering for the same documented constraint). The real fix
+// (`components/Editor/EditorPane.tsx`) uses `getCurrentWebview().onDragDropEvent(...)` instead,
+// which hands over real absolute filesystem paths rather than HTML5 `File` objects — so it needs
+// its own bytes-from-path read step (`saveAndInsertDroppedPaths` below) rather than reusing a
+// `domEventHandlers` extension at all.
+//
 // Real image *rendering* (an actual `<img>` in the live-view decoration layer) and the resize-
 // handle interaction that converts `![alt](path)` markup into `<img src width height>`
 // (`image-handling/PLAN.md` §4's second/third bullets) are explicitly NOT implemented here — see
@@ -21,9 +32,55 @@
 // meantime — no regression from before this module's real save/insert logic was wired up.
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
-import { imageSavePasted } from "../ipc/image";
+import { imageReadExternalFile, imageSavePasted } from "../ipc/image";
 import { downscaleImageIfNeeded } from "./imageDownscale";
 import type { ErrorCode } from "../shared/result";
+import { enterFilePicker } from "../shared/filePickerGate";
+
+/** Extensions accepted by both the toolbar's file-picker (`insertImageViaFilePicker`'s `accept`
+ * list below) and the native-OS-drag-drop path (GitHub issue #244) — kept as one shared set so the
+ * two entry points can never silently drift apart on which image types are supported. */
+const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+
+function fileExtensionOf(path: string): string | null {
+  const dot = path.lastIndexOf(".");
+  if (dot === -1 || dot === path.length - 1) return null;
+  return path.slice(dot + 1).toLowerCase();
+}
+
+/** `true` for a path whose extension matches `IMAGE_FILE_EXTENSIONS` — used to filter a native
+ * OS drag-drop's `event.payload.paths` down to image files, silently skipping the rest (GitHub
+ * issue #244: "non-image files are silently ignored", matching the existing OS→tree-pane `.md`-only
+ * import behavior's own quiet-skip treatment, `docs/spec.v1.1.0.md` §1.2). */
+export function isImageFilePath(path: string): boolean {
+  const ext = fileExtensionOf(path);
+  return ext !== null && IMAGE_FILE_EXTENSIONS.has(ext);
+}
+
+/** Best-effort MIME hint derived from a dropped file's extension — native drag-drop paths carry no
+ * MIME type at all (unlike `DataTransferItem`/`File`), so `saveAndInsertImage`'s `mimeHint`
+ * parameter (used for downscale-eligibility and as the backend's format-sniff fallback, see that
+ * function's own doc comment) is reconstructed from the extension instead. `null` for an
+ * unrecognized extension — `saveAndInsertImage`'s downstream callees already treat a `null` hint as
+ * "defer to magic-number sniffing" (`imageDownscale.ts`'s `isDownscaleEligible`,
+ * `commands/image.rs`'s `detect_extension`). */
+function mimeHintFromExtension(path: string): string | null {
+  switch (fileExtensionOf(path)) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "bmp":
+      return "image/bmp";
+    default:
+      return null;
+  }
+}
 
 export interface ImagePasteConfig {
   /** Tab the currently-open memo belongs to; `null` only when no tab is open at all (in which
@@ -52,22 +109,53 @@ async function readFileBytes(file: File): Promise<number[]> {
   return Array.from(new Uint8Array(buffer));
 }
 
-/** Core save-then-insert logic shared by the paste handler and the toolbar's file-picker
- * (`docs/plans/image-handling/PLAN.md` §6 steps 2-4). `insertPos` is captured by the caller
+/** 画像リンク先を Markdown に書ける形にする(GitHub issue #266)。CommonMark は半角スペース・
+ * ASCII 制御文字・対応の取れない丸括弧を含む裸形リンク先を認めない(メモ名 `新 メモ` だと
+ * `![](新 メモ/001.png)` は画像にならない)ため、その場合は山括弧形 `<新 メモ/001.png>` で書く。
+ * それ以外(全角スペースを含む)は裸形のまま。Rust 側 `util::image_link_rewrite::needs_angle_brackets`
+ * と同じ判定。メモ名は Windows のファイル名規則で `<` `>` `\` を含められないためエスケープ不要。 */
+export function toMarkdownImageDestination(path: string): string {
+  let depth = 0;
+  let needsBrackets = false;
+  for (const ch of path) {
+    const code = ch.charCodeAt(0);
+    // 半角スペース・ASCII 制御文字は裸形に書けない
+    if (ch === " " || code < 0x20 || code === 0x7f) {
+      needsBrackets = true;
+      break;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      // 対応の取れない閉じ括弧
+      if (depth === 0) {
+        needsBrackets = true;
+        break;
+      }
+      depth--;
+    }
+  }
+  return needsBrackets || depth !== 0 ? `<${path}>` : path;
+}
+
+/** Core save-then-insert logic shared by the paste handler, the toolbar's file-picker
+ * (`docs/plans/image-handling/PLAN.md` §6 steps 2-4), and the right-click context menu's Paste
+ * item (`textCommands.ts`'s `pasteCommand`, GitHub issue #203 — reused rather than duplicated so
+ * both paste paths save/downscale/insert identically). `insertPos` is captured by the caller
  * *before* the async `image_save_pasted` round-trip (at paste/pick time), matching where the user
  * was actually pointing — not recomputed after the await, since the selection may have moved by
  * then. `![alt](url)` with an empty `alt` (`PLAN.md` §4: "`alt` may be empty... not mandated"). */
-async function saveAndInsertImage(view: EditorView, tabId: string, memoName: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
-  // Downscale oversized source images before saving (GitHub issue #82) — shared by both call
-  // sites below since they both funnel through this function. No-op (returns `bytes` unchanged)
-  // for already-small images, `image/gif`, missing `mimeHint`, or any decode/encode failure.
-  const downscaledBytes = await downscaleImageIfNeeded(bytes, mimeHint);
-  const result = await imageSavePasted(tabId, memoName, downscaledBytes, mimeHint);
+export async function saveAndInsertImage(view: EditorView, tabId: string, memoName: string, insertPos: number, bytes: number[], mimeHint: string | null, onError: (code: ErrorCode) => void): Promise<void> {
+  // Downscale/recompress oversized source images before saving (GitHub issues #82, #259) —
+  // shared by all call sites since they funnel through this function. No-op (returns `bytes`
+  // unchanged) for already-small images, `image/gif`, missing `mimeHint`, or any decode/encode
+  // failure. The effective MIME is passed on because the WebP step (#259) may change the format.
+  const downscaled = await downscaleImageIfNeeded(bytes, mimeHint);
+  const result = await imageSavePasted(tabId, memoName, downscaled.bytes, downscaled.mimeType);
   if (!result.ok) {
     onError(result.error.code);
     return;
   }
-  const markup = `![](${result.value.relativePath})`;
+  const markup = `![](${toMarkdownImageDestination(result.value.relativePath)})`;
   const pos = Math.min(insertPos, view.state.doc.length);
   view.dispatch({
     changes: { from: pos, to: pos, insert: markup },
@@ -76,9 +164,42 @@ async function saveAndInsertImage(view: EditorView, tabId: string, memoName: str
   view.focus();
 }
 
+/** Sequential multi-path save-then-insert for a single native OS drag-drop (GitHub issue #244's
+ * re-fix). Unlike the paste/toolbar-pick paths above, `getCurrentWebview().onDragDropEvent`
+ * (`components/Editor/EditorPane.tsx`) hands over real absolute filesystem paths rather than
+ * `File` objects, so each path's bytes must be fetched from the backend
+ * (`image_read_external_file`) instead of read client-side via `File.arrayBuffer()` — everything
+ * else mirrors the old `saveAndInsertImages`: `saveAndInsertImage` is awaited before starting the
+ * next path (insert position for path N+1 must land right after path N's just-inserted markup,
+ * not the drop point used for every path, which would otherwise overwrite/interleave them out of
+ * drop order), a single space is inserted between consecutive images purely for readability (a
+ * judgment call, not a spec requirement), and a given path's read/save failure (`onError`) does not
+ * abort the remaining paths. */
+export async function saveAndInsertDroppedPaths(view: EditorView, tabId: string, memoName: string, startPos: number, paths: string[], onError: (code: ErrorCode) => void): Promise<void> {
+  let pos = startPos;
+  for (let i = 0; i < paths.length; i++) {
+    const path = paths[i];
+    const result = await imageReadExternalFile(path);
+    if (!result.ok) {
+      onError(result.error.code);
+      continue;
+    }
+    await saveAndInsertImage(view, tabId, memoName, pos, result.value, mimeHintFromExtension(path), onError);
+    pos = view.state.selection.main.from;
+    if (i < paths.length - 1) {
+      view.dispatch({ changes: { from: pos, to: pos, insert: " " }, selection: { anchor: pos + 1 } });
+      pos += 1;
+    }
+  }
+}
+
 /** Paste handler extension — intercepts an image clipboard payload, saves it, and inserts the
  * resulting Markdown. Returns `false` (lets normal text paste proceed) whenever the clipboard has
- * no image item or no tab is open. */
+ * no image item or no tab is open. Native-OS-drag-drop image insert (GitHub issue #244) is
+ * deliberately NOT handled here — see this file's top-of-file comment for why (HTML5 `dragover`/
+ * `drop` DOM events never fire for a genuine Explorer drag under Tauri's native drag-drop
+ * interception); that path lives in `components/Editor/EditorPane.tsx` instead, using
+ * `saveAndInsertDroppedPaths` above. */
 export function imagePasteExtension(config: ImagePasteConfig): Extension {
   return EditorView.domEventHandlers({
     paste(event, view) {
@@ -119,9 +240,13 @@ export function insertImageViaFilePicker(view: EditorView, tabId: string | null,
   // teardown idempotent so whichever fires first (change/cancel/focus) does the removal and the
   // others become no-ops.
   let cleaned = false;
+  // この表示専用の例外終了関数 (#274)。input.click() 直前に設定
+  let exitPicker: (() => void) | null = null;
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
+    // ダイアログ終了(change / cancel / フォーカス復帰のどれでも)でフォーカス喪失再ロックの例外を解除 (#274)
+    exitPicker?.();
     window.removeEventListener("focus", onFocus);
     input.removeEventListener("cancel", onCancel);
     if (input.parentNode) input.parentNode.removeChild(input);
@@ -142,5 +267,8 @@ export function insertImageViaFilePicker(view: EditorView, tabId: string | null,
   input.addEventListener("cancel", onCancel);
   window.addEventListener("focus", onFocus);
   document.body.appendChild(input);
+  // ダイアログ表示中の OS フォーカス喪失で再ロックしないよう例外を有効化 (#274)。
+  // 解除は上の cleanup() が担い、change / cancel / フォーカス復帰のどの経路でも 1 回だけ走る。
+  exitPicker = enterFilePicker();
   input.click();
 }

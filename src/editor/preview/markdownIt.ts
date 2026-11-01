@@ -25,7 +25,19 @@
 import MarkdownIt from "markdown-it";
 import type { MarkdownIt as MarkdownItInstance, RendererRule, StateCore, Token } from "markdown-it";
 import taskLists from "markdown-it-task-lists";
-import { BARE_MEMO_RE, FILE_PATH_RE } from "../links";
+import texmath from "markdown-it-texmath";
+import katex from "katex";
+// Bundled by Vite exactly like every other CSS import in this codebase (`EditorPane.tsx`'s own
+// `import "./Editor.css";` precedent) — never CDN-loaded (`docs/plans/v1.2.0/math-rendering/
+// PLAN.md` §2.4's offline requirement). The stylesheet's own `url(fonts/KaTeX_*.woff2)` references
+// are relative to itself inside `node_modules/katex/dist/`, so Vite resolves and bundles the font
+// files as build assets automatically, the same mechanism it already uses for every other
+// CSS-referenced asset in this project — no extra Vite config needed (verified empirically at
+// implementation time by inspecting `katex.min.css`'s font URLs; PLAN.md's own flagged
+// verification step, "disable network access, confirm formulas still render with correct
+// glyphs/styling," is reviewer-lite's live-test pass, not repeated here).
+import "katex/dist/katex.min.css";
+import { BARE_MEMO_RE, FILE_PATH_RE, correctEmailRange, correctUrlRange, findNonAsciiEmailTokens, findNonAsciiUrlTokens } from "../links";
 
 /** `Token`'s own class is exported as a type-only named export by markdown-it's bundled `.d.mts`
  * (`export { ..., type Token, ... }`) — there is no runtime value to `import` and take `typeof` of.
@@ -43,6 +55,76 @@ const wrapTableOpen: RendererRule = (tokens, idx, options, _env, self) => {
 const wrapTableClose: RendererRule = (tokens, idx, options, _env, self) => {
   return `${self.renderToken(tokens, idx, options)}</div>`;
 };
+
+/** Minimal HTML escaping for the KaTeX-parse-error fallback text below — mirrors `markdown-it-
+ * texmath`'s own internal (unexported) `escapeHTML` helper rather than importing it, since this
+ * app's renderer-rule overrides bypass that package's own rendering path entirely (see
+ * `markdown-it-texmath.d.ts`'s header comment). */
+function escapeHtmlText(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Renders one `$...$`/`$$...$$` formula body to KaTeX HTML (`PLAN.md` §2.1/§2.2) — `output: "html"`
+ * only (no parallel MathML tree, keeping the DOMPurify allowlist surface area to exactly what
+ * `output: "html"` can produce, verified empirically against `previewRenderer.ts`'s allowlist at
+ * implementation time: only `<span>`/`<svg>`/`<path>`, no `<math>`/MathML tag names). `throwOnError:
+ * false` is KaTeX's own graceful-degradation setting — invalid LaTeX renders as inline error text
+ * (`.katex-error`) instead of throwing, so one malformed formula can't take down the whole
+ * `md.render()` call; the `try`/`catch` below is a second, defense-in-depth layer for a genuinely
+ * unexpected engine-level failure, mirroring `markdown-it-texmath`'s own `texmath.render` try/catch
+ * pattern (not reused directly — see `markdown-it-texmath.d.ts`'s header comment on why this app's
+ * renderer rules bypass that helper). */
+function renderMathToHtml(tex: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(tex, { output: "html", displayMode, throwOnError: false });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `<span class="katex-error" title="${escapeHtmlText(message)}">${escapeHtmlText(tex)}</span>`;
+  }
+}
+
+/** Wraps a rendered `$$...$$` block formula in the exact same horizontal-scroll container the wide-
+ * table rule above uses (`PLAN.md` §2.3) — `Editor.css` pairs `.ttn-preview-math-wrap` with
+ * `.ttn-preview-table-wrap` on one shared `overflow-x: auto` declaration rather than duplicating it.
+ * `data-source-line` is read back off the token rather than recomputed: `previewRenderer.ts`'s own
+ * pre-render pass already calls `token.attrSet("data-source-line", ...)` for every top-level token
+ * with a non-null `.map` (block-math tokens included — `markdown-it-texmath`'s block rule sets
+ * `token.map` the same way every other markdown-it block rule does, `PLAN.md` §2.1's own
+ * requirement), so this rule only needs to read it back, exactly like `wrapTableOpen`/`wrapTableClose`
+ * above implicitly inherit it via `self.renderToken`.
+ *
+ * Deliberately identical for both the plain `$$...$$` block form and the `dollars` preset's
+ * `math_block_eqno` variant (`$$...$$ (1)`-shaped trailing-equation-number annotation, an
+ * out-of-scope Pandoc-style shorthand `PLAN.md` never mentions) — the parenthesized annotation text
+ * is simply not echoed into the rendered formula in that edge case rather than adding a new
+ * "equation numbering" UI affordance not called for by the spec; the raw Markdown source itself is
+ * untouched either way. */
+function wrapBlockMath(token: Token): string {
+  const sourceLine = token.attrGet("data-source-line");
+  const lineAttr = sourceLine != null ? ` data-source-line="${sourceLine}"` : "";
+  return `<div class="ttn-preview-math-wrap"${lineAttr}>${renderMathToHtml(token.content, true)}</div>`;
+}
+
+/** markdown-it's CommonMark-mandated link/image URL normalization (via its bundled `mdurl`
+ * encoder) percent-encodes any non-ASCII byte in `![alt](url)`'s `url` — e.g. `![](きい/001.png)`
+ * renders `src="%E3%81%8D%E3%81%84/001.png"`, verified empirically against markdown-it 15.0.0
+ * (GitHub issue #248). Every downstream reader of `data-relative-src`
+ * (`PreviewPane.tsx`'s image-resolution effect, `pdfExport.ts`'s PDF-export image pass) treats it
+ * as a literal relative filesystem path, not a URL, so that encoding must be undone once, here at
+ * the single point markdown-it's output is first consumed — not duplicated at every read site.
+ * `decodeURIComponent` throws on a malformed escape (e.g. a stray `%` that was never meant as one);
+ * `mdurl`'s own encoder only ever emits well-formed `%XX` escapes for what IT encoded, so decoding
+ * markdown-it's own output back is safe in the normal case, but a user could still directly type a
+ * `%XX`-shaped literal substring into `![](literal%20path)` source — falls back to the raw
+ * (already-correct, in that case) string rather than letting a decode failure crash image
+ * rendering. */
+function decodeMarkdownItImageSrc(src: string): string {
+  try {
+    return decodeURIComponent(src);
+  } catch {
+    return src;
+  }
+}
 
 /** Mirrors markdown-it's own built-in `image` render rule (which flattens `alt` to plain text per
  * CommonMark's special alt-text handling) but additionally renames `src` to `data-relative-src` —
@@ -64,9 +146,9 @@ const renderImageWithDeferredSrc: RendererRule = (tokens, idx, options, env, sel
   if (altIdx >= 0 && token.attrs) token.attrs[altIdx][1] = self.renderInlineAsText(token.children ?? [], options, env);
   const srcIdx = token.attrIndex("src");
   if (srcIdx >= 0 && token.attrs) {
-    const src = token.attrs[srcIdx][1];
+    const src = String(token.attrs[srcIdx][1]);
     token.attrs.splice(srcIdx, 1);
-    token.attrSet("data-relative-src", src);
+    token.attrSet("data-relative-src", decodeMarkdownItImageSrc(src));
   }
   return self.renderToken(tokens, idx, options);
 };
@@ -75,6 +157,15 @@ const renderImageWithDeferredSrc: RendererRule = (tokens, idx, options, env, sel
  * `link_open`/text/`link_close` triple carrying `href="<the matched token>"`. Used for the two bare
  * token shapes `@lezer/markdown`'s GFM extension does NOT recognize (`links.ts`'s own header
  * comment) — `memo:...` and bare file paths.
+ *
+ * `extendedSearchTextAttr` (issue #235, file-path matches only — `bareLinkCoreRule` passes `true`
+ * only for its `FILE_PATH_RE` call): also sets `data-extended-search-text` to the rest of `tok.
+ * content` from the match's start onward. markdown-it splits a multi-line paragraph's inline
+ * content into one "text" token per source line (a "softbreak" token sits between them), so this
+ * is exactly "rest of the source line, from the match's start to end-of-line" — no separate line
+ * lookup needed. `previewInteractions.ts`'s click handler reads it back to widen the file-open
+ * search past the regex match's own truncated extent, the same way `links.ts`'s live-view
+ * click handler does from `EditorView.state.doc`.
  *
  * Implemented as a `core.ruler` post-processing pass over already-tokenized "text" tokens
  * (mirroring markdown-it's own built-in `linkify` core rule — see `lib/rules_core/linkify.js`),
@@ -89,7 +180,7 @@ const renderImageWithDeferredSrc: RendererRule = (tokens, idx, options, env, sel
  * "see memo:Foo" — `text` claims "see memo" as one run before any bare-token rule ever gets a
  * chance at the "memo:" starting position). This is exactly the same reason markdown-it's own
  * bare-URL autolinking (`linkify: true`) is *not* implemented as an inline-position rule either. */
-function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCtor: TokenConstructor): Token[] {
+function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCtor: TokenConstructor, extendedSearchTextAttr: boolean): Token[] {
   let sawMatch = false;
   const out: Token[] = [];
   let linkDepth = 0;
@@ -115,6 +206,7 @@ function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCto
       }
       const open = new TokenCtor("link_open", "a", 1);
       open.attrSet("href", m[0]);
+      if (extendedSearchTextAttr) open.attrSet("data-extended-search-text", tok.content.slice(m.index));
       pieces.push(open);
       const inner = new TokenCtor("text", "", 0);
       inner.content = m[0];
@@ -136,14 +228,29 @@ function splitTextTokensByBareTokenRegex(children: Token[], re: RegExp, TokenCto
   return sawMatch ? out : children;
 }
 
-function bareLinkCoreRule(state: StateCore): void {
-  for (const blockToken of state.tokens) {
-    if (blockToken.type !== "inline" || !blockToken.children) continue;
-    let children = blockToken.children;
-    children = splitTextTokensByBareTokenRegex(children, BARE_MEMO_RE, state.Token);
-    children = splitTextTokensByBareTokenRegex(children, FILE_PATH_RE, state.Token);
-    blockToken.children = children;
+/** 非 ASCII 文字を含む URL の記述どおりの文字列を、そのアンカーの `data-source-url` に載せる(#299/#300)。
+ * markdown-it の `normalizeLink` はホスト名を punycode 化・パスを `%XX` 化した href を作るため、
+ * 「リンクをコピー」(`previewInteractions.ts`)は href からは記述どおりの URL を復元できない。
+ * `rawUrlByHref` は `createPreviewMarkdownIt` が `normalizeLink` をラップして記録した「正規化後 → 記述どおり」の対応。 */
+function annotateSourceUrls(children: Token[], rawUrlByHref: Map<string, string>): void {
+  for (const tok of children) {
+    if (tok.type !== "link_open") continue;
+    const raw = rawUrlByHref.get(String(tok.attrGet("href") ?? ""));
+    if (raw) tok.attrSet("data-source-url", raw);
   }
+}
+
+function makeBareLinkCoreRule(rawUrlByHref: Map<string, string>): (state: StateCore) => void {
+  return (state) => {
+    for (const blockToken of state.tokens) {
+      if (blockToken.type !== "inline" || !blockToken.children) continue;
+      let children = blockToken.children;
+      children = splitTextTokensByBareTokenRegex(children, BARE_MEMO_RE, state.Token, false);
+      children = splitTextTokensByBareTokenRegex(children, FILE_PATH_RE, state.Token, true);
+      blockToken.children = children;
+      annotateSourceUrls(children, rawUrlByHref);
+    }
+  };
 }
 
 /** `linkify-it`'s `fuzzyLink: true` (set below for bare `www.`-token parity with the live view,
@@ -155,6 +262,27 @@ function bareLinkCoreRule(state: StateCore): void {
  * link, a `<http://...>` autolink, or a genuine scheme-ful bare URL are untouched. */
 function isUnwantedMdFilenameFuzzyMatch(match: { schema: string; raw: string }): boolean {
   return match.schema === "" && /^[^\s:/]+\.md$/i.test(match.raw) && !/^www\./i.test(match.raw);
+}
+
+/** `linkify-it` の検出結果(`http(s)://`/`www.`)を `correctUrlRange` で補正する(`links.ts`、#300)。
+ * `m` を直接書き換える。リンクにならない形になったら false。ASCII のみ・対象外の形式は何もしない。 */
+function correctLinkifyMatch(m: { schema: string; index: number; lastIndex: number; raw: string; text: string; url: string }, source: string): boolean {
+  if (m.schema !== "" && m.schema !== "http:" && m.schema !== "https:") return true;
+  // `linkify-it` は `・` `〜` `～` で URL を打ち切るが、ライブビューはこれらを URL の文字として扱うので、
+  // 直後がこれらの文字なら元テキストから範囲を取り直す(`source` は `m.index` を起点とする位置が有効なテキスト)
+  let raw = m.raw;
+  if (/^[・〜～]/.test(source.slice(m.index + raw.length))) {
+    const wider = correctUrlRange(/^[^\s<]+/.exec(source.slice(m.index))![0]);
+    if (wider.length > raw.length && wider.startsWith(raw)) raw = wider;
+  }
+  const corrected = correctUrlRange(raw);
+  if (corrected === m.raw) return true;
+  if (!corrected) return false;
+  m.url = (m.schema === "" ? "http://" : "") + corrected;
+  m.raw = corrected;
+  m.text = corrected;
+  m.lastIndex = m.index + corrected.length;
+  return true;
 }
 
 /** Builds a fresh configured instance. Stateless across calls to `render`/`parse` — it retains no
@@ -174,14 +302,93 @@ export function createPreviewMarkdownIt(): MarkdownItInstance {
   // whenever `.test()` said yes — an empty array satisfies that same assumption (the `links.length
   // > 0` check downstream just no-ops), but `null` crashes it.
   const originalMatch = md.linkify.match.bind(md.linkify);
-  md.linkify.match = (text: string) => {
-    const matches = originalMatch(text);
-    if (!matches) return matches;
-    return matches.filter((m) => !isUnwantedMdFilenameFuzzyMatch(m));
+  const originalTest = md.linkify.test.bind(md.linkify);
+  // `originalMatch` は内部で `this.test()`(下で差し替える版)を呼ぶので、その間だけ元の判定に戻す
+  let inOriginalMatch = false;
+  // #300: ライブビューと同じリンク範囲にそろえる。(1) `linkify-it` が取りすぎる末尾(非 ASCII の句読点・全角括弧、
+  // ドメイン直後の非 ASCII 文字)を `correctUrlRange` で切る。(2) 直前が文字だと検出されない・
+  // `linkify-it` が見つけない非 ASCII ホストの URL(`日本語https://...`)を `findNonAsciiUrlTokens` で補う。
+  // コア規則は `.test()` が真のときだけ `.match()` を呼ぶので、`.test()` も (2) の分だけ真にする
+  md.linkify.test = (text: string) => originalTest(text) || (!inOriginalMatch && (findNonAsciiUrlTokens(text).length > 0 || findNonAsciiEmailTokens(text, true).length > 0));
+  // `markdown-it` の inline 規則 `linkify`(`scheme://` を `:` の位置で検出する)は `.match()` ではなく
+  // `.matchAtStart()` を使うので、そちらも同じ補正を通す
+  const originalMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
+  md.linkify.matchAtStart = (text: string) => {
+    const m = originalMatchAtStart(text);
+    return m && correctLinkifyMatch(m, text) ? m : null;
   };
+  md.linkify.match = (text: string) => {
+    inOriginalMatch = true;
+    let found: ReturnType<typeof originalMatch>;
+    try {
+      found = originalMatch(text);
+    } finally {
+      inOriginalMatch = false;
+    }
+    const matches = (found ?? []).filter((m) => !isUnwantedMdFilenameFuzzyMatch(m));
+    // #301: `linkify-it` のメールもドメイン直後の非 ASCII 文字(`user@example.com日本語`)を含めてしまうので、ライブビューと同じ範囲に切る
+    for (const m of matches) {
+      if (m.schema !== "mailto:") continue;
+      const corrected = correctEmailRange(m.raw);
+      if (corrected === m.raw) continue;
+      m.raw = corrected;
+      m.text = corrected;
+      m.url = "mailto:" + corrected;
+      m.lastIndex = m.index + corrected.length;
+    }
+    for (let i = matches.length - 1; i >= 0; i--) {
+      if (!correctLinkifyMatch(matches[i], text)) matches.splice(i, 1);
+    }
+    for (const t of findNonAsciiUrlTokens(text)) {
+      const end = t.index + t.raw.length;
+      if (matches.some((m) => t.index < m.lastIndex && m.index < end)) continue;
+      matches.push({ schema: t.raw.toLowerCase().startsWith("https") ? "https:" : "http:", index: t.index, lastIndex: end, raw: t.raw, text: t.raw, url: t.raw });
+    }
+    // #301: 非 ASCII を含むメールをライブビューと同じ範囲で補う。`linkify-it` 自身のメール検出(ドメイン部のみ対応・
+    // 範囲が異なりうる)と重なるときは置き換え、URL など他のリンクと重なるとき(URL 内の `@` 等)は採用しない。
+    // href は `mailto:` + 記述どおりのアドレス(ドメインの punycode 化・ローカル部の %XX 化は `normalizeLink` が行う)
+    for (const t of findNonAsciiEmailTokens(text, true)) {
+      const end = t.index + t.raw.length;
+      const overlapping = matches.filter((m) => t.index < m.lastIndex && m.index < end);
+      if (overlapping.some((m) => m.schema !== "mailto:")) continue;
+      for (const m of overlapping) matches.splice(matches.indexOf(m), 1);
+      matches.push({ schema: "mailto:", index: t.index, lastIndex: end, raw: t.raw, text: t.raw, url: "mailto:" + t.raw });
+    }
+    matches.sort((a, b) => a.index - b.index);
+    return matches;
+  };
+  // 非 ASCII を含む URL の「正規化後 → 記述どおり」を記録する(`annotateSourceUrls` が使う)。
+  // 描画ごとに作り直すので、`normalize` 規則(コア規則の先頭)でクリアする
+  const rawUrlByHref = new Map<string, string>();
+  const originalNormalizeLink = md.normalizeLink;
+  md.normalizeLink = (url: string) => {
+    const normalized = originalNormalizeLink(url);
+    if (/[^\u0000-\u007f]/.test(url)) rawUrlByHref.set(normalized, url);
+    return normalized;
+  };
+  md.core.ruler.before("normalize", "ttn_reset_source_urls", () => {
+    rawUrlByHref.clear();
+  });
   md.renderer.rules.table_open = wrapTableOpen;
   md.renderer.rules.table_close = wrapTableClose;
   md.renderer.rules.image = renderImageWithDeferredSrc;
-  md.core.ruler.push("ttn_bare_link_scan", bareLinkCoreRule);
+  md.core.ruler.push("ttn_bare_link_scan", makeBareLinkCoreRule(rawUrlByHref));
+
+  // Math rendering (`PLAN.md` §2.1): `"dollars"` preset registers `$...$` (`math_inline`) and
+  // `$$...$$` (`math_block` when it starts its own line, `math_inline_double` — still KaTeX
+  // `displayMode: true` — when `$$...$$` appears mid-paragraph) plus the Pandoc-style "no whitespace
+  // immediately inside either delimiter" currency-false-positive heuristic built into its own
+  // `$_pre`/`$_post` guards (verified empirically at implementation time: `Price: $5, not $10 total`
+  // does not tokenize as math). `engine: katex` is required by the plugin's own setup path (see
+  // `markdown-it-texmath.d.ts`) even though every renderer rule it installs is immediately
+  // overridden below with `renderMathToHtml`'s own `katex.renderToString` call (no `katexOptions`
+  // passed here — it would never be read) — its own `<eq>`/`<section>` wrapper tags are not in
+  // `previewRenderer.ts`'s DOMPurify allowlist and are never meant to be.
+  md.use(texmath, { engine: katex, delimiters: "dollars" });
+  md.renderer.rules.math_inline = (tokens, idx) => renderMathToHtml(tokens[idx].content, false);
+  md.renderer.rules.math_inline_double = (tokens, idx) => renderMathToHtml(tokens[idx].content, true);
+  md.renderer.rules.math_block = (tokens, idx) => wrapBlockMath(tokens[idx]);
+  md.renderer.rules.math_block_eqno = (tokens, idx) => wrapBlockMath(tokens[idx]);
+
   return md;
 }

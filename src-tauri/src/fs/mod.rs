@@ -2,6 +2,7 @@
 
 pub mod app_data_root;
 pub mod atomic_write;
+pub mod image_folder_transfer;
 pub mod path_safety;
 pub mod retry;
 pub mod self_write_registry;
