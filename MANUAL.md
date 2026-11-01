@@ -724,6 +724,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 | 「ロックされたタブには操作できません」 | ロックを解除してから操作してください。 |
 | 「編集ロック中のメモは削除・名前変更できません」 | 先に「編集ロック解除」を選んでください。 |
 | 「画像フォルダの名前を変更できなかったため、処理を中止しました。…」 | 画像フォルダの中の画像を開いているプログラムを閉じて、もう一度試してください。 |
+| 「パスが長すぎる可能性があります」 | 作成・名前変更・移動・コピー・取り込み・画像の貼り付けでできたファイルのパスが260文字を超えています(警告のみで、操作は完了しています)。長いパスは Windows の一部の機能やほかのプログラムで扱えないことがあり、動作は保証されません。短い名前や浅い場所に変えることをおすすめします。 |
 
 ### 10.5 よくある疑問
 
@@ -1485,6 +1486,7 @@ If the settings file (`data/settings.json`) is damaged, the app likewise first t
 | "This operation cannot be performed on a locked tab" | Unlock the tab first. |
 | "An edit-locked memo cannot be deleted or renamed" | Choose "Remove Edit Lock" first. |
 | "An image folder could not be renamed, so the operation was stopped. …" | Close any program that is using images in the folder, then try again. |
+| "The path may be too long" | The path of a file created by creating, renaming, moving, copying, importing, or pasting an image is over 260 characters (a warning only; the operation has completed). Some Windows features and other programs cannot handle long paths, and this is not supported. Shorter names or a shallower location are recommended. |
 
 ### 10.5 Frequently Asked Questions
 
