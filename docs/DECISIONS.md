@@ -442,7 +442,7 @@ In the old v3's node lock, initially "not discarded when switching tabs", but th
 ## Implementation Policy: No Legacy Code Reference — Build from Scratch (2026-08-01)
 
 **Decision**: `developer-lite` does not read, copy, or adapt source code from the old repository
-(`c:\Users\m9112\vscode2\TabTreeNote`) during implementation. Every feature is implemented from
+(`%USERPROFILE%\vscode2\TabTreeNote`) during implementation. Every feature is implemented from
 `spec.md`/`detailed-spec.md`/the feature's own `PLAN.md` only — those are treated as sufficient and
 self-contained. This supersedes the project's earlier "reference the old repo's code during
 implementation" policy.
