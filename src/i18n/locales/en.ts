@@ -227,6 +227,8 @@ export const en: Record<keyof typeof ja, string> = {
   "settings.language": "Language",
   "settings.recordingKeyWait": "Waiting for key input...",
   "settings.unbound": "Unbound",
+  "settings.shortcutDuplicateTemplate": "This key is also used by \"{action}\"",
+  "settings.shortcutRejected": "This combination cannot be used",
   "settings.editorDefaultsSection": "Editor Defaults",
   "settings.wrapLabel": "Wrap",
   "settings.wrapWindow": "Wrap at window width",

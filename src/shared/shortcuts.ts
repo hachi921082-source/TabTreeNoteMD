@@ -140,6 +140,26 @@ export function comboFromEvent(e: KeyComboLike): string {
   return parts.join("+");
 }
 
+/** Shift併用の記号キーか判定する(設定画面のキー割り当てで拒否する組み合わせ)。
+ * Shift押下中 かつ e.key が1文字で、英字・数字以外(空白は名前付きキー扱いで除く)なら true。
+ * 名前付きキー(Enter, Tab, F2, ArrowUp, Delete 等)は e.key が複数文字なので対象外。
+ * 数字キー列(e.code が Digit0〜Digit9)は、日本語配列で Shift+数字が記号になっても許可する。 */
+export function isShiftSymbolCombo(e: { shiftKey: boolean; key: string; code?: string }): boolean {
+  if (!e.shiftKey) return false;
+  if (e.key.length !== 1 || e.key === " ") return false;
+  if (/[\p{L}\p{N}]/u.test(e.key)) return false;
+  if (e.code !== undefined && /^Digit[0-9]$/.test(e.code)) return false;
+  return true;
+}
+
+/** resolveShortcuts の結果 `resolved` の中で、`actionId` 自身を除き、`actionId` と同じコンボを持つ
+ * 操作IDの一覧を返す。コンボが未設定(空/undefined)なら空配列。 */
+export function findDuplicateActions(resolved: Record<string, string | undefined>, actionId: string): string[] {
+  const combo = resolved[actionId];
+  if (!combo) return [];
+  return Object.keys(resolved).filter((id) => id !== actionId && resolved[id] === combo);
+}
+
 function normalizeKeyName(key: string): string {
   if (key === " ") return "Space";
   if (key.length === 1) return key.toUpperCase();

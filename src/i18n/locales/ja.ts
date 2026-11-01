@@ -233,6 +233,8 @@ export const ja = {
   "settings.language": "言語",
   "settings.recordingKeyWait": "キー入力待ち...",
   "settings.unbound": "未設定",
+  "settings.shortcutDuplicateTemplate": "このキーは『{action}』でも使われています",
+  "settings.shortcutRejected": "この組み合わせは使えません",
   "settings.editorDefaultsSection": "エディタの既定値",
   "settings.wrapLabel": "折り返し",
   "settings.wrapWindow": "ウィンドウ幅で折り返す",
