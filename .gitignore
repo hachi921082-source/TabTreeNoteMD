@@ -9,3 +9,10 @@ src-tauri/gen/
 Thumbs.db
 *.tsbuildinfo
 .claude/files/
+
+# 個人環境・ビルド成果物(誤ってコミットしない)
+.env
+.env.*
+/*.exe
+/data/
+/.tabtreenote.json
