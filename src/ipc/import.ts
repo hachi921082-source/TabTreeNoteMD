@@ -10,6 +10,8 @@ import type { TreeSnapshot } from "../shared/models";
  * (GitHub issue #265)。 */
 export interface ImportFileResult extends TreeSnapshot {
   missingImages: number;
+  /** 取り込んだメモのパスが長い(260文字超)か。非致命の警告(GitHub issue #319)。 */
+  longPath: boolean;
 }
 
 /** Imports one already-collision-resolved source `.md` file as a memo. `parent: null` appends to
