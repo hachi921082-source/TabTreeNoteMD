@@ -6,7 +6,7 @@
 
 使い方は [操作ガイド](MANUAL.md) を参照してください。
 
-> **開発状況**: 開発中です(現在のバージョンは v1.2.0 の開発ブランチ)。Windows 11 を優先対象としています。仕様や挙動は今後変わる可能性があります。
+> **開発状況**: 開発中です(現在のバージョンは v1.2.1)。Windows 11 を優先対象としています。仕様や挙動は今後変わる可能性があります。
 
 ## 主な機能
 
@@ -68,7 +68,7 @@ A Markdown note editor for Windows that manages local notes in a "tabs × tree" 
 
 See the [User Guide](MANUAL.md) for how to use it.
 
-> **Status**: under development (the current branch is the v1.2.0 line). Windows 11 is the primary target. Specifications and behavior may change.
+> **Status**: under development (current version: v1.2.1). Windows 11 is the primary target. Specifications and behavior may change.
 
 ## Features
 
