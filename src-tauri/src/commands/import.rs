@@ -39,6 +39,9 @@ pub struct ImportFileResult {
     #[serde(flatten)]
     pub snapshot: TreeSnapshot,
     pub missing_images: u32,
+    /// GitHub issue #319: 取り込んだメモのパスが長いパス(`is_long_path`)か。操作は成功済みの非致命の警告で、
+    /// フロントはドロップ1回分をまとめて1回だけトーストにする。
+    pub long_path: bool,
 }
 
 /// 1枚あたりのコピー上限(GitHub issue #265)。超えた画像はコピーせずリンクも元のまま残す。
@@ -79,7 +82,7 @@ pub fn import_file(
             };
             // ロック中タブへのインポートでは画像をコピーしない(#264 のレイアウト決定まで対象外、#265)
             return match tab_lock::session_import_file(&sessions, &registry, &folder, &tab_id, &target_name, &bytes_to_write, overwrite, parent.as_deref()) {
-                AppResult::Ok(snapshot) => AppResult::ok(ImportFileResult { snapshot, missing_images: 0 }),
+                AppResult::Ok(snapshot) => AppResult::ok(ImportFileResult { snapshot, missing_images: 0, long_path: false }),
                 AppResult::Err(e) => AppResult::err(e),
             };
         }
@@ -167,6 +170,7 @@ pub fn import_file(
             last_viewed_memo: loaded.last_viewed_memo,
         },
         missing_images,
+        long_path: crate::commands::any_long_path([&target_path]),
     })
 }
 

@@ -12,6 +12,7 @@ import type { TreeNode } from "../shared/models";
 import type { ImportCollisionChoice } from "../components/dialogs/ImportCollisionDialog";
 import type { UseToastResult } from "./useToast";
 import { useT } from "../i18n";
+import { errorMessageFor } from "../shared/errorMessages";
 
 export interface PendingImportCollision {
   sourceName: string;
@@ -175,6 +176,8 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
         let imported = 0;
         // 見つからなかった相対画像の件数(ドロップ1回分の合計、GitHub issue #265)
         let missingImages = 0;
+        // 長いパスになった取り込みがあったか(ドロップ1回分をまとめて1回だけ警告、GitHub issue #319)
+        let longPath = false;
         for (const item of queued) {
           // Sequential, awaited one at a time — so a later item's defensive backend re-check sees
           // the previous item's already-committed state (`PLAN.md` §4 step 3).
@@ -182,6 +185,7 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
           if (result.ok) {
             imported += 1;
             missingImages += result.value.missingImages;
+            if (result.value.longPath) longPath = true;
           } else skipped += 1;
         }
 
@@ -196,6 +200,9 @@ export function useImport(tabId: string | null, nodes: TreeNode[], refreshTree: 
         }
         if (missingImages > 0) {
           toast.pushToast(t("toast.importMissingImagesTemplate").replace("{count}", String(missingImages)));
+        }
+        if (longPath) {
+          toast.pushToast(errorMessageFor("LONG_PATH", t), "warning");
         }
       })();
     },

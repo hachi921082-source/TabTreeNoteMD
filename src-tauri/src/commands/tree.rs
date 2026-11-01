@@ -390,6 +390,9 @@ fn memo_create_impl(
     // (`search-index/PLAN.md` §1's in-app update path).
     search_index.upsert(tab_id, &resolved, "");
 
+    // GitHub issue #319: 作ったメモのパスが長ければ警告のみ(操作は完了済み)
+    crate::commands::warn_if_long_path(app, [&file_path]);
+
     AppResult::ok(TreeSnapshot {
         nodes: loaded.tree,
         tab_name,
@@ -475,6 +478,9 @@ pub fn memo_rename(
     // known/accepted consequence, no automatic rewrite (out of scope).
     search_index.remove(&tab_id, &path);
     search_index.upsert(&tab_id, trimmed, &read_body_for_index(&folder, trimmed));
+
+    // GitHub issue #319: 改名後のパスが長ければ警告のみ(操作は完了済み)
+    crate::commands::warn_if_long_path(&app, [&new_path]);
 
     AppResult::ok(MemoMutationResult {
         snapshot: TreeSnapshot {
@@ -821,7 +827,18 @@ pub fn memo_move(
 
             match (source_access, target_access) {
                 (tab_lock::TabAccess::Plain { folder: source_folder, tab_name: source_tab_name }, tab_lock::TabAccess::Plain { folder: target_folder, tab_name: target_tab_name }) => {
-                    memo_move_cross_tab(&tab_id, &source_folder, &source_tab_name, &target_tab_id, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry, &search_index)
+                    let result = memo_move_cross_tab(&tab_id, &source_folder, &source_tab_name, &target_tab_id, &target_folder, &target_tab_name, &paths, new_parent.as_deref(), index, copy, &registry, &search_index);
+                    // GitHub issue #319: 移動/コピー先に新しくできたメモのパスが長ければ警告のみ(成功後、1 操作 1 回)
+                    if let AppResult::Ok(MemoMoveResult { target: Some(target_snapshot), .. }) = &result {
+                        let mut names = Vec::new();
+                        for p in &paths {
+                            if let Some(node) = find_node(&target_snapshot.nodes, p) {
+                                collect_names(node, &mut names);
+                            }
+                        }
+                        crate::commands::warn_if_long_path(&app, names.iter().map(|name| target_folder.join(format!("{name}.md"))));
+                    }
+                    result
                 }
                 // Plain -> locked-session: the moved memo(s) leave the plain tab's index scope
                 // (`!copy` only — a copy leaves the plain original's own indexed entry intact) and

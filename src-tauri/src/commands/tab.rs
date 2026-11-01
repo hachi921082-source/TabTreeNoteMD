@@ -281,6 +281,10 @@ fn register_tab_at_path(
                 watchers.start(app, &id, &path, self_write_registry.inner().clone());
             }
 
+            // GitHub issue #319: 登録した(または作った)タブフォルダ配下の最長の固定ファイルが長いパスなら警告のみ
+            // (ロック済みタブも登録時点ではフォルダパスは平文なので同じく判定する)
+            crate::commands::warn_if_long_path(app, [path.join(".tabtreenote.json")]);
+
             Ok(TabInfo { id, name, locked: already_locked, lock_label: None })
         }
         Ok(Err(payload)) => Err(payload),

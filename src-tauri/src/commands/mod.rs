@@ -18,8 +18,12 @@ pub mod tab_lock;
 pub mod tree;
 pub mod window;
 
+use std::path::Path;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+
+use crate::fs::path_safety::is_long_path;
 
 use crate::settings::app_settings_store::RecoveryOutcome;
 
@@ -51,4 +55,53 @@ pub(crate) fn emit_settings_recovery_event(app: &AppHandle, outcome: RecoveryOut
         return;
     }
     emit_meta_recovered(app, "app-settings", None);
+}
+
+/// GitHub issue #319: 渡したパスのうち 1 つでも長いパス(`is_long_path`)なら `true`。
+pub(crate) fn any_long_path<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> bool {
+    paths.into_iter().any(|p| is_long_path(&p.as_ref().to_string_lossy()))
+}
+
+/// GitHub issue #319: 操作の結果できたパスのいずれかが長ければ、非致命の警告イベント
+/// `evt:path:long-warning` を 1 回だけ送る(仕様 §5.11: 警告のみ、操作は止めない)。
+/// 呼び出しは操作の成功後に 1 操作につき 1 回。フロントがトーストにする。
+pub(crate) fn warn_if_long_path<P: AsRef<Path>>(app: &AppHandle, paths: impl IntoIterator<Item = P>) {
+    if !any_long_path(paths) {
+        return;
+    }
+    if let Err(err) = app.emit("evt:path:long-warning", ()) {
+        tracing::error!(error = %err, "failed to emit evt:path:long-warning");
+    }
+}
+
+#[cfg(test)]
+mod long_path_tests {
+    use super::*;
+
+    fn path_of_len(n: usize, ch: char) -> String {
+        ch.to_string().repeat(n)
+    }
+
+    #[test]
+    fn exactly_260_chars_is_not_long() {
+        assert!(!any_long_path([path_of_len(260, 'a')]));
+    }
+
+    #[test]
+    fn over_260_chars_is_long() {
+        assert!(any_long_path([path_of_len(261, 'a')]));
+    }
+
+    #[test]
+    fn japanese_names_are_counted_by_chars_not_bytes() {
+        // 260 文字(バイト数では 780)は長くない、261 文字は長い
+        assert!(!any_long_path([path_of_len(260, 'あ')]));
+        assert!(any_long_path([path_of_len(261, 'あ')]));
+    }
+
+    #[test]
+    fn any_one_long_path_is_enough() {
+        assert!(any_long_path([path_of_len(10, 'a'), path_of_len(261, 'a')]));
+        assert!(!any_long_path(Vec::<String>::new()));
+    }
 }
