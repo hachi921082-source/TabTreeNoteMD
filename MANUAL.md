@@ -585,7 +585,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 
 ### 8.2 ショートカット
 
-操作ごとのショートカットキーの一覧です(既定のキーは 9 を参照)。キーを変更できます(「次のタブ」「前のタブ」を除く。この2つは現在は既定のキーのみ有効です。9 参照)。
+操作ごとのショートカットキーの一覧です(既定のキーは 9 を参照)。キーを変更できます。
 
 1. 変更したい操作の行にあるキーのボタンを押します。「キー入力待ち...」と表示されます。
 2. 割り当てたいキーの組み合わせを押します(Ctrl や Shift だけでは確定しません。通常のキーまで押してください)。
@@ -623,7 +623,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 
 ## 9. ショートカット一覧
 
-下の表は、初期状態のキーです。「設定」→「ショートカット」で変更できます(8.2 参照)。ただし「次のタブ」「前のタブ」は、設定画面に表示されますが、現在は変更が反映されず、Ctrl+Tab / Ctrl+Shift+Tab のままです。
+下の表は、初期状態のキーです。「設定」→「ショートカット」で変更できます(8.2 参照)。
 
 **タブ・ツリー・検索**
 
@@ -1341,7 +1341,7 @@ Press "Third-Party Licenses" at the very bottom to open the license notices of t
 
 ### 8.2 Shortcuts
 
-A list of the keyboard shortcut for each operation (see 9 for the default keys). Keys can be changed (except "Next Tab" and "Previous Tab", for which only the default keys are currently active; see 9).
+A list of the keyboard shortcut for each operation (see 9 for the default keys). Keys can be changed.
 
 1. Press the key button in the row of the operation you want to change. "Waiting for key input..." appears.
 2. Press the key combination you want to assign (Ctrl or Shift alone does not confirm it; press a regular key too).
@@ -1379,7 +1379,7 @@ An operation with no key assigned shows "Unbound".
 
 ## 9. Keyboard Shortcuts
 
-The tables below show the initial keys. They can be changed in "Settings" > "Shortcuts" (see 8.2). However, "Next Tab" and "Previous Tab" are listed on the settings screen but currently do not take effect when changed; they stay Ctrl+Tab / Ctrl+Shift+Tab.
+The tables below show the initial keys. They can be changed in "Settings" > "Shortcuts" (see 8.2).
 
 **Tabs, tree and search**
 
