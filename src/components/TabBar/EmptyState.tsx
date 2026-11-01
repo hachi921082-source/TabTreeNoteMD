@@ -2,16 +2,15 @@
 // (`docs/plans/tab-management/PLAN.md` §4 — two entry points, mirroring `TabBar.tsx`'s own split:
 // "register an existing folder" (`tab_create`, OS picker) and "create a new, empty folder"
 // (`tab_create_new`, name prompt), GitHub issue #2). Needs its own local dialog state for the
-// name-prompt + duplicate-name-retry flow for each button, mirroring `TabBar.tsx`'s `PendingDialog`
+// name-prompt flow for the "create new" button, mirroring `TabBar.tsx`'s `PendingDialog`
 // pattern but scoped down — this screen doesn't need rename/remove/lock, none of which are
-// reachable with zero tabs registered. Any error not specially handled here (i.e. anything other
-// than `NAME_DUPLICATE`) still surfaces via `TabBar.tsx`'s own `ttn-tab-bar-error` banner, since
+// reachable with zero tabs registered. Any error not specially handled here still surfaces via `TabBar.tsx`'s own `ttn-tab-bar-error` banner, since
 // `TabBar` stays mounted above this screen at all times (`App.tsx`) and shares the same `tabsState`
 // — this screen doesn't need its own separate error banner.
 import { useState } from "react";
 import type { UseTabsResult } from "../../state/useTabs";
 import { PromptDialog } from "../dialogs/PromptDialog";
-import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize";
+import { validateNameStrict } from "../../shared/nameSanitize";
 import { useT } from "../../i18n";
 import "./EmptyState.css";
 
@@ -19,30 +18,17 @@ export interface EmptyStateProps {
   tabsState: UseTabsResult;
 }
 
-type PendingDialog = { kind: "createNew"; suggestedName?: string } | { kind: "duplicateName"; path: string; suggestedName: string };
-
-function baseNameOf(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-}
+type PendingDialog = { kind: "createNew" };
 
 export function EmptyState({ tabsState }: EmptyStateProps) {
   const t = useT();
-  const { createTab, createNewTab, retryCreateWithName } = tabsState;
+  const { createTab, createNewTab } = tabsState;
   const [pendingDialog, setPendingDialog] = useState<PendingDialog | null>(null);
-
-  const handleRegisterExisting = async () => {
-    const result = await createTab();
-    // Same duplicate-name retry affordance `TabBar.tsx`'s own OS-picker button gives
-    // (`tab-management/PLAN.md` §2 step 2) — a name collision here must not silently do nothing.
-    if (result && !result.ok && result.code === "NAME_DUPLICATE" && result.path) {
-      setPendingDialog({ kind: "duplicateName", path: result.path, suggestedName: suggestSanitized(baseNameOf(result.path)) });
-    }
-  };
 
   return (
     <div className="ttn-empty-state">
       <p>{t("emptyState.noTabs")}</p>
-      <button type="button" onClick={() => void handleRegisterExisting()}>
+      <button type="button" onClick={() => void createTab()}>
         📂 {t("tabBar.registerExisting")}
       </button>
       <button type="button" onClick={() => setPendingDialog({ kind: "createNew" })}>
@@ -53,34 +39,12 @@ export function EmptyState({ tabsState }: EmptyStateProps) {
         <PromptDialog
           title={t("tab.createNewTitle")}
           label={t("tab.createNewLabel")}
-          initialValue={pendingDialog.suggestedName}
           submitLabel={t("common.create")}
           validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await createNewTab(value);
             if (result.ok) setPendingDialog(null);
-            else if (result.code === "NAME_DUPLICATE") {
-              setPendingDialog({ kind: "createNew", suggestedName: suggestSanitized(value) });
-            }
-          }}
-        />
-      )}
-
-      {pendingDialog?.kind === "duplicateName" && (
-        <PromptDialog
-          title={t("tab.duplicateNameTitle")}
-          label={t("tab.duplicateNameLabel")}
-          initialValue={pendingDialog.suggestedName}
-          submitLabel={t("common.create")}
-          validate={(value) => validateNameStrict(value, t)}
-          onCancel={() => setPendingDialog(null)}
-          onSubmit={async (value) => {
-            const result = await retryCreateWithName(pendingDialog.path, value);
-            if (result.ok) setPendingDialog(null);
-            else if (result.code === "NAME_DUPLICATE") {
-              setPendingDialog({ kind: "duplicateName", path: result.path ?? pendingDialog.path, suggestedName: value });
-            }
           }}
         />
       )}
