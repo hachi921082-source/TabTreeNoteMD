@@ -94,7 +94,15 @@ fn load_with_recovery(registry: &SelfWriteRegistry) -> (AppSettings, RecoveryOut
     // exists before attempting any read/write below.
     let _ = ensure_app_data_root();
 
-    let primary_path = settings_json_path();
+    load_at(&settings_json_path(), registry)
+}
+
+/// `load_with_recovery` の本体(パス指定、テスト用に分離)。
+/// GitHub issue #318: プライマリも `.bak` も存在しない(初回起動)ときは復旧ではなく新規作成なので
+/// `Clean`(通知しない)。プライマリが壊れている、または `.bak` だけ残っている(プライマリ消失)ときは
+/// 利用者のデータが失われた状況なので `FromBackup`/`Regenerated`(通知する)。
+fn load_at(primary_path: &std::path::Path, registry: &SelfWriteRegistry) -> (AppSettings, RecoveryOutcome) {
+    let primary_path = primary_path.to_path_buf();
     if let Some(settings) = try_parse(&primary_path) {
         return (settings, RecoveryOutcome::Clean);
     }
@@ -103,6 +111,7 @@ fn load_with_recovery(registry: &SelfWriteRegistry) -> (AppSettings, RecoveryOut
     if let Some(settings) = try_parse(&backup_path) {
         return (settings, RecoveryOutcome::FromBackup);
     }
+    let first_launch = !primary_path.exists() && !backup_path.exists();
 
     // Total loss: regenerate hardcoded defaults and persist them, the same
     // code path as first-launch initialization (`persistence-fs/PLAN.md` §2).
@@ -110,7 +119,7 @@ fn load_with_recovery(registry: &SelfWriteRegistry) -> (AppSettings, RecoveryOut
     if let Ok(json) = serde_json::to_vec_pretty(&defaults) {
         let _ = atomic_write(&primary_path, &json, registry);
     }
-    (defaults, RecoveryOutcome::Regenerated)
+    (defaults, if first_launch { RecoveryOutcome::Clean } else { RecoveryOutcome::Regenerated })
 }
 
 fn try_parse(path: &std::path::Path) -> Option<AppSettings> {
@@ -161,6 +170,31 @@ mod tests {
         let backup = bak_path(&path);
         fs::write(&backup, serde_json::to_vec(&AppSettings::default()).unwrap()).unwrap();
         assert!(try_parse(&backup).is_some());
+    }
+
+    #[test]
+    fn first_launch_without_files_is_clean() {
+        let path = temp_settings_path();
+        let (_, outcome) = load_at(&path, &SelfWriteRegistry::new());
+        assert_eq!(outcome, RecoveryOutcome::Clean);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn corrupt_primary_without_backup_is_regenerated() {
+        let path = temp_settings_path();
+        fs::write(&path, b"{ not json").unwrap();
+        let (_, outcome) = load_at(&path, &SelfWriteRegistry::new());
+        assert_eq!(outcome, RecoveryOutcome::Regenerated);
+    }
+
+    #[test]
+    fn corrupt_primary_with_backup_is_from_backup() {
+        let path = temp_settings_path();
+        fs::write(&path, b"{ not json").unwrap();
+        fs::write(bak_path(&path), serde_json::to_vec(&AppSettings::default()).unwrap()).unwrap();
+        let (_, outcome) = load_at(&path, &SelfWriteRegistry::new());
+        assert_eq!(outcome, RecoveryOutcome::FromBackup);
     }
 
     #[test]
