@@ -14,13 +14,16 @@
   position: relative;
 }
 
-/* Current git branch at build time (`vite.config.ts`'s `__APP_GIT_BRANCH__`, GitHub issue #182) —
-   a dev-facing build identifier, not the app's semantic version (`package.json`/`tauri.conf.json`
-   still own that). Kept quiet (small/subtle) since it's diagnostic, not a user-facing label. */
+/* アプリの版表示(`vite.config.ts` の `__APP_VERSION_LABEL__`、GitHub issue #323)。
+   開発ビルドではブランチ名・コミットIDが付き長くなるため、幅を制限して省略表示し、全文は title に出す。 */
 .ttn-settings-version {
   position: absolute;
   top: 16px;
   right: 16px;
+  max-width: 60%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: calc(11px * var(--ui-font-scale));
   color: var(--ttn-fg-subtle);
   font-family: monospace;
