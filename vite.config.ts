@@ -17,6 +17,17 @@ type GitRunner = (args: string) => string;
 const runGit: GitRunner = (args) =>
   execSync(`git ${args}`, { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).toString().trim();
 
+// 作業ツリーに、行末の CR を無視しても残る差分があるか。`git diff --quiet` は差分ありで終了コード1
+// (execSync が例外を投げる)、差分なしで 0。
+function hasContentDiff(git: GitRunner): boolean {
+  try {
+    git("diff --ignore-cr-at-eol --quiet HEAD");
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 // 設定画面に出す版表示を組み立てる(GitHub issue #323)。
 // 例: `v1.2.0` / `v1.2.0 (fix/foo, 1a2b3c4)` / `v1.2.0 (fix/foo, 1a2b3c4, dirty)`。
 // Git が使えない場合は版番号のみ。detached HEAD はブランチ名を省きコミットIDのみ添える。
@@ -25,7 +36,9 @@ export function buildVersionLabel(version: string, git: GitRunner = runGit): str
   try {
     const branch = git("rev-parse --abbrev-ref HEAD");
     const commit = git("rev-parse --short HEAD");
-    const dirty = git("status --porcelain --untracked-files=no") !== "";
+    // 改行コード(CR)だけの差(ビルドで Cargo.toml が CRLF になる等)は dirty とみなさない。
+    // `status` が空でなく、かつ CR を無視しても内容に差があるときだけ dirty。
+    const dirty = git("status --porcelain --untracked-files=no") !== "" && hasContentDiff(git);
     if (branch === DEFAULT_BRANCH && !dirty) return base;
     const parts = [branch === "HEAD" ? "" : branch, commit, dirty ? "dirty" : ""].filter(Boolean);
     return `${base} (${parts.join(", ")})`;
