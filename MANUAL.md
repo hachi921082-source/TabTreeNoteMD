@@ -627,7 +627,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 下の表は、初期状態のキーです。「設定」→「ショートカット」で変更できます(8.2 参照)。
 
 - 書式・表示の表のうち、「ペイン表示モードを切り替え」「PDF出力」「プレビューをズームイン」「プレビューをズームアウト」は、フォーカスがどこにあっても使えます。それ以外の書式のキーは、エディタの本文にフォーカスがあるときだけ使えます。
-- 「強制改行」は、設定で割り当てたキー(初期値は Shift+Enter)で動きます。別のキーに変えると、保存後すぐ新しいキーで動き、Shift+Enter は通常の改行に戻ります。他の操作と同じキー(Ctrl+B など)に割り当てると、両方が同時に動くことがあるので、避けてください。
+- 「強制改行」は、設定で割り当てたキー(初期値は Shift+Enter)で動きます。別のキーに変えると、保存後すぐ新しいキーで動き、Shift+Enter は通常の改行に戻ります。他の操作と同じキー(Ctrl+B など)に割り当てると、設定画面に警告が出ます(警告のみで保存はできますが、両方が同時に動くことがあるので避けてください)。Shift と記号キーの組み合わせ(Shift+. など)は使えません。
 
 **タブ・ツリー・検索**
 
@@ -1389,7 +1389,7 @@ An operation with no key assigned shows "Unbound".
 The tables below show the initial keys. They can be changed in "Settings" > "Shortcuts" (see 8.2).
 
 - In the Formatting and display table, "Cycle Pane Layout", "Export PDF", "Zoom Preview In" and "Zoom Preview Out" work wherever the focus is. The other formatting keys work only while the focus is in the editor body.
-- "Hard Break" works with the key assigned in the settings (Shift+Enter by default). If you change it, the new key works right after saving, and Shift+Enter goes back to a normal line break. Avoid assigning a key that another action already uses (for example Ctrl+B); both actions may run at once.
+- "Hard Break" works with the key assigned in the settings (Shift+Enter by default). If you change it, the new key works right after saving, and Shift+Enter goes back to a normal line break. If you assign a key that another action already uses (for example Ctrl+B), a warning appears in the settings screen (it is only a warning and the key can still be saved, but avoid it because both actions may run at once). Combinations of Shift and a symbol key (such as Shift+.) cannot be used.
 
 **Tabs, tree and search**
 
