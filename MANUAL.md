@@ -54,7 +54,7 @@ TabTreeNoteMD は、メモを「タブ × ツリー」で整理する Windows �
 ### 1.3 データの保存場所(ポータブル構成)
 
 - アプリの設定とタブの登録情報は、実行ファイルと同じ場所にある **`data/` フォルダ**に保存されます(Windows のレジストリや `%APPDATA%` は使いません)。
-- 実行ファイルだけを別の場所にコピーして起動すると、設定もタブも空の、独立した環境として動きます。複数のコピーを並べて使うこともできます。
+- 実行ファイルだけを別の場所にコピーして起動すると、設定もタブも空の、独立した環境として動きます。ただし、同時に起動できるのは1つだけです(起動中にもう一度起動すると、すでに起動中のウィンドウが前面に出ます)。
 - 「新しいタブを作成」で作ったタブのフォルダは、`data/tabs/` の下に作られます。「既存フォルダを登録」で登録したフォルダは、元の場所のまま使われます。
 - 設定ごと別のパソコンへ移したいときは、実行ファイルと `data/` フォルダをいっしょにコピーしてください。
 
@@ -80,7 +80,7 @@ TabTreeNoteMD は、メモを「タブ × ツリー」で整理する Windows �
 
 1. タブバーの「＋」(ツールチップ「新しいタブを作成」)をクリックします。
 2. 「新しいタブを作成」ダイアログの「タブ（フォルダ）名」に名前を入力し、「作成」を押します。
-3. `data/tabs/` の下にその名前のフォルダが作られ、タブとして登録されます。同じ名前のフォルダがすでにある場合は、`名前(1)`、`名前(2)` のように番号がつきます。
+3. `data/tabs/` の下にその名前のフォルダが作られ、タブとして登録されます。同じ名前のフォルダまたはタブがすでにある場合は、`名前(1)`、`名前(2)` のように番号がつきます。
 
 **方法 B: すでにあるフォルダを登録する**
 
@@ -90,11 +90,11 @@ TabTreeNoteMD は、メモを「タブ × ツリー」で整理する Windows �
 
 **方法 C: フォルダをドラッグして登録する**
 
-エクスプローラーからフォルダをタブバーの上にドラッグ&ドロップします(方法 B と同じ登録になります)。
+エクスプローラーからフォルダをタブバーの上にドラッグ&ドロップします(方法 B と同じ登録になります)。複数のフォルダを同時にドロップしても、登録されるのは最初の1つだけです。
 
 タブが1つも無いときは、画面に「登録されているタブがありません」と表示され、「既存フォルダを登録」と「新しいタブを作成」のボタンが出ます。
 
-**名前の重複について**: タブの名前は重複できません。登録しようとしたフォルダ名がすでに使われている場合は、「タブ名の重複」ダイアログが開くので、「別の名前を入力してください」に従って別の名前を入力します。
+**名前の重複について**: 作成や登録のときに、同じ名前のタブがすでにあると、名前の後ろに `(1)`、`(2)` のような番号が自動でつきます。「名前を変更」で別のタブと同じ名前(大文字・小文字の違いは区別されません)にしようとすると、「同じ名前のものが既に存在します」と表示され、変更されません。
 
 **使えない名前**: 名前に `\ / : * ? " < > |` は使えません。Windows で予約されている名前、先頭や末尾の空白、末尾のピリオドも使えません。入力欄の下にその理由が表示されます。
 
@@ -258,6 +258,7 @@ Ctrl+クリックで1つずつ追加選択、Shift+クリックで範囲選択�
 
 - 「プレビューに固定」(鍵のアイコン)を押すと、そのメモをプレビュー表示のまま固定し、ペイン表示のボタンを押せなくします。「プレビュー固定を解除」で元に戻ります。
 - 「プレビューのみ」では、ツールバーが自動的に最小化され、「－」「＋」とパーセント表示のズーム操作が現れます(4.9 参照)。
+- 「プレビューのみ」のときに、ライブ/ソースの切り替え、Ctrl+F、ツールバーの書式ボタン、ツリーでのメモ選択などを行うと、編集画面を見せるために一時的に「分割表示」に切り替わります(この切り替えは保存されません。「プレビューに固定」中は切り替わりません)。
 - 表示モードとペイン表示は、メモごとに記憶されます。新しいメモの初期値は「設定」で変えられます(8.3 参照)。
 
 **分割表示の向き**: 「設定」→「エディタ」の「分割表示の向き」で、「左右に並べる」か「上下に並べる」を選べます。
@@ -278,7 +279,7 @@ Ctrl+クリックで1つずつ追加選択、Shift+クリックで範囲選択�
 | 「行操作」 | 「行を上に移動」「行を下に移動」「行を複製」「行を削除」 |
 | 「変換」 | 「大文字に変換」「小文字に変換」「ひらがなに変換」「カタカナに変換」「半角に変換」「全角に変換」「タブをスペースに」「スペースをタブに」 |
 | 「チェック（☐/☑）」 | カーソルのある行の ☐ と ☑ を切り替えます。行に無ければ、カーソル位置に ☐ を入れます。 |
-| 「Googleで検索」 | 選択した文字列を、既定のブラウザで Google 検索します。 |
+| 「Googleで検索」 | 選択した文字列(選択が無いときはカーソルのある行)を、既定のブラウザで Google 検索します。 |
 | 「検索と置換」 | メモ内の検索と置換を開きます(5.1 参照)。 |
 | 「空白/改行を表示」 | 空白と改行の記号の表示を切り替えます(「空白/改行の表示を消す」で非表示)。 |
 | 「プロパティ」 | ファイル情報と文字数を表示します。 |
@@ -292,7 +293,7 @@ Ctrl+クリックで1つずつ追加選択、Shift+クリックで範囲選択�
 | ボタン名 | 働き |
 |---|---|
 | 「元に戻す」「やり直す」 | 直前の操作を取り消す/やり直す |
-| 「文字色」 | 色の一覧(「赤」「青」「緑」「橙」「紫」)を開きます。選んだ色を選択範囲に付けます。「解除」で色を外します。 |
+| 「文字色」 | 色の見本の一覧(マウスを重ねると「赤」「青」「緑」「橙」「紫」と表示されます)を開きます。選んだ色を選択範囲に付けます。「解除」で色を外します。 |
 | 「文字サイズ」 | 「小」「大」「特大」の一覧を開きます。「解除」でサイズを元に戻します。 |
 | 「見出し」 | カーソル行の見出しレベルを、見出し無し → 1 → 2 → … → 6 → 見出し無し、の順に切り替えます。 |
 | 「リスト」 | 選択した行の先頭に「- 」(箇条書き)を付けたり外したりします。 |
@@ -310,7 +311,7 @@ Ctrl+クリックで1つずつ追加選択、Shift+クリックで範囲選択�
 ツールバー上部の帯(「⋮⋮」のある部分)には、次の操作もあります。
 
 - 帯をドラッグすると、ツールバーの位置を動かせます。位置は保存されます。
-- 「ツールバーを最小化」/「ツールバーを元に戻す」で、ボタンの一群を畳んだり開いたりできます。
+- 「ツールバーを最小化」/「ツールバーを元に戻す」で、ボタンの一群を畳んだり開いたりできます(並べ替えモード中と「プレビューのみ」では押せません)。ウィンドウを最大化・最小化したり元のサイズに戻したりしたときにも、ツールバーは自動で最小化されます。
 - 「PDF出力」(Ctrl+P): プレビューと同じ見た目の PDF を作ります。保存先を選ぶ画面が開きます。メモを開いていないときは押せません。
 - ライブ表示/ソース表示の切り替えとペイン表示の切り替え(4.1 参照)。
 
@@ -331,11 +332,11 @@ CommonMark に準拠した Markdown を使えます。見出し、リスト、�
 
 文字色と文字サイズには Markdown の標準の書き方がないため、`<span style="color:…;font-size:…">` という形で保存されます(ツールバーから設定すると自動で入ります)。
 
-> 安全のため、プレビューでは、許可された書き方(`<img>` と、色・サイズだけの `<span style>`)以外の HTML は取り除かれます。`<script>` などは動きません。
+> 安全のため、プレビューでは、許可された書き方(`<img>`、色・サイズだけの `<span style>`、`<mark>`)以外の HTML は取り除かれます。`<script>` などは動きません。
 
 ### 4.5 チェックボックス
 
-- **クリックで切り替え**: ライブ表示では、`- [ ]` と `- [x]` の形のチェックボックスをクリックするとチェックが入る/外れます(マウスを重ねると「クリックでチェック」/「クリックでチェックを外す」と出ます)。編集ロック中は切り替わりません。
+- **クリックで切り替え**: ライブ表示では、`- [ ]` と `- [x]` の形のチェックボックスをクリックするとチェックが入る/外れます(マウスを重ねると「クリックでチェック」/「クリックでチェックを外す」と出ます)。プレビューのチェックボックスをクリックしても切り替わります。編集ロック中は切り替わりません。
 - **右クリックで切り替え**: カーソルのある行で、右クリックメニューの「チェック（☐/☑）」を選ぶと、☐ と ☑ が入れ替わります。
 
 ### 4.6 画像を貼り付ける・挿入する
@@ -349,7 +350,7 @@ CommonMark に準拠した Markdown を使えます。見出し、リスト、�
 対応する画像の種類は、png、jpg、jpeg、gif、webp、bmp です。
 
 - 通常のタブでは、画像は **`タブのフォルダ/メモ名/`** という画像用フォルダに、`001.png`、`002.png` … の連番で保存されます。メモ名を変えると、このフォルダの名前も変わります。
-- ロック中のタブのロック解除中は、画像はタブのフォルダ直下に、ランダムな名前(`img_…`)で保存されます(メモ名を外から見えなくするためです)。
+- ロック中のタブのロック解除中は、画像はタブのフォルダの中の、メモ名ではなくランダムな名前のフォルダに、`001.png`、`002.png` … の連番で保存されます(メモ名を外から見えなくするためです)。
 - 大きな画像は、保存前に自動で縮小・圧縮されることがあります(長辺が 2000 ピクセルを超える画像は縮小、1MB を超える画像は WebP に変換して軽くします。GIF は変換されません)。
 - メモ本文から画像の記述を消しても、画像ファイルは**自動では削除されません**。不要な画像は、エクスプローラーで手動で整理してください(メモ自体を削除したときの扱いは 3.6 を参照)。
 - プレビューで画像をクリックすると、「画像」ダイアログで拡大表示されます。
@@ -361,7 +362,7 @@ TeX の書き方で数式を書けます。
 - 文中の数式: `$数式$`
 - 独立した数式: `$$数式$$`
 
-数式が実際の数式の形で表示されるのは**プレビュー**(「分割表示」「プレビューのみ」)です。ライブ表示とソース表示では、数式の部分に目印がつくだけで、数式の形では表示されません。
+数式が実際の数式の形で表示されるのは**プレビュー**(「分割表示」「プレビューのみ」)です。ライブ表示では、数式の部分に数式を示す目印(Σ のアイコン)が出るだけで、数式の形では表示されません。ソース表示では、書いた文字がそのまま見えます。
 
 > 注意: 「$」を金額などの普通の文字として使っていると、数式と見なされる場合があります。
 
@@ -387,12 +388,12 @@ TeX の書き方で数式を書けます。
 ### 5.1 メモの中を検索・置換する
 
 1. メモを開いて Ctrl+F(または右クリックの「検索と置換」)を押します。
-2. 上の入力欄に探す文字を入力します。入力に合わせて一致する箇所が探されます。「▼」(「次へ」)、「▲」(「前へ」)、または Enter / Shift+Enter で、次/前の候補へ移動します。「すべて選択」を押すと、一致する箇所をすべて選択します。
+2. 上の入力欄に探す文字を入力し、「▼」(「次へ」)、「▲」(「前へ」)、または Enter / Shift+Enter を押すと、次/前の一致箇所へ移動します(入力しただけでは、まだ検索されません)。「すべて選択」を押すと、一致する箇所をすべて選択します。
 3. 置換するときは、下の入力欄(「置換後の文字列」)に入力し、「置換」で1件ずつ、「すべて置換」でまとめて置き換えます。置換欄で Enter を押しても、1件置換されます。
 4. オプションで「大文字/小文字を区別」「単語単位」「正規表現」を選べます。
 5. 「×」(「閉じる (Esc)」)または Esc で、検索パネルを閉じます。
 
-過去に検索した語は、入力欄の候補として表示されます。
+過去に検索した語(最大20件)は、入力欄の候補として表示されます。
 
 ### 5.2 全タブを横断して検索する(全文検索)
 
@@ -433,7 +434,7 @@ TeX の書き方で数式を書けます。
 - `[表示する文字](リンク先)` の形でも、リンクを書けます。
 - `ftp://` のリンクは、`[表示する文字](ftp://…)` の形で書くと、ライブ表示でもプレビューでも開けます(OS の既定の関連付けに渡されます)。`ftp://…` だけを書いた場合は、プレビューでは自動でリンクになりますが、ライブ表示では自動ではリンクになりません。
 - 日本語を含む URL やメールアドレスにも対応しています。URL の途中に日本語の句読点(「。」「、」など)が来ると、そこで URL が終わったものとして扱われます。
-- 相対パスのファイルパス(`./` や `../` で始まるもの)は、そのメモのタブのフォルダを基準に探されます。
+- 相対パスのファイルパス(`./` で始まるもの)は、そのメモのタブのフォルダを基準に探されます。`../` を含む相対パスは、安全のため開けません。
 - 見つからないファイルや、解決できない `memo:` リンクは、何も起きません。
 
 ### 6.2 リンクを開く操作(開き方の設定)
@@ -547,7 +548,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 - 「ヒント」は、**暗号化されず、そのままの文字で**、タブのフォルダの中の `.tabtreenote.json` に保存されます(パスワードを入力する前の画面に表示するためです)。フォルダを見た人にも読めます。パスワードそのものや、すぐにパスワードが分かる言葉は入れないでください。
 - ロックを使う前や、完全にロック解除する前には、フォルダ全体のコピーでバックアップを取っておくと安心です(フォルダのコピーは、ロック中でもできます)。
 - ロックの途中でアプリが止まるなどして処理が中断した場合、そのタブを開くと「前回のロック操作が完了しませんでした。復旧処理が必要です。」と表示されます。「ロック処理の復旧」ダイアログでパスワードを入力し、「ロックを完了する」か「元に戻す（ロックを取り消す）」を選びます。完全にロック解除する処理が中断した場合も同様に、「完全ロック解除の復旧」の画面で続きから進めるか、ロックを元に戻すかを選べます。「想定外の状態のファイルが見つかりました」と出たときは、手動での確認が必要です。
-- ロック中のタブの名前は、ロックを解除するまで変更できません。
+- ロック中のタブの名前は、完全にロック解除するまで変更できません(一時的にロックを解除して開いている間も変更できません)。
 
 ---
 
@@ -624,6 +625,9 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 ## 9. ショートカット一覧
 
 下の表は、初期状態のキーです。「設定」→「ショートカット」で変更できます(8.2 参照)。
+
+- 書式・表示の表のうち、「ペイン表示モードを切り替え」「PDF出力」「プレビューをズームイン」「プレビューをズームアウト」は、フォーカスがどこにあっても使えます。それ以外の書式のキーは、エディタの本文にフォーカスがあるときだけ使えます。
+- 「強制改行」は、Shift+Enter 固定で動きます。設定で別のキーに変えても、新しいキーでは動きません。
 
 **タブ・ツリー・検索**
 
@@ -703,9 +707,11 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 - メモを削除すると、その `.bak` もいっしょに削除されます。
 - 管理用ファイル `.tabtreenote.json` や、設定ファイル `data/settings.json` にも、同じように `.bak` が作られます。
 
-### 10.3 「管理情報を復元しました」と出たとき
+### 10.3 管理用ファイルが壊れていたとき
 
-タブの管理用ファイル(`.tabtreenote.json`)や設定ファイルが壊れていたときに出る通知です。まず `.bak` から復元を試み、それもできないときは、フォルダの中の `.md` ファイルから一覧を作り直します。作り直した場合は、メモの階層・色ラベルなどが失われますが、**メモの内容は失われません**。
+タブの管理用ファイル(`.tabtreenote.json`)が壊れていたときは、まず `.bak` から復元を試み、それもできないときは、フォルダの中の `.md` ファイルから一覧を作り直します。作り直した場合は、メモの階層・色ラベルなどが失われますが、**メモの内容は失われません**。
+
+設定ファイル(`data/settings.json`)が壊れていたときも、まず `.bak` から復元を試み、それもできないときは初期設定に戻ります。登録していたタブの一覧も空になるので、「既存フォルダを登録」で、フォルダを登録し直してください(フォルダの中のメモは消えません)。
 
 ### 10.4 エラーメッセージの意味
 
@@ -714,7 +720,6 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 | 「同じ名前のものが既に存在します」 | 同じ名前がすでにあります。別の名前にしてください。 |
 | 「使用できない名前です」 | 使えない文字や名前です(2.1 参照)。 |
 | 「ファイルが他のプログラムで使用されています」 | ほかのプログラムがファイルを開いています。閉じてからやり直してください。 |
-| 「パスが長すぎる可能性があります」 | フォルダの階層が深いなどでパスが長すぎます(260 文字を超える長いパスには、正式には対応していません)。短い場所に置き直してください。 |
 | 「パスワードが正しくありません」 | タブロックのパスワードが違います。 |
 | 「ロックされたタブには操作できません」 | ロックを解除してから操作してください。 |
 | 「編集ロック中のメモは削除・名前変更できません」 | 先に「編集ロック解除」を選んでください。 |
@@ -732,10 +737,10 @@ A. タブのフォルダをコピーするだけでバックアップになり�
 A. すでに起動しているアプリのウィンドウが前面に出ます。2つ同時には起動しません。
 
 **Q. メモを削除してしまいました。**
-A. Windows のごみ箱を確認してください。ごみ箱に移動されています(「完全に削除」を選んだ場合を除きます)。タブの「削除」は登録を外すだけなので、フォルダの中身はそのまま残っています。
+A. Windows のごみ箱を確認してください。ごみ箱に移動されています(「完全に削除」を選んだ場合を除きます)。「タブを削除」は登録を外すだけなので、フォルダの中身はそのまま残っています。
 
 **Q. 貼り付けた画像のファイルが見つかりません。**
-A. 通常のタブでは、`タブのフォルダ/メモ名/` の中にあります(4.6 参照)。ロック中のタブのロック解除中に貼り付けた画像は、タブのフォルダ直下に `img_…` という名前で保存されています。
+A. 通常のタブでは、`タブのフォルダ/メモ名/` の中にあります(4.6 参照)。ロック中のタブのロック解除中に貼り付けた画像は、タブのフォルダの中の、ランダムな名前のフォルダに保存されています(古いバージョンで貼り付けたものは、タブのフォルダ直下の `img_…` という名前のファイルです)。
 
 **Q. 検索に出てこないメモがあります。**
 A. ロック中のタブは、検索の対象外です。また、ロックを解除して開いている間も対象外です。
@@ -810,7 +815,7 @@ The "Close" button (×) at the top right **quits the app** (it does not go to th
 ### 1.3 Where Data Is Stored (Portable Layout)
 
 - App settings and tab registrations are stored in the **`data/` folder** next to the executable. The Windows registry and `%APPDATA%` are not used.
-- If you copy only the executable to another location and start it, it runs as an independent environment with no settings or tabs. You can keep several copies side by side.
+- If you copy only the executable to another location and start it, it runs as an independent environment with no settings or tabs. However, only one instance can run at a time (starting the app again while it is running brings the already-running window to the front).
 - Folders of tabs made with "Create New Tab" are created under `data/tabs/`. Folders registered with "Register Existing Folder" stay where they are.
 - To move your settings to another computer, copy the executable and the `data/` folder together.
 
@@ -836,7 +841,7 @@ There are three ways to add a tab.
 
 1. Click "＋" (tooltip "Create New Tab") on the tab bar.
 2. In the "Create New Tab" dialog, enter a name in "Tab (folder) name" and press "Create".
-3. A folder with that name is created under `data/tabs/` and registered as a tab. If a folder with the same name already exists, a number is added, as in `name(1)` and `name(2)`.
+3. A folder with that name is created under `data/tabs/` and registered as a tab. If a folder or tab with the same name already exists, a number is added, as in `name(1)` and `name(2)`.
 
 **Method B: register an existing folder**
 
@@ -846,11 +851,11 @@ There are three ways to add a tab.
 
 **Method C: drag a folder to register it**
 
-Drag and drop a folder from File Explorer onto the tab bar (the registration is the same as Method B).
+Drag and drop a folder from File Explorer onto the tab bar (the registration is the same as Method B). If you drop several folders at once, only the first one is registered.
 
 When no tab is registered, the screen shows "No tabs are registered" with the "Register Existing Folder" and "Create New Tab" buttons.
 
-**About duplicate names**: tab names cannot be duplicated. If the name of the folder you are registering is already used, the "Duplicate Tab Name" dialog opens; enter a different name as instructed by "Enter a different name".
+**About duplicate names**: when you create or register a tab and a tab with the same name already exists, a number such as `(1)` or `(2)` is added to the name automatically. If you try to use "Rename" to give a tab the same name as another tab (upper and lower case are not distinguished), "An item with the same name already exists" is shown and the name is not changed.
 
 **Names that cannot be used**: `\ / : * ? " < > |` cannot be used in names. Names reserved by Windows, leading or trailing spaces, and a trailing period are also not allowed. The reason is shown below the input field.
 
@@ -1014,6 +1019,7 @@ As with the live/source button, the button shows the **name of the layout it swi
 
 - Pressing "Pin to Preview" (the lock icon) keeps that memo in preview and disables the pane layout button. "Unpin Preview" reverses this.
 - In "Preview Only", the toolbar minimizes itself automatically and the zoom controls ("－", "＋" and a percentage) appear (see 4.9).
+- While in "Preview Only", using the live/source switch, Ctrl+F, the toolbar's formatting buttons, or selecting a memo in the tree temporarily switches to "Split View" so that the editor is visible (this switch is not saved, and does not happen while "Pin to Preview" is on).
 - The view mode and pane layout are remembered for each memo. The initial value for new memos can be changed in Settings (see 8.3).
 
 **Split view orientation**: in "Settings" > "Editor", "Split View Orientation" lets you choose "Side by Side" or "Top and Bottom".
@@ -1034,7 +1040,7 @@ As with the live/source button, the button shows the **name of the layout it swi
 | "Line Operations" | "Move Line Up", "Move Line Down", "Duplicate Line", "Delete Line" |
 | "Convert" | "Convert to Uppercase", "Convert to Lowercase", "Convert to Hiragana", "Convert to Katakana", "Convert to Half-Width", "Convert to Full-Width", "Tabs to Spaces", "Spaces to Tabs" |
 | "Toggle Checkbox (☐/☑)" | Switches the ☐ or ☑ on the cursor's line. If there is none, a ☐ is inserted at the cursor. |
-| "Search with Google" | Searches the selected text on Google in your default browser. |
+| "Search with Google" | Searches the selected text (or the cursor's line if nothing is selected) on Google in your default browser. |
 | "Find and Replace" | Opens in-memo search and replace (see 5.1). |
 | "Show Whitespace" | Toggles the display of whitespace and line-break marks ("Hide Whitespace" turns it off). |
 | "Properties" | Shows file information and character counts. |
@@ -1048,7 +1054,7 @@ A "toolbar" of buttons for applying formatting floats over the editor (9 columns
 | Button | What it does |
 |---|---|
 | "Undo", "Redo" | Cancels or repeats the previous operation |
-| "Text Color" | Opens a list of colors ("Red", "Blue", "Green", "Orange", "Purple"). Applies the chosen color to the selection. "Clear" removes the color. |
+| "Text Color" | Opens a list of color swatches (hovering shows "Red", "Blue", "Green", "Orange", "Purple"). Applies the chosen color to the selection. "Clear" removes the color. |
 | "Font Size" | Opens a list of "Small", "Large" and "Extra Large". "Clear" restores the size. |
 | "Heading" | Cycles the heading level of the cursor's line: no heading → 1 → 2 → … → 6 → no heading. |
 | "List" | Adds or removes "- " (a bullet) at the start of the selected lines. |
@@ -1066,7 +1072,7 @@ A "toolbar" of buttons for applying formatting floats over the editor (9 columns
 The strip at the top of the toolbar (the part with "⋮⋮") also offers these operations.
 
 - Drag the strip to move the toolbar. The position is saved.
-- "Minimize Toolbar" / "Restore Toolbar" folds or unfolds the group of buttons.
+- "Minimize Toolbar" / "Restore Toolbar" folds or unfolds the group of buttons (it cannot be pressed in Rearrange Mode or in "Preview Only"). The toolbar is also minimized automatically when you maximize or minimize the window, or restore it to its original size.
 - "Export PDF" (Ctrl+P): creates a PDF that looks like the preview. A screen to choose where to save opens. It cannot be pressed while no memo is open.
 - The live/source switch and the pane layout switch (see 4.1).
 
@@ -1087,11 +1093,11 @@ CommonMark-compatible Markdown can be used: headings, lists, quotes, code blocks
 
 Because Markdown has no standard way to write text color and text size, they are saved in the form `<span style="color:…;font-size:…">` (this is inserted automatically when you set them from the toolbar).
 
-> For safety, the preview removes HTML other than the allowed forms (`<img>` and `<span style>` containing only color and size). `<script>` and the like do not run.
+> For safety, the preview removes HTML other than the allowed forms (`<img>`, `<span style>` containing only color and size, and `<mark>`). `<script>` and the like do not run.
 
 ### 4.5 Checkboxes
 
-- **Click to toggle**: in live view, clicking a checkbox written as `- [ ]` or `- [x]` checks or unchecks it (hovering shows "Click to check" / "Click to uncheck"). It does not toggle in an edit-locked memo.
+- **Click to toggle**: in live view, clicking a checkbox written as `- [ ]` or `- [x]` checks or unchecks it (hovering shows "Click to check" / "Click to uncheck"). Clicking a checkbox in the preview also toggles it. It does not toggle in an edit-locked memo.
 - **Right-click to toggle**: on the cursor's line, choose "Toggle Checkbox (☐/☑)" in the context menu to switch between ☐ and ☑.
 
 ### 4.6 Pasting and Inserting Images
@@ -1105,7 +1111,7 @@ You can add an image to a memo in any of these ways.
 Supported image types are png, jpg, jpeg, gif, webp and bmp.
 
 - In a normal tab, images are saved in an image folder named **`tab-folder/memo-name/`**, as sequential files `001.png`, `002.png` and so on. If you rename the memo, this folder is renamed too.
-- While a locked tab is unlocked, images are saved directly in the tab's folder with random names (`img_…`), so that the memo name is not visible from outside.
+- While a locked tab is unlocked, images are saved inside the tab's folder, in a folder with a random name instead of the memo name, as sequential files `001.png`, `002.png` and so on (so that the memo name is not visible from outside).
 - A large image may be automatically shrunk or compressed before saving (an image whose longer edge exceeds 2000 pixels is shrunk, and an image larger than 1 MB is converted to WebP to make it lighter. GIFs are not converted).
 - Removing the image text from a memo's body does **not** delete the image file automatically. Tidy up unneeded images by hand in File Explorer (for what happens when you delete the memo itself, see 3.6).
 - Clicking an image in the preview enlarges it in the "Image" dialog.
@@ -1117,7 +1123,7 @@ You can write math using TeX notation.
 - Inline math: `$formula$`
 - Block math: `$$formula$$`
 
-Formulas are displayed as typeset math only in the **preview** ("Split View" and "Preview Only"). In live view and source view, the formula part just gets a marker and is not shown in math form.
+Formulas are displayed as typeset math only in the **preview** ("Split View" and "Preview Only"). In live view, the formula part only shows a marker (a Σ icon) and is not shown in math form. In source view, the text you wrote is shown as it is.
 
 > Note: if you use "$" as an ordinary character, such as for amounts of money, it may be treated as math.
 
@@ -1143,12 +1149,12 @@ The table of contents is updated **only when you press the button**. After chang
 ### 5.1 Searching and Replacing Within a Memo
 
 1. Open a memo and press Ctrl+F (or choose "Find and Replace" from the context menu).
-2. Enter the text to find in the upper field. Matches are searched as you type. Use "▼" ("Next"), "▲" ("Previous"), or Enter / Shift+Enter to move to the next or previous match. "Select All" selects every match.
+2. Enter the text to find in the upper field, then press "▼" ("Next"), "▲" ("Previous"), or Enter / Shift+Enter to move to the next or previous match (typing alone does not search yet). "Select All" selects every match.
 3. To replace, enter text in the lower field ("Replacement text"), then press "Replace" to replace one at a time or "Replace All" to replace everything. Pressing Enter in the replacement field also replaces one match.
 4. Options: "Case sensitive", "Whole word" and "Regex".
 5. Close the search panel with "×" ("Close (Esc)") or Esc.
 
-Past search terms appear as suggestions in the input field.
+Past search terms (up to 20) appear as suggestions in the input field.
 
 ### 5.2 Searching Across All Tabs (Full-Text Search)
 
@@ -1189,7 +1195,7 @@ In the editor (live view) and the preview, you can click these links to open the
 - Links can also be written in the form `[display text](destination)`.
 - An `ftp://` link written as `[display text](ftp://…)` can be opened in both the live view and the preview (it is handed to the OS's default association). If you write only `ftp://…`, the preview turns it into a link automatically, but the live view does not.
 - URLs and email addresses containing Japanese are supported. If a Japanese punctuation mark (such as "。" or "、") appears in the middle of a URL, the URL is treated as ending there.
-- A relative file path (starting with `./` or `../`) is looked up relative to the folder of the memo's tab.
+- A relative file path (starting with `./`) is looked up relative to the folder of the memo's tab. A relative path containing `../` cannot be opened, for safety.
 - A file that cannot be found, or a `memo:` link that cannot be resolved, does nothing.
 
 ### 6.2 How Links Are Opened (Settings)
@@ -1303,7 +1309,7 @@ A locked tab hides its name, so every locked tab shows only 🔒. Right-click th
 - The "hint" is saved **unencrypted, as plain text**, in `.tabtreenote.json` inside the tab's folder (so that it can be shown on the screen before the password is entered). Anyone who looks at the folder can read it. Do not put the password itself, or words that make it easy to guess, in the hint.
 - Before using locks, or before permanently unlocking, it is a good idea to back up by copying the whole folder (copying the folder works even while the tab is locked).
 - If locking is interrupted, for example because the app stops midway, opening that tab shows "The previous lock operation did not finish. Recovery is required." In the "Lock Recovery" dialog, enter the password and choose "Finish Locking" or "Undo (cancel the lock)". If a permanent unlock is interrupted, you can similarly continue or restore the lock from the "Permanent Unlock Recovery" screen. If "files in an unexpected state were found" appears, manual review is required.
-- A locked tab cannot be renamed until it is unlocked.
+- A locked tab cannot be renamed until it is permanently unlocked (it also cannot be renamed while it is temporarily unlocked).
 
 ---
 
@@ -1380,6 +1386,9 @@ An operation with no key assigned shows "Unbound".
 ## 9. Keyboard Shortcuts
 
 The tables below show the initial keys. They can be changed in "Settings" > "Shortcuts" (see 8.2).
+
+- In the Formatting and display table, "Cycle Pane Layout", "Export PDF", "Zoom Preview In" and "Zoom Preview Out" work wherever the focus is. The other formatting keys work only while the focus is in the editor body.
+- "Hard Break" always works with Shift+Enter. Even if you change it to another key in the settings, the new key does not work.
 
 **Tabs, tree and search**
 
@@ -1459,9 +1468,11 @@ Each time a memo is saved, the previous content is kept in the same folder as `m
 - When you delete a memo, its `.bak` is deleted along with it.
 - The management file `.tabtreenote.json` and the settings file `data/settings.json` get `.bak` files in the same way.
 
-### 10.3 When "Restored the management metadata" Appears
+### 10.3 When a Management File Is Damaged
 
-This notice appears when a tab's management file (`.tabtreenote.json`) or the settings file was damaged. The app first tries to restore from the `.bak`; if that is not possible, it rebuilds the list from the `.md` files in the folder. When rebuilt, the memo hierarchy, color labels and so on are lost, but **the contents of your memos are not lost**.
+If a tab's management file (`.tabtreenote.json`) is damaged, the app first tries to restore it from the `.bak`; if that is not possible, it rebuilds the list from the `.md` files in the folder. When rebuilt, the memo hierarchy, color labels and so on are lost, but **the contents of your memos are not lost**.
+
+If the settings file (`data/settings.json`) is damaged, the app likewise first tries the `.bak`; if that is not possible, it returns to the initial settings. The list of registered tabs also becomes empty, so register your folders again with "Register Existing Folder" (the memos inside the folders are not deleted).
 
 ### 10.4 What the Error Messages Mean
 
@@ -1470,7 +1481,6 @@ This notice appears when a tab's management file (`.tabtreenote.json`) or the se
 | "An item with the same name already exists" | The name is already used. Choose a different name. |
 | "This name cannot be used" | It contains characters or a name that cannot be used (see 2.1). |
 | "The file is in use by another program" | Another program has the file open. Close it and try again. |
-| "The path may be too long" | The path is too long, for example because folders are nested deeply (paths longer than 260 characters are not formally supported). Move it to a shorter location. |
 | "The password is incorrect" | The Tab Lock password is wrong. |
 | "This operation cannot be performed on a locked tab" | Unlock the tab first. |
 | "An edit-locked memo cannot be deleted or renamed" | Choose "Remove Edit Lock" first. |
@@ -1491,7 +1501,7 @@ A. The window of the already-running app comes to the front. Two copies do not r
 A. Check the Windows Recycle Bin. The memo was moved there (unless you chose "Delete Permanently"). "Remove Tab" only unregisters the tab, so the contents of its folder remain as they were.
 
 **Q. I cannot find the pasted image file.**
-A. In a normal tab it is inside `tab-folder/memo-name/` (see 4.6). An image pasted while a locked tab was unlocked is saved directly in the tab's folder with a name like `img_…`.
+A. In a normal tab it is inside `tab-folder/memo-name/` (see 4.6). An image pasted while a locked tab was unlocked is saved in a folder with a random name inside the tab's folder (images pasted by older versions are files named like `img_…` directly in the tab's folder).
 
 **Q. Some memos do not show up in search.**
 A. Locked tabs are not searched, even while they are temporarily unlocked.
