@@ -49,6 +49,8 @@ TabTreeNoteMD は、メモを「タブ × ツリー」で整理する Windows �
 
 このアプリには Windows 標準のタイトルバーがありません。タブバーの空いている部分をドラッグするとウィンドウを移動できます。
 
+右上の「閉じる」ボタン(×)を押すと、アプリは**終了します**(トレイには入りません)。終了の直前に、編集中のメモは保存されます。設定による動作の切り替えはありません。最小化したときはタスクバーに残ります。タスクトレイにアイコンが出ますが、トレイに入った状態になるのは「Windowsログイン時にトレイへ自動起動する」で起動した場合だけです(8.1 参照)。
+
 ### 1.3 データの保存場所(ポータブル構成)
 
 - アプリの設定とタブの登録情報は、実行ファイルと同じ場所にある **`data/` フォルダ**に保存されます(Windows のレジストリや `%APPDATA%` は使いません)。
@@ -226,9 +228,9 @@ Ctrl+クリックで1つずつ追加選択、Shift+クリックで範囲選択�
 エクスプローラーから `.md` ファイルをツリーの上へドラッグ&ドロップすると、メモとして取り込めます。
 
 - **コピーです**。元のファイルは変更も削除もされません。
-- メモの行の上にドロップすると、そのメモの子として取り込まれます。何も無い場所にドロップすると、一番上の階層の末尾に取り込まれます。
-- `.md` 以外のファイルとフォルダは取り込まれません(読み飛ばされます)。取り込みのあと、「○件をインポートしました（○件をスキップ）」と通知されます。
-- 同じ名前のメモがすでにある場合は、「インポート時の名前の重複」ダイアログで、「スキップ」「上書き」「名前を変更してインポート」から選びます。「残りの重複項目すべてにこの選択を適用する」にチェックを入れると、同じ選択をまとめて適用できます。Esc を押すと、残りの取り込みを中止します。
+- メモの行の上にドロップすると、そのメモの子(子の並びの末尾)として取り込まれます。ツリーの何も無い場所にドロップすると、一番上の階層の末尾に取り込まれます。メモ名は、ファイル名から `.md` を除いたものです。
+- `.md` 以外のファイルとフォルダは取り込まれません(読み飛ばされます)。スキップした項目があったときは、取り込みのあと、「○件をインポートしました（○件をスキップ）」と通知されます。
+- 同じ名前のメモがすでにある場合は、「インポート時の名前の重複」ダイアログで、「スキップ」「上書き」「名前を変更してインポート」から選びます。「残りの重複項目すべてにこの選択を適用する」にチェックを入れると、同じ選択をまとめて適用できます。重複ダイアログで Esc を押すと、その項目とまだ処理していない残りの項目は取り込まれず(スキップ扱い)、取り込みが中止されます。ただし、Esc より前に処理が決まっていた項目(重複のなかったものや、すでに選択済みのもの)は取り込まれます。
 - 編集ロック中のメモには「上書き」できません。
 
 ---
@@ -424,10 +426,12 @@ TeX の書き方で数式を書けます。
 | URL | `https://example.com` または `www.example.com` | 既定のブラウザ |
 | メール | `name@example.com` | 既定のメールソフト |
 | ファイルパス | `C:\Users\…\memo.txt`、`./相対パス/ファイル` | そのファイルを関連付けられたアプリで開く |
+| FTP | `[表示する文字](ftp://example.com/file)` | 既定のアプリ(OS が `ftp://` に関連付けているもの) |
 | メモ間リンク | `memo:メモ名` など(6.4 参照) | アプリ内でそのメモを開く |
 | 見出しリンク | `[見出し](#見出し名)`(目次が作ります) | 同じメモの中の見出しへ移動 |
 
 - `[表示する文字](リンク先)` の形でも、リンクを書けます。
+- `ftp://` のリンクは、`[表示する文字](ftp://…)` の形で書くと、ライブ表示でもプレビューでも開けます(OS の既定の関連付けに渡されます)。`ftp://…` だけを書いた場合は、プレビューでは自動でリンクになりますが、ライブ表示では自動ではリンクになりません。
 - 日本語を含む URL やメールアドレスにも対応しています。URL の途中に日本語の句読点(「。」「、」など)が来ると、そこで URL が終わったものとして扱われます。
 - 相対パスのファイルパス(`./` や `../` で始まるもの)は、そのメモのタブのフォルダを基準に探されます。
 - 見つからないファイルや、解決できない `memo:` リンクは、何も起きません。
@@ -530,7 +534,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 
 ロック中のタブは、名前が隠れて、どれも 🔒 だけの表示になります。タブを右クリックして「ロック済みタブのラベルを設定」を選ぶと、自分で決めたラベルを付けられます(「ラベル（空欄で解除）」)。ロック中のタブは「🔒 ラベル」と表示されます。
 
-> 注意: ラベルは、ロックされたタブを見分けるためのものです。本当のタブ名やメモの内容に関わる、人に知られたくない言葉は入れないでください。
+> 注意: ラベルは**暗号化されず、そのままの文字で**アプリの設定ファイル(`data/settings.json`)に保存されます。ロック中でも読めますし、設定ファイルを見た人にも分かります。ラベルは、ロックされたタブを見分けるためのものです。本当のタブ名やメモの内容に関わる、人に知られたくない言葉は入れないでください。
 
 ### 7.7 ほかのタブとのメモのやりとり
 
@@ -540,7 +544,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 ### 7.8 注意点
 
 - **パスワードを忘れたときの復元機能は、このアプリにはありません。** 内容を読むにはパスワードが必要な仕組みで、パスワードの再発行や、運営側で解除する手段は用意されていません。パスワードは忘れないように管理してください。
-- 「ヒント」は、パスワードを入力する前の画面に表示されます。パスワードそのものや、すぐにパスワードが分かる言葉は入れないでください。
+- 「ヒント」は、**暗号化されず、そのままの文字で**、タブのフォルダの中の `.tabtreenote.json` に保存されます(パスワードを入力する前の画面に表示するためです)。フォルダを見た人にも読めます。パスワードそのものや、すぐにパスワードが分かる言葉は入れないでください。
 - ロックを使う前や、完全にロック解除する前には、フォルダ全体のコピーでバックアップを取っておくと安心です(フォルダのコピーは、ロック中でもできます)。
 - ロックの途中でアプリが止まるなどして処理が中断した場合、そのタブを開くと「前回のロック操作が完了しませんでした。復旧処理が必要です。」と表示されます。「ロック処理の復旧」ダイアログでパスワードを入力し、「ロックを完了する」か「元に戻す（ロックを取り消す）」を選びます。完全にロック解除する処理が中断した場合も同様に、「完全ロック解除の復旧」の画面で続きから進めるか、ロックを元に戻すかを選べます。「想定外の状態のファイルが見つかりました」と出たときは、手動での確認が必要です。
 - ロック中のタブの名前は、ロックを解除するまで変更できません。
@@ -569,7 +573,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 
 **スタートアップ**
 
-- 「Windowsログイン時にトレイへ自動起動する」: オンにすると、Windows にログインしたとき、アプリがタスクトレイに入った状態で起動します。トレイのアイコンをクリックすると、ウィンドウが表示されます。
+- 「Windowsログイン時にトレイへ自動起動する」: オンにすると、Windows にログインしたとき、アプリがタスクトレイに入った状態で起動します。トレイのアイコンをクリックすると、ウィンドウが表示されます。なお、ウィンドウの「閉じる」ボタン(×)は、この設定に関係なくアプリを終了します(トレイには入りません)。
 
 **タブロック**(7.4 参照)
 
@@ -581,7 +585,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 
 ### 8.2 ショートカット
 
-操作ごとのショートカットキーの一覧です(既定のキーは 9 を参照)。キーを変更できます(「次のタブ」「前のタブ」を除く。9 参照)。
+操作ごとのショートカットキーの一覧です(既定のキーは 9 を参照)。キーを変更できます(「次のタブ」「前のタブ」を除く。この2つは現在は既定のキーのみ有効です。9 参照)。
 
 1. 変更したい操作の行にあるキーのボタンを押します。「キー入力待ち...」と表示されます。
 2. 割り当てたいキーの組み合わせを押します(Ctrl や Shift だけでは確定しません。通常のキーまで押してください)。
@@ -801,6 +805,8 @@ Drag the border between the tree and the editor to change the tree width. Double
 
 This app has no standard Windows title bar. Drag an empty part of the tab bar to move the window.
 
+The "Close" button (×) at the top right **quits the app** (it does not go to the tray). The memo you are editing is saved just before quitting. This behavior does not depend on any setting. When you minimize, the app stays on the taskbar. A tray icon is shown, but the app is placed in the tray only when it was started through "Auto-launch to tray on Windows login" (see 8.1).
+
 ### 1.3 Where Data Is Stored (Portable Layout)
 
 - App settings and tab registrations are stored in the **`data/` folder** next to the executable. The Windows registry and `%APPDATA%` are not used.
@@ -978,9 +984,9 @@ Right-click a memo and open "Icon" to choose from "None", "🔴 Red", "🔵 Blue
 Drag and drop `.md` files from File Explorer onto the tree to import them as memos.
 
 - This is a **copy**. The original files are never changed or deleted.
-- Dropping on a memo's row imports the files as children of that memo. Dropping on an empty area imports them at the end of the top level.
-- Files other than `.md`, and folders, are not imported (they are skipped). After the import, a notice such as "Imported ○ item(s) (○ skipped)" appears.
-- If a memo with the same name already exists, the "Duplicate Name on Import" dialog lets you choose "Skip", "Overwrite" or "Rename and Import". Check "Apply this choice to all remaining duplicates" to apply the same choice to the rest. Pressing Esc cancels the rest of the import.
+- Dropping on a memo's row imports the files as children of that memo (at the end of its children). Dropping on an empty area of the tree imports them at the end of the top level. The memo name is the file name without `.md`.
+- Files other than `.md`, and folders, are not imported (they are skipped). If any items were skipped, a notice such as "Imported ○ item(s) (○ skipped)" appears after the import.
+- If a memo with the same name already exists, the "Duplicate Name on Import" dialog lets you choose "Skip", "Overwrite" or "Rename and Import". Check "Apply this choice to all remaining duplicates" to apply the same choice to the rest. Pressing Esc in the duplicate dialog cancels the import: that item and the items not yet processed are not imported (counted as skipped). Items already decided before the Esc (those with no duplicate, or already chosen) are still imported.
 - A memo that is edit-locked cannot be overwritten.
 
 ---
@@ -1176,10 +1182,12 @@ In the editor (live view) and the preview, you can click these links to open the
 | URL | `https://example.com` or `www.example.com` | Your default browser |
 | Email | `name@example.com` | Your default mail app |
 | File path | `C:\Users\…\memo.txt`, `./relative/path/file` | The file, in its associated app |
+| FTP | `[display text](ftp://example.com/file)` | The default app (whatever the OS associates with `ftp://`) |
 | Memo link | `memo:memo-name` and so on (see 6.4) | The memo, inside the app |
 | Heading link | `[Heading](#heading-name)` (created by the table of contents) | Jumps to the heading within the same memo |
 
 - Links can also be written in the form `[display text](destination)`.
+- An `ftp://` link written as `[display text](ftp://…)` can be opened in both the live view and the preview (it is handed to the OS's default association). If you write only `ftp://…`, the preview turns it into a link automatically, but the live view does not.
 - URLs and email addresses containing Japanese are supported. If a Japanese punctuation mark (such as "。" or "、") appears in the middle of a URL, the URL is treated as ending there.
 - A relative file path (starting with `./` or `../`) is looked up relative to the folder of the memo's tab.
 - A file that cannot be found, or a `memo:` link that cannot be resolved, does nothing.
@@ -1282,7 +1290,7 @@ A confirmation dialog says "Permanently unlocking … returns it to a normal, un
 
 A locked tab hides its name, so every locked tab shows only 🔒. Right-click the tab and choose "Set Lock Label" to give it a label of your own ("Label (leave blank to clear)"). A locked tab then shows "🔒 label".
 
-> Note: the label is for telling locked tabs apart. Do not put words you do not want others to know, such as the real tab name or anything about the memo contents.
+> Note: the label is saved **unencrypted, as plain text**, in the app's settings file (`data/settings.json`). It can be read even while the tab is locked, and by anyone who looks at the settings file. The label is for telling locked tabs apart. Do not put words you do not want others to know, such as the real tab name or anything about the memo contents.
 
 ### 7.7 Exchanging Memos With Other Tabs
 
@@ -1292,7 +1300,7 @@ A locked tab hides its name, so every locked tab shows only 🔒. Right-click th
 ### 7.8 Cautions
 
 - **This app has no feature to recover a forgotten password.** The contents can only be read with the password, and there is no way to reissue the password or to unlock the tab on someone's behalf. Manage your password so that you do not forget it.
-- The "hint" is shown on the screen before the password is entered. Do not put the password itself, or words that make it easy to guess, in the hint.
+- The "hint" is saved **unencrypted, as plain text**, in `.tabtreenote.json` inside the tab's folder (so that it can be shown on the screen before the password is entered). Anyone who looks at the folder can read it. Do not put the password itself, or words that make it easy to guess, in the hint.
 - Before using locks, or before permanently unlocking, it is a good idea to back up by copying the whole folder (copying the folder works even while the tab is locked).
 - If locking is interrupted, for example because the app stops midway, opening that tab shows "The previous lock operation did not finish. Recovery is required." In the "Lock Recovery" dialog, enter the password and choose "Finish Locking" or "Undo (cancel the lock)". If a permanent unlock is interrupted, you can similarly continue or restore the lock from the "Permanent Unlock Recovery" screen. If "files in an unexpected state were found" appears, manual review is required.
 - A locked tab cannot be renamed until it is unlocked.
@@ -1321,7 +1329,7 @@ Press "⚙" ("Settings") on the tab bar to open the "Settings" screen. Switch sc
 
 **Startup**
 
-- "Auto-launch to tray on Windows login": when on, the app starts in the task tray when you log in to Windows. Click the tray icon to show the window.
+- "Auto-launch to tray on Windows login": when on, the app starts in the task tray when you log in to Windows. Click the tray icon to show the window. Note that the window's "Close" button (×) quits the app regardless of this setting (it does not go to the tray).
 
 **Tab Lock** (see 7.4)
 
@@ -1333,7 +1341,7 @@ Press "Third-Party Licenses" at the very bottom to open the license notices of t
 
 ### 8.2 Shortcuts
 
-A list of the keyboard shortcut for each operation (see 9 for the default keys). Keys can be changed (except "Next Tab" and "Previous Tab"; see 9).
+A list of the keyboard shortcut for each operation (see 9 for the default keys). Keys can be changed (except "Next Tab" and "Previous Tab", for which only the default keys are currently active; see 9).
 
 1. Press the key button in the row of the operation you want to change. "Waiting for key input..." appears.
 2. Press the key combination you want to assign (Ctrl or Shift alone does not confirm it; press a regular key too).
