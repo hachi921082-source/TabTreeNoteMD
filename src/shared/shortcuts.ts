@@ -172,3 +172,22 @@ export function normalizeCodeMirrorKey(cmKey: string): string {
   parts.push(normalizeKeyName(keyPart));
   return parts.join("+");
 }
+
+/** アプリ形式のコンボ("Ctrl+Shift+N"等)をCodeMirrorのキー表記("Ctrl-Shift-n")に変換する(Windows専用)。
+ * 修飾キーは Ctrl/Alt/Shift のみ(コンボ文字列に Meta は現れない)。1文字キーは小文字化、
+ * "Space"は" "ではなく"Space"のまま(CodeMirror側が正規化する)、"Enter"/"Tab"/"F2"/"ArrowUp"等の
+ * 名前付きキーはそのまま。解釈できない(空・キー部が無い)場合は null。 */
+export function comboToCodeMirrorKey(combo: string | undefined): string | null {
+  if (!combo) return null;
+  // 先頭の修飾キー列を貪欲に取り、残りをキー部とする(キー自体が "+" の "Ctrl++" も扱える)
+  const m = /^((?:(?:Ctrl|Alt|Shift)\+)*)(.+)$/.exec(combo);
+  if (!m) return null;
+  const mods = m[1].split("+").filter(Boolean);
+  const key = m[2];
+  const out: string[] = [];
+  if (mods.includes("Ctrl")) out.push("Ctrl");
+  if (mods.includes("Alt")) out.push("Alt");
+  if (mods.includes("Shift")) out.push("Shift");
+  out.push(key.length === 1 ? key.toLowerCase() : key);
+  return out.join("-");
+}

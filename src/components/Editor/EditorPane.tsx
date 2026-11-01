@@ -76,6 +76,8 @@ import {
   scrollToTopVisibleLine,
   searchSelectionWithGoogle,
   selectAllCommand,
+  hardBreakCompartment,
+  hardBreakExtension,
   settingsCompartment,
   undoCommand,
   whitespaceCompartment,
@@ -181,6 +183,8 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
 ) {
   const t = useT();
   const ed = useEditor(tabId, memoName, appSettings, isMemoEditLocked);
+  // ビュー生成時点の `markdown.hardBreak` 割り当てを参照するための ref(#320)。
+  const hardBreakComboRef = useRef<string | undefined>(undefined);
   useImperativeHandle(ref, () => ({
     flushSaveNow: ed.flushSaveNow,
     suspendPendingSave: ed.suspendPendingSave,
@@ -846,6 +850,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
           settings: resolvedSettings,
           readOnly,
           showWhitespace,
+          hardBreakCombo: hardBreakComboRef.current,
           onDocChanged: (text) => ed.notifyTextChanged(text),
         }),
         ...buildMarkdownExtensions(initialLiveView, markdownConfig),
@@ -1087,6 +1092,13 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
   useEffect(() => {
     viewRef.current?.dispatch({ effects: settingsCompartment.reconfigure(buildSettingsExtension(resolvedSettings)) });
   }, [resolvedSettings]);
+
+  // `markdown.hardBreak` の割り当て変更を再起動なしで反映する(#320)。
+  const hardBreakCombo = appSettings?.shortcuts?.["markdown.hardBreak"];
+  hardBreakComboRef.current = hardBreakCombo;
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: hardBreakCompartment.reconfigure(hardBreakExtension(hardBreakCombo)) });
+  }, [hardBreakCombo]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: readOnlyCompartment.reconfigure(readOnlyExtension(readOnly)) });
