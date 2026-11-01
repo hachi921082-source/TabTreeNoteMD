@@ -151,7 +151,9 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
         </button>
       }
     >
-      <span className="ttn-settings-version">{__APP_GIT_BRANCH__}</span>
+      <span className="ttn-settings-version" title={__APP_VERSION_LABEL__}>
+        {__APP_VERSION_LABEL__}
+      </span>
       <div className="ttn-settings-tabs" role="tablist">
         <button type="button" className={`ttn-settings-tab${tab === "general" ? " ttn-settings-tab-active" : ""}`} onClick={() => setTab("general")}>
           {t("settings.tabGeneral")}
