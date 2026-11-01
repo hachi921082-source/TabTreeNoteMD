@@ -4,7 +4,7 @@
 
 「タブ × ツリー」でローカルのメモを階層管理する、Windows 向けの Markdown メモエディタです。タブは1つのフォルダ、メモは1つの `.md` ファイルに対応します。メモはすべてプレーンな Markdown ファイルとして手元のフォルダに残るため、他のエディタやバックアップ、同期ツールとそのまま併用できます。
 
-フリーソフト「CatMemoNote」の考え方(タブ=フォルダ、メモ=テキストファイル、3ペイン構成、ドラッグ&ドロップ操作、レジストリに依存しないポータブル設計)を、独立した実装として作り直したものです。
+使い方は [操作ガイド](MANUAL.md) を参照してください。
 
 > **開発状況**: 開発中です(現在のバージョンは v1.2.0 の開発ブランチ)。Windows 11 を優先対象としています。仕様や挙動は今後変わる可能性があります。
 
@@ -45,13 +45,14 @@ npm run tauri build -- --no-bundle
 
 仕様や設計の経緯は [docs/](docs/README.md) にあります。
 
+- [MANUAL.md](MANUAL.md) — 操作ガイド(利用者向け)
 - [docs/spec.md](docs/spec.md) — v1.0.0 の確定仕様
 - [docs/spec.v1.1.0.md](docs/spec.v1.1.0.md) / [docs/spec.v1.2.0.md](docs/spec.v1.2.0.md) — バージョンごとの追加・変更仕様
 - [docs/RESOLVED-ISSUES.md](docs/RESOLVED-ISSUES.md) — 解決済みの issue の記録
 
 ## ライセンスと第三者ソフトウェア
 
-ライセンスは未定です(公開前に確定します)。[EULA.md](EULA.md) は現時点ではたたき台のドラフトで、確定したものではありません。
+本アプリは [MIT ライセンス](LICENSE) で公開しています。
 
 本アプリは多数のオープンソースのコンポーネントを利用しています。一覧とライセンスは [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) を参照してください。
 
@@ -65,7 +66,7 @@ npm run tauri build -- --no-bundle
 
 A Markdown note editor for Windows that manages local notes in a "tabs × tree" layout. A tab maps to a folder and a memo maps to a single `.md` file. Every memo stays a plain Markdown file in a folder you control, so it works alongside other editors, backup tools and sync tools.
 
-It is an independent re-implementation of the ideas of the freeware "CatMemoNote": tabs = folders, memos = text files, a three-pane layout, drag-and-drop operations, and a registry-free portable design.
+See the [User Guide](MANUAL.md) for how to use it.
 
 > **Status**: under development (the current branch is the v1.2.0 line). Windows 11 is the primary target. Specifications and behavior may change.
 
@@ -106,12 +107,13 @@ Stack: Tauri 2 (Rust) + React + TypeScript + CodeMirror 6. The preview is render
 
 Specifications and design history are in [docs/](docs/README.md).
 
+- [MANUAL.md](MANUAL.md) — User Guide (for users)
 - [docs/spec.md](docs/spec.md) — the finalized v1.0.0 specification
 - [docs/spec.v1.1.0.md](docs/spec.v1.1.0.md) / [docs/spec.v1.2.0.md](docs/spec.v1.2.0.md) — additions and changes per version
 - [docs/RESOLVED-ISSUES.md](docs/RESOLVED-ISSUES.md) — record of resolved issues
 
 ## License and third-party software
 
-The license is not decided yet (it will be settled before publication). [EULA.md](EULA.md) is currently a draft starting point, not a final document.
+This app is released under the [MIT License](LICENSE).
 
 This app uses many open-source components. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the list and their licenses.
