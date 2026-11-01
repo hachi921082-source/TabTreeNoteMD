@@ -1,6 +1,6 @@
 [package]
 name = "tabtreenotemd"
-version = "1.2.0"
+version = "1.2.1"
 description = "TabTreeNoteMD: a tab x tree personal note editor"
 authors = ["TabTreeNoteMD"]
 edition = "2021"
