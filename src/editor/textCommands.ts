@@ -18,7 +18,7 @@ import { search } from "@codemirror/search";
 import jaconv from "jaconv";
 import type { EditorDefaults, MemoEditorSettings } from "../shared/models";
 import { linkOpenExternal } from "../ipc/link";
-import { RESERVED_COMBOS, normalizeCodeMirrorKey } from "../shared/shortcuts";
+import { DEFAULT_SHORTCUTS, RESERVED_COMBOS, comboToCodeMirrorKey, normalizeCodeMirrorKey } from "../shared/shortcuts";
 import { hardBreakCommand } from "./decorationCommands";
 import { saveAndInsertImage } from "./imagePaste";
 import type { ErrorCode } from "../shared/result";
@@ -61,6 +61,17 @@ export const CHARS_WRAP_COLUMN = 80;
 export const settingsCompartment = new Compartment();
 export const whitespaceCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
+export const hardBreakCompartment = new Compartment();
+
+/** `markdown.hardBreak` の割り当て(アプリ形式コンボ)から、CodeMirror層の強制改行キー割り当てを作る
+ * (#320)。他のどのキーマップより前に置くこと(`defaultKeymap`の`Ctrl-Enter`等と衝突しても強制改行が
+ * 優先)。未設定/解釈不能時は既定(Shift+Enter)。EditorPane側の window ディスパッチャは
+ * `markdown.hardBreak` を逆引きから除外しているので二重発火しない。旧キー(Shift+Enter)は、割り当てを
+ * 変えるとこの割り当てが無くなり、`defaultKeymap`の通常改行に戻る。 */
+export function hardBreakExtension(combo: string | undefined): Extension {
+  const key = comboToCodeMirrorKey(combo) ?? comboToCodeMirrorKey(DEFAULT_SHORTCUTS["markdown.hardBreak"])!;
+  return keymap.of([{ key, run: hardBreakCommand, preventDefault: true }]);
+}
 
 export interface BuildExtensionsOptions {
   settings: ResolvedEditorSettings;
@@ -71,6 +82,8 @@ export interface BuildExtensionsOptions {
    * for this — see `buildSettingsExtension`'s doc comment on the same discretion). */
   showWhitespace: boolean;
   onDocChanged: (text: string) => void;
+  /** `markdown.hardBreak` の現在の割り当て(#320)。省略時は既定。 */
+  hardBreakCombo?: string;
 }
 
 /** Also used standalone by `EditorPane` to `Compartment.reconfigure` the read-only state on an
@@ -296,9 +309,12 @@ export function buildPlainTextExtensions(opts: BuildExtensionsOptions): Extensio
     // entirely: the edit happens right here, and the later `e.defaultPrevented` bail in
     // `EditorPane.tsx` then correctly suppresses a *second*, duplicate `invokeAction` for the same
     // keypress rather than blocking the only one.
+    //
+    // #320: the binding is no longer fixed to "Shift-Enter" — `hardBreakCompartment` below holds it,
+    // rebuilt from the user's `markdown.hardBreak` assignment, and sits ahead of this keymap.
+    hardBreakCompartment.of(hardBreakExtension(opts.hardBreakCombo)),
     keymap.of([
       { key: "Enter", run: insertNewlineKeepIndent },
-      { key: "Shift-Enter", run: hardBreakCommand },
       ...neutralizeReservedCombos(defaultKeymap),
       ...neutralizeReservedCombos(historyKeymap),
     ]),
