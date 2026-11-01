@@ -1,4 +1,4 @@
 /// <reference types="vite/client" />
 
-/** Git branch at build time (`vite.config.ts`'s `define`, GitHub issue #182). */
-declare const __APP_GIT_BRANCH__: string;
+/** 設定画面の版表示(`vite.config.ts` の `define` でビルド時に確定、GitHub issue #323)。 */
+declare const __APP_VERSION_LABEL__: string;
