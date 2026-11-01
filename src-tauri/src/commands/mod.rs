@@ -19,7 +19,9 @@ pub mod tree;
 pub mod window;
 
 use std::path::Path;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -39,7 +41,12 @@ struct MetaRecoveredPayload {
 /// フロントの listener 登録前に起きてイベントが失われるため、フロントが準備後に
 /// `meta_take_pending_recovery` で取りに行く。同一起動内の複数回の復旧は 1 つにまとまる。
 #[derive(Default)]
-pub struct PendingMetaRecovery(AtomicBool);
+pub struct PendingMetaRecovery {
+    pending: AtomicBool,
+    /// 同一起動内で通知済みの (scope, tab_id)。`.bak` 復元はプライマリを書き直さないので、以降の
+    /// 読み込みでも毎回復旧扱いになる。同じ復旧を何度も通知しないために保持する。
+    notified: Mutex<HashSet<(String, Option<String>)>>,
+}
 
 impl PendingMetaRecovery {
     pub fn new() -> Self {
@@ -47,12 +54,20 @@ impl PendingMetaRecovery {
     }
 
     pub fn mark(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.pending.store(true, Ordering::SeqCst);
+    }
+
+    /// 未通知の (scope, tab_id) なら記録して `true`(通知する)。通知済みなら `false`。
+    pub fn should_notify(&self, scope: &str, tab_id: Option<&str>) -> bool {
+        self.notified
+            .lock()
+            .expect("pending meta recovery lock poisoned")
+            .insert((scope.to_string(), tab_id.map(str::to_string)))
     }
 
     /// 保留中なら `true` を返して解除する。
     pub fn take(&self) -> bool {
-        self.0.swap(false, Ordering::SeqCst)
+        self.pending.swap(false, Ordering::SeqCst)
     }
 }
 
@@ -71,6 +86,9 @@ pub fn meta_take_pending_recovery(pending: tauri::State<PendingMetaRecovery>) ->
 pub(crate) fn emit_meta_recovered(app: &AppHandle, scope: &'static str, tab_id: Option<String>) {
     // 通知の失敗は非致命。イベントが失われても保留フラグで拾える。
     if let Some(pending) = app.try_state::<PendingMetaRecovery>() {
+        if !pending.should_notify(scope, tab_id.as_deref()) {
+            return;
+        }
         pending.mark();
     }
     if let Err(err) = app.emit("evt:meta:recovered", MetaRecoveredPayload { scope, tab_id }) {
@@ -113,6 +131,23 @@ mod pending_recovery_tests {
     #[test]
     fn nothing_pending_on_clean_start() {
         assert!(!PendingMetaRecovery::new().take());
+    }
+
+    #[test]
+    fn same_scope_and_tab_notifies_only_once() {
+        let p = PendingMetaRecovery::new();
+        assert!(p.should_notify("app-settings", None));
+        assert!(!p.should_notify("app-settings", None));
+        assert!(p.should_notify("tab", Some("a")));
+        assert!(!p.should_notify("tab", Some("a")));
+    }
+
+    #[test]
+    fn different_tab_ids_are_separate() {
+        let p = PendingMetaRecovery::new();
+        assert!(p.should_notify("tab", Some("a")));
+        assert!(p.should_notify("tab", Some("b")));
+        assert!(p.should_notify("app-settings", None));
     }
 
     #[test]
