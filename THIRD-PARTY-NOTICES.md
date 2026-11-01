@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-TabTreeNoteMD is distributed as a closed-source built application, but it
+TabTreeNoteMD is released under the MIT License (see `LICENSE`), and it
 incorporates a number of open-source third-party components. This document
 lists every third-party package that ships inside the built app (frontend
 npm dependencies and Rust/Cargo dependencies of the `src-tauri` backend),
@@ -51,7 +51,7 @@ No GPL, LGPL, or AGPL licensed component is used anywhere in this app.
 **Note on dompurify:** dompurify is dual-licensed under MPL-2.0 or Apache-2.0,
 at the user's option. TabTreeNoteMD explicitly elects the **Apache-2.0**
 license for its use of dompurify, to avoid MPL-2.0's per-file copyleft
-obligations in this closed-source distribution. The Apache License 2.0 text
+obligations in this distribution. The Apache License 2.0 text
 is reproduced in [3.2](#32-apache-license-20).
 
 ## 2. Backend (Rust / Cargo) Dependencies
