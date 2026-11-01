@@ -10,7 +10,7 @@
 // mandate one, and every value here is a cheap settings-file write).
 import { useState } from "react";
 import type { AppSettings, AppSettingsPatch } from "../../shared/models";
-import { REBINDABLE_ACTION_IDS, comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
+import { REBINDABLE_ACTION_IDS, comboFromEvent, findDuplicateActions, isShiftSymbolCombo, resolveShortcuts } from "../../shared/shortcuts";
 import { autostartSetEnabled } from "../../ipc/autostart";
 import { aboutGetThirdPartyNotices } from "../../ipc/about";
 import { Dialog } from "../dialogs/Dialog";
@@ -80,10 +80,14 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
   const [licensesText, setLicensesText] = useState<string | null>(null);
   const [licensesError, setLicensesError] = useState<string | null>(null);
 
+  // Shift+記号キーを拒否した行(メッセージ表示用)。次の割り当て操作・成功・リセットで消える。
+  const [rejectedActionId, setRejectedActionId] = useState<string | null>(null);
+
   const effectiveShortcuts = resolveShortcuts(settings.shortcuts);
 
   const startRecording = (actionId: string) => {
     setRecordingActionId(actionId);
+    setRejectedActionId(null);
     const handler = (e: KeyboardEvent) => {
       // Esc cancels recording without rebinding (consistent with Esc-closes-dialogs convention,
       // `[spec §9]`) rather than being captured as the new combo itself. Stop it here so it
@@ -97,6 +101,9 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
         // complete combo — keep the listener alive and keep waiting for the actual non-modifier key
         // instead of committing prematurely (GitHub issue #111).
         return;
+      } else if (isShiftSymbolCombo(e)) {
+        // Shift+記号キーは受け付けない(割り当ては変更せず、録音を終えてメッセージを出す)
+        setRejectedActionId(actionId);
       } else {
         const combo = comboFromEvent(e);
         void patchSettings({ shortcuts: { ...settings.shortcuts, [actionId]: combo } });
@@ -110,6 +117,7 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
   const resetShortcut = (actionId: string) => {
     const next = { ...settings.shortcuts };
     delete next[actionId];
+    setRejectedActionId(null);
     void patchSettings({ shortcuts: next });
   };
 
@@ -320,6 +328,10 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
               {REBINDABLE_ACTION_IDS.map((actionId) => {
                 const isOverridden = settings.shortcuts[actionId] !== undefined;
                 const labelKey = SHORTCUT_LABEL_KEYS[actionId];
+                const duplicateNames = findDuplicateActions(effectiveShortcuts, actionId).map((id) => {
+                  const k = SHORTCUT_LABEL_KEYS[id];
+                  return k ? t(k) : id;
+                });
                 return (
                   <div className="ttn-settings-shortcut-row" key={actionId}>
                     <span className="ttn-settings-shortcut-label">{labelKey ? t(labelKey) : actionId}</span>
@@ -332,6 +344,14 @@ export function SettingsDialog({ settings, patchSettings, applyFetched, onClose 
                       <button type="button" className="ttn-settings-shortcut-reset" title={t("settings.resetToDefault")} onClick={() => resetShortcut(actionId)}>
                         ↺
                       </button>
+                    )}
+                    {rejectedActionId === actionId && recordingActionId !== actionId && (
+                      <div className="ttn-settings-shortcut-warning" role="alert">{t("settings.shortcutRejected")}</div>
+                    )}
+                    {duplicateNames.length > 0 && recordingActionId !== actionId && (
+                      <div className="ttn-settings-shortcut-warning">
+                        {t("settings.shortcutDuplicateTemplate").replace("{action}", duplicateNames.join(", "))}
+                      </div>
                     )}
                   </div>
                 );
