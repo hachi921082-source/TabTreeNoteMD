@@ -24,8 +24,9 @@
 // obfuscated files regardless, and the app is the only writer to them
 // anyway). This allow stays regardless — it also covers
 // unrelated pre-existing dead code reserved for not-yet-wired-up future
-// features (e.g. `fs::path_safety::ValidationMode::Lenient`,
-// `model::result::ErrorCode::LongPath`) elsewhere in this crate.
+// features (e.g. `fs::path_safety::ValidationMode::Lenient`, `model::result::ErrorCode::LongPath` —
+// 長いパスの警告は `evt:path:long-warning` / `ImportFileResult.long_path` で出すため、このコードは
+// 結果として返さない) elsewhere in this crate.
 #![allow(dead_code)]
 
 mod commands;
