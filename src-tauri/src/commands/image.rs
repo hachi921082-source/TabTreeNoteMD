@@ -104,13 +104,13 @@ pub fn image_save_pasted(
     // open at all), so `resolve_tab_access`'s `Err(TabLocked)` case is simply propagated like any
     // other command needs no special casing.
     // `link_dir` is the folder-name component written into the body link.
-    let (save_dir, link_dir) = match resolve_tab_access(&settings, &sessions, &tab_id) {
+    let (save_dir, link_dir, is_plain_tab) = match resolve_tab_access(&settings, &sessions, &tab_id) {
         Ok(TabAccess::Plain { folder, .. }) => match plain_tab_image_dir(&folder, &memo_name) {
-            Ok(dir) => (dir, memo_name.clone()),
+            Ok(dir) => (dir, memo_name.clone(), true),
             Err(code) => return AppResult::err_code(code, "invalid memo image folder"),
         },
         Ok(TabAccess::Session { tab_id, folder }) => match session_memo_image_dir(&sessions, &registry, &folder, &tab_id, &memo_name) {
-            Ok(v) => v,
+            Ok((dir, link)) => (dir, link, false),
             Err(e) => return AppResult::err(e),
         },
         Err(e) => return AppResult::err(e),
@@ -163,6 +163,12 @@ pub fn image_save_pasted(
     // again until `image_read_bytes`/`resolve_relative_within_base` re-parses it, which already
     // accepts `/` on Windows too).
     let relative_path = format!("{link_dir}/{filename}");
+
+    // GitHub issue #319: 平文タブで作った画像ファイルのパスが長ければ警告のみ(保存済み)。ロック中タブの
+    // 画像フォルダは乱数名で短いので対象外。
+    if is_plain_tab {
+        crate::commands::warn_if_long_path(&app, [&target]);
+    }
 
     AppResult::ok(SavedImage { relative_path, width, height })
 }
