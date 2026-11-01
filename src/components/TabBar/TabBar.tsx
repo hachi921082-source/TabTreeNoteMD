@@ -43,7 +43,7 @@ import { ContextMenu } from "../ContextMenu/ContextMenu";
 import { PromptDialog } from "../dialogs/PromptDialog";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { PasswordDialog } from "../dialogs/PasswordDialog";
-import { validateNameStrict, suggestSanitized } from "../../shared/nameSanitize";
+import { validateNameStrict } from "../../shared/nameSanitize";
 import { comboFromEvent, resolveShortcuts } from "../../shared/shortcuts";
 import { errorMessageFor } from "../../shared/errorMessages";
 import { windowSetAlwaysOnTop } from "../../ipc/window";
@@ -96,8 +96,7 @@ type PendingDialog =
    * too, per `docs/detailed-spec.v1.2.0.md` §10.2. */
   | { kind: "setLockLabel"; tab: TabInfo }
   | { kind: "remove"; tab: TabInfo }
-  | { kind: "duplicateName"; path: string; suggestedName: string }
-  | { kind: "createNew"; suggestedName?: string }
+  | { kind: "createNew" }
   | { kind: "lockSetup"; tab: TabInfo }
   | { kind: "unlock"; tab: TabInfo }
   /** Entry point (b) (`docs/plans/tab-lock-permanent-unlock/PLAN.md` §7.8) — permanently
@@ -112,10 +111,6 @@ interface ContextMenuState {
   tabId: string;
   x: number;
   y: number;
-}
-
-function baseNameOf(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
 export function TabBar({
@@ -137,7 +132,6 @@ export function TabBar({
     createTab,
     registerExistingTab,
     createNewTab,
-    retryCreateWithName,
     renameTab,
     setTabLockLabel,
     reorderTabs,
@@ -222,11 +216,7 @@ export function TabBar({
 
   const handleRegisterExisting = useCallback(
     async (path: string) => {
-      const result = await registerExistingTab(path);
-      if (!result.ok && result.code === "NAME_DUPLICATE") {
-        const target = result.path ?? path;
-        setPendingDialog({ kind: "duplicateName", path: target, suggestedName: suggestSanitized(baseNameOf(target)) });
-      }
+      await registerExistingTab(path);
     },
     [registerExistingTab],
   );
@@ -243,10 +233,7 @@ export function TabBar({
   }, [alwaysOnTop]);
 
   const handleCreateTab = useCallback(async () => {
-    const result = await createTab();
-    if (result && !result.ok && result.code === "NAME_DUPLICATE" && result.path) {
-      setPendingDialog({ kind: "duplicateName", path: result.path, suggestedName: suggestSanitized(baseNameOf(result.path)) });
-    }
+    await createTab();
   }, [createTab]);
 
   const handleOpenCreateNew = useCallback(() => {
@@ -555,37 +542,16 @@ export function TabBar({
         />
       )}
 
-      {pendingDialog?.kind === "duplicateName" && (
-        <PromptDialog
-          title={t("tab.duplicateNameTitle")}
-          label={t("tab.duplicateNameLabel")}
-          initialValue={pendingDialog.suggestedName}
-          validate={(value) => validateNameStrict(value, t)}
-          onCancel={() => setPendingDialog(null)}
-          onSubmit={async (value) => {
-            const result = await retryCreateWithName(pendingDialog.path, value);
-            if (result.ok) setPendingDialog(null);
-            else if (result.code === "NAME_DUPLICATE") {
-              setPendingDialog({ kind: "duplicateName", path: result.path ?? pendingDialog.path, suggestedName: value });
-            }
-          }}
-        />
-      )}
-
       {pendingDialog?.kind === "createNew" && (
         <PromptDialog
           title={t("tab.createNewTitle")}
           label={t("tab.createNewLabel")}
-          initialValue={pendingDialog.suggestedName}
           submitLabel={t("common.create")}
           validate={(value) => validateNameStrict(value, t)}
           onCancel={() => setPendingDialog(null)}
           onSubmit={async (value) => {
             const result = await createNewTab(value);
             if (result.ok) setPendingDialog(null);
-            else if (result.code === "NAME_DUPLICATE") {
-              setPendingDialog({ kind: "createNew", suggestedName: suggestSanitized(value) });
-            }
           }}
         />
       )}
