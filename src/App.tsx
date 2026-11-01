@@ -21,6 +21,7 @@ import type { EditorPaneHandle } from "./components/Editor/EditorPane";
 import { TreeSplitter } from "./components/Layout/TreeSplitter";
 import { Toast } from "./components/Toast/Toast";
 import { LongPathWarningListener } from "./components/Toast/LongPathWarningListener";
+import { MetaRecoveredListener } from "./components/Toast/MetaRecoveredListener";
 import { locateNode } from "./shared/treeOps";
 import { editorClose } from "./ipc/editor";
 
@@ -302,6 +303,7 @@ function App() {
         />
         <Toast toasts={toastState.toasts} onDismiss={toastState.dismissToast} />
         <LongPathWarningListener toast={toastState} />
+        <MetaRecoveredListener toast={toastState} />
         <div className="app-content">
           {!tabsState.loading && tabsState.tabs.length === 0 ? (
             <EmptyState tabsState={tabsState} />

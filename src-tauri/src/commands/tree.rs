@@ -1498,7 +1498,10 @@ pub(crate) fn load_tab_meta_with_recovery(folder: &Path) -> (Option<TabMetaFile>
     if let Some(meta) = try_parse_tab_meta(&backup) {
         return (Some(meta), RecoveryOutcome::FromBackup);
     }
-    (None, RecoveryOutcome::Regenerated)
+    // GitHub issue #318: プライマリも `.bak` も無いだけ(.md だけのフォルダを登録した等)は復旧ではないので
+    // 通知しない。壊れていた(存在するが parse 失敗)・`.bak` だけ残っている場合は通知する。
+    let outcome = if !primary.exists() && !backup.exists() { RecoveryOutcome::Clean } else { RecoveryOutcome::Regenerated };
+    (None, outcome)
 }
 
 fn try_parse_tab_meta(path: &Path) -> Option<TabMetaFile> {
@@ -1693,6 +1696,34 @@ mod tests {
         let mut n = leaf(name);
         n.children = children;
         n
+    }
+
+    #[test]
+    fn tab_meta_missing_files_is_clean() {
+        let dir = tempdir();
+        let (meta, outcome) = load_tab_meta_with_recovery(&dir);
+        assert!(meta.is_none());
+        assert_eq!(outcome, RecoveryOutcome::Clean);
+    }
+
+    #[test]
+    fn tab_meta_corrupt_json_is_regenerated() {
+        let dir = tempdir();
+        std::fs::write(dir.join(TAB_META_FILE_NAME), b"{ not json").unwrap();
+        let (meta, outcome) = load_tab_meta_with_recovery(&dir);
+        assert!(meta.is_none());
+        assert_eq!(outcome, RecoveryOutcome::Regenerated);
+    }
+
+    #[test]
+    fn tab_meta_corrupt_primary_with_backup_is_from_backup() {
+        let dir = tempdir();
+        let primary = dir.join(TAB_META_FILE_NAME);
+        std::fs::write(&primary, b"{ not json").unwrap();
+        std::fs::write(bak_path(&primary), br#"{"schemaVersion":1,"appVersion":"x","tree":[]}"#).unwrap();
+        let (meta, outcome) = load_tab_meta_with_recovery(&dir);
+        assert!(meta.is_some());
+        assert_eq!(outcome, RecoveryOutcome::FromBackup);
     }
 
     #[test]

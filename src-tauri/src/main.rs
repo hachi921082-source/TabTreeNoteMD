@@ -78,6 +78,7 @@ fn main() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--tray"])))
         .manage(Arc::new(SelfWriteRegistry::new()))
         .manage(AppSettingsStore::new())
+        .manage(commands::PendingMetaRecovery::new())
         .manage(ActiveMemoTracker::new())
         .manage(LockSessionStore::new())
         .manage(SearchIndex::new())
@@ -130,7 +131,9 @@ fn main() {
                 let store = app.state::<AppSettingsStore>();
                 let registry = app.state::<Arc<SelfWriteRegistry>>();
                 let index = app.state::<SearchIndex>();
-                let (settings, _outcome) = store.get(&registry);
+                let (settings, outcome) = store.get(&registry);
+                // GitHub issue #318: 起動時の復旧はフロント未準備なので、保留フラグに残す。
+                commands::emit_settings_recovery_event(app.handle(), outcome);
                 index.rebuild_all(&settings);
 
                 // External-change watcher startup (`docs/plans/persistence-fs/PLAN.md` §5; GitHub
@@ -225,6 +228,7 @@ fn main() {
             commands::image::image_read_external_file,
             commands::import::import_file,
             commands::about::about_get_third_party_notices,
+            commands::meta_take_pending_recovery,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

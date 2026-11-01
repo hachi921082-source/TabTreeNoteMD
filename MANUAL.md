@@ -709,7 +709,7 @@ URL・メール・ファイルパスのリンクの上で右クリックする�
 
 ### 10.3 管理用ファイルが壊れていたとき
 
-タブの管理用ファイル(`.tabtreenote.json`)が壊れていたときは、まず `.bak` から復元を試み、それもできないときは、フォルダの中の `.md` ファイルから一覧を作り直します。作り直した場合は、メモの階層・色ラベルなどが失われますが、**メモの内容は失われません**。
+タブの管理用ファイル(`.tabtreenote.json`)が壊れていたときは、まず `.bak` から復元を試み、それもできないときは、フォルダの中の `.md` ファイルから一覧を作り直します。作り直した場合は、メモの階層・色ラベルなどが失われますが、**メモの内容は失われません**。復旧したときは「管理情報を復元しました」と通知が表示されます。
 
 設定ファイル(`data/settings.json`)が壊れていたときも、まず `.bak` から復元を試み、それもできないときは初期設定に戻ります。登録していたタブの一覧も空になるので、「既存フォルダを登録」で、フォルダを登録し直してください(フォルダの中のメモは消えません)。
 
@@ -1471,7 +1471,7 @@ Each time a memo is saved, the previous content is kept in the same folder as `m
 
 ### 10.3 When a Management File Is Damaged
 
-If a tab's management file (`.tabtreenote.json`) is damaged, the app first tries to restore it from the `.bak`; if that is not possible, it rebuilds the list from the `.md` files in the folder. When rebuilt, the memo hierarchy, color labels and so on are lost, but **the contents of your memos are not lost**.
+If a tab's management file (`.tabtreenote.json`) is damaged, the app first tries to restore it from the `.bak`; if that is not possible, it rebuilds the list from the `.md` files in the folder. When rebuilt, the memo hierarchy, color labels and so on are lost, but **the contents of your memos are not lost**. A "Restored the management metadata" notification is shown when this happens.
 
 If the settings file (`data/settings.json`) is damaged, the app likewise first tries the `.bak`; if that is not possible, it returns to the initial settings. The list of registered tabs also becomes empty, so register your folders again with "Register Existing Folder" (the memos inside the folders are not deleted).
 
