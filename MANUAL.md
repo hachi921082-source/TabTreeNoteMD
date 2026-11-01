@@ -6,7 +6,7 @@
 
 このガイドは、TabTreeNoteMD をはじめて使う方のための操作説明です。プログラミングの知識は不要です。画面上の名前(メニュー名・ボタン名)は「」で示します。
 
-> バージョンによって画面の文言や挙動が変わることがあります。このガイドは v1.2.0 の内容に基づいています。
+> バージョンによって画面の文言や挙動が変わることがあります。このガイドは v1.2.1 の内容に基づいています。
 
 ## 目次
 
@@ -768,7 +768,7 @@ A. ツールバー上部の帯をドラッグして動かすか、「ツール�
 
 This guide explains how to use TabTreeNoteMD for the first time. No programming knowledge is required. Names shown on screen (menus and buttons) are written in quotation marks.
 
-> Screen text and behavior may change between versions. This guide is based on v1.2.0.
+> Screen text and behavior may change between versions. This guide is based on v1.2.1.
 
 ## Table of Contents
 
