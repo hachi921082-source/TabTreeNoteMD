@@ -32,8 +32,6 @@ export const ja = {
   // ---- tab.* (shared between TabBar's and EmptyState's identical create/duplicate-name dialogs) --
   "tab.createNewTitle": "新しいタブを作成",
   "tab.createNewLabel": "タブ（フォルダ）名",
-  "tab.duplicateNameTitle": "タブ名の重複",
-  "tab.duplicateNameLabel": "別の名前を入力してください",
 
   // ---- TabBar.tsx --------------------------------------------------------
   "tabBar.registerExisting": "既存フォルダを登録",

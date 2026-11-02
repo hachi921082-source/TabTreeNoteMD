@@ -33,10 +33,6 @@ export interface UseTabsResult {
    * `registerExistingTab`, which both require an already-existing folder picked via the OS dialog
    * or drag-and-drop (`docs/plans/tab-management/PLAN.md` §2 `tab_create_new`, GitHub issue #2). */
   createNewTab: (name: string) => Promise<TabMutationOutcome>;
-  /** Retries `createTab`/`registerExistingTab` with an explicit name after a
-   * `NAME_DUPLICATE` rejection, for the same folder path, without
-   * re-opening the dialog. */
-  retryCreateWithName: (path: string, name: string) => Promise<TabMutationOutcome>;
   renameTab: (id: string, newName: string) => Promise<TabMutationOutcome>;
   /** Sets or clears (`label: null`) a locked tab's distinguishing label (`docs/spec.v1.2.0.md`
    * §10). Unlike `renameTab`, works regardless of lock/session state. */
@@ -110,25 +106,6 @@ export function useTabs(): UseTabsResult {
       }
       setLastErrorCode(result.error.code);
       return { ok: false, code: result.error.code, message: result.error.message, path: result.error.path };
-    },
-    [refresh],
-  );
-
-  const retryCreateWithName = useCallback(
-    async (path: string, name: string): Promise<TabMutationOutcome> => {
-      const result = await tabCreate(path, name);
-      if (result.ok && result.value) {
-        await refresh();
-        setActiveTabId(result.value.id);
-        return { ok: true };
-      }
-      if (!result.ok) {
-        setLastErrorCode(result.error.code);
-        return { ok: false, code: result.error.code, message: result.error.message, path: result.error.path ?? path };
-      }
-      // result.value === null shouldn't happen when initialPath is already
-      // given (no dialog is opened in that case), but handle it defensively.
-      return { ok: false, code: "UNKNOWN", message: "tab creation was unexpectedly cancelled", path };
     },
     [refresh],
   );
@@ -207,7 +184,6 @@ export function useTabs(): UseTabsResult {
     createTab,
     registerExistingTab,
     createNewTab,
-    retryCreateWithName,
     renameTab,
     setTabLockLabel,
     reorderTabs,
