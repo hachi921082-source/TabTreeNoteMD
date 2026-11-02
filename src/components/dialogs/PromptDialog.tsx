@@ -1,5 +1,5 @@
 // Single-line text-input dialog built on the shared `Dialog` shell — used by
-// tab create (duplicate-name retry) and tab rename
+// new-tab creation, tab rename and tree item create/rename
 // (`docs/plans/tab-management/PLAN.md` §4).
 import { useState } from "react";
 import { Dialog } from "./Dialog";
