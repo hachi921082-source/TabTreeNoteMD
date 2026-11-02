@@ -19,7 +19,7 @@ use crate::commands::tab_lock::{self, TabAccess};
 use crate::commands::tree::{contains_name, find_node, insert_node_at_end, load_and_reconcile, save_tab_meta, TreeSnapshot};
 use crate::fs::atomic_write::atomic_write;
 use crate::fs::retry::with_retry;
-use crate::fs::path_safety::is_link_or_reparse_point;
+use crate::fs::path_safety::{is_link_or_reparse_point, validate_name, ValidationMode};
 use crate::fs::self_write_registry::SelfWriteRegistry;
 use crate::model::app_settings::EolPolicy;
 use crate::model::result::{AppResult, ErrorCode};
@@ -65,6 +65,12 @@ pub fn import_file(
     sessions: State<LockSessionStore>,
     search_index: State<SearchIndex>,
 ) -> AppResult<ImportFileResult> {
+    // GitHub issue #334: フロントは検証済みの名前しか渡さないが、バックエンドは渡された値を信用しない。
+    // Plain/Session どちらの経路でも `target_name` からファイルパスを組み立てるので、分岐前に検証する。
+    if let Err(code) = validate_name(&target_name, ValidationMode::Strict) {
+        return AppResult::err_code(code, "invalid import target name");
+    }
+
     let (settings, outcome) = store.get(&registry);
     emit_settings_recovery_event(&app, outcome);
 
@@ -537,5 +543,16 @@ mod tests {
         let err = read_source_bytes(missing.to_str().unwrap()).unwrap_err();
         assert_eq!(err, ErrorCode::IoLocked);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn import_target_name_rejects_traversal_and_accepts_japanese() {
+        // GitHub issue #334: import_file は冒頭で Strict 検証する。その規則の確認
+        for bad in ["..\\evil", "../evil", "a/b", "C:\\x", "", " lead", "trail.", "CON"] {
+            assert_eq!(validate_name(bad, ValidationMode::Strict), Err(ErrorCode::NameInvalid), "{bad}");
+        }
+        for ok in ["メモ", "日本語 の名前", "a.b"] {
+            assert_eq!(validate_name(ok, ValidationMode::Strict), Ok(()), "{ok}");
+        }
     }
 }
