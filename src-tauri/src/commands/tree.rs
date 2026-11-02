@@ -1346,7 +1346,11 @@ pub fn memo_get_properties(
         tab_lock::TabAccess::Plain { folder, .. } => folder,
     };
 
-    let file_path = folder.join(format!("{path}.md"));
+    // GitHub issue #330: IPC の path をツリーと照合してからファイルパスを組み立てる。
+    let file_path = match plain_memo_file_path(&folder, &path) {
+        Ok(p) => p,
+        Err(e) => return AppResult::err(e),
+    };
     let metadata = match std::fs::metadata(&file_path) {
         Ok(m) => m,
         Err(_) => return AppResult::err_code(ErrorCode::NotFound, "memo file not found"),
@@ -1405,7 +1409,10 @@ pub fn memo_open_location(
 
     let target = match access {
         tab_lock::TabAccess::Session { folder, .. } => folder,
-        tab_lock::TabAccess::Plain { folder, .. } => folder.join(format!("{path}.md")),
+        tab_lock::TabAccess::Plain { folder, .. } => match plain_memo_file_path(&folder, &path) {
+            Ok(p) => p,
+            Err(e) => return AppResult::err(e),
+        },
     };
 
     match app.opener().reveal_item_in_dir(&target) {
@@ -1415,6 +1422,16 @@ pub fn memo_open_location(
             AppResult::err_code(ErrorCode::NotFound, "could not open the memo's file location")
         }
     }
+}
+
+/// 平文タブで、IPC から渡された `path` がツリーにあるメモ名であることを確認してから
+/// `<folder>/<path>.md` を返す(GitHub issue #330)。ツリーにない `path`(`../x`・絶対パス・`a/b` 等)は
+/// `NotFound` で拒否し、フォルダ外のファイルに触れない。
+fn plain_memo_file_path(folder: &Path, path: &str) -> Result<PathBuf, AppErrorPayload> {
+    if find_node(&load_and_reconcile(folder).tree, path).is_none() {
+        return Err(AppErrorPayload::new(ErrorCode::NotFound, "memo not found"));
+    }
+    Ok(folder.join(format!("{path}.md")))
 }
 
 /// Encoding detection (`[detailed-spec §5.3]`): delegates to the shared
@@ -2286,6 +2303,25 @@ mod tests {
         let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(names, vec!["Ｍｅｍｏ.md.bak".to_string()]);
         assert_eq!(std::fs::read(dir.join("Ｍｅｍｏ.md.bak")).unwrap(), b"old body");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // GitHub issue #330: プロパティ表示・場所を開くが使うツリー照合。
+    #[test]
+    fn plain_memo_file_path_accepts_only_names_in_tree() {
+        let dir = tempdir();
+        let names = ["日記", "with space", "a&b#c"];
+        for name in names {
+            std::fs::write(dir.join(format!("{name}.md")), b"").unwrap();
+        }
+        for name in names {
+            assert_eq!(plain_memo_file_path(&dir, name).unwrap(), dir.join(format!("{name}.md")));
+        }
+        let abs = dir.join("日記").display().to_string();
+        for bad in ["Missing", "../x", r"..\x", "a/b", "", abs.as_str(), r"C:\Windows\win"] {
+            let err = plain_memo_file_path(&dir, bad).unwrap_err();
+            assert_eq!(err.code, ErrorCode::NotFound, "{bad}");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 }
