@@ -64,12 +64,8 @@ pub fn tab_list(app: AppHandle, store: State<AppSettingsStore>, registry: State<
 /// Opens the OS folder-selection dialog when `initial_path` is `None`
 /// (`[spec §2.1]`, never a web `prompt()`); `initial_path` lets a caller
 /// (currently unused by the frontend, reserved for future callers) skip the
-/// dialog and register a folder path it already has. `name`, if given,
-/// overrides the folder-basename-derived proposed name — this is how the
-/// frontend retries after a `NAME_DUPLICATE` rejection without re-opening the
-/// dialog (`tab-management/PLAN.md` §2 step 2 requires this retry path but
-/// the plan's literal signature omits the parameter needed to support it;
-/// this is a plan refinement made during implementation).
+/// dialog and register a folder path it already has. The tab name is always
+/// derived from the folder's base name (auto-numbered on a clash, issue #329).
 ///
 /// Returns `Ok(None)` (not an error) if the user cancels the dialog.
 ///
@@ -89,7 +85,7 @@ pub fn tab_list(app: AppHandle, store: State<AppSettingsStore>, registry: State<
 /// return a literal `std::result::Result`, which this codebase's `AppResult`
 /// wrapper (needed for its custom JSON shape) is not.
 #[tauri::command]
-pub async fn tab_create(app: AppHandle, initial_path: Option<String>, name: Option<String>) -> AppResult<Option<TabInfo>> {
+pub async fn tab_create(app: AppHandle, initial_path: Option<String>) -> AppResult<Option<TabInfo>> {
     let path = match initial_path {
         Some(p) => PathBuf::from(p),
         None => {
@@ -116,7 +112,7 @@ pub async fn tab_create(app: AppHandle, initial_path: Option<String>, name: Opti
 
     let store = app.state::<AppSettingsStore>();
     let registry = app.state::<Arc<SelfWriteRegistry>>();
-    match register_tab_at_path(&app, path, name, &store, &registry) {
+    match register_tab_at_path(&app, path, None, &store, &registry) {
         Ok(info) => AppResult::ok(Some(info)),
         Err(payload) => AppResult::err(payload),
     }
@@ -133,11 +129,10 @@ pub async fn tab_create(app: AppHandle, initial_path: Option<String>, name: Opti
 pub fn tab_register_existing(
     app: AppHandle,
     path: String,
-    name: Option<String>,
     store: State<AppSettingsStore>,
     registry: State<Arc<SelfWriteRegistry>>,
 ) -> AppResult<TabInfo> {
-    match register_tab_at_path(&app, PathBuf::from(path), name, &store, &registry) {
+    match register_tab_at_path(&app, PathBuf::from(path), None, &store, &registry) {
         Ok(info) => AppResult::ok(info),
         Err(payload) => AppResult::err(payload),
     }
