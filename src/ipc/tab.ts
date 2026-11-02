@@ -11,24 +11,21 @@ export async function tabList(): Promise<Result<TabInfo[]>> {
 }
 
 /**
- * `initialPath`/`name` omitted (or `undefined`) opens the OS folder-picker
- * and derives the tab name from the folder's base name. Pass `name` to
- * retry with a user-chosen name after a `NAME_DUPLICATE` rejection, without
- * re-opening the dialog (`docs/plans/tab-management/PLAN.md` §2 `tab_create`
- * refinement). Resolves to `{ ok: true, value: null }` if the user cancels
+ * `initialPath` omitted (or `undefined`) opens the OS folder-picker. The tab
+ * name is derived from the folder's base name (auto-numbered on a clash,
+ * issue #329). Resolves to `{ ok: true, value: null }` if the user cancels
  * the dialog — not an error.
  */
-export async function tabCreate(initialPath?: string, name?: string): Promise<Result<TabInfo | null>> {
+export async function tabCreate(initialPath?: string): Promise<Result<TabInfo | null>> {
   return invoke<Result<TabInfo | null>>("tab_create", {
     initialPath: initialPath ?? null,
-    name: name ?? null,
   });
 }
 
 /** No dialog — registers a folder path already known to the caller (the
  * OS-drag-and-drop-onto-tab-bar entry point). */
-export async function tabRegisterExisting(path: string, name?: string): Promise<Result<TabInfo>> {
-  return invoke<Result<TabInfo>>("tab_register_existing", { path, name: name ?? null });
+export async function tabRegisterExisting(path: string): Promise<Result<TabInfo>> {
+  return invoke<Result<TabInfo>>("tab_register_existing", { path });
 }
 
 /** Creates a brand-new, empty folder under the app's default tabs root and registers it — no OS
