@@ -29,7 +29,7 @@ export const ja = {
   "common.open": "開く",
   "common.search": "検索",
 
-  // ---- tab.* (shared between TabBar's and EmptyState's identical create/duplicate-name dialogs) --
+  // ---- tab.* (shared between TabBar's and EmptyState's identical create-new-tab dialogs) --
   "tab.createNewTitle": "新しいタブを作成",
   "tab.createNewLabel": "タブ（フォルダ）名",
 
