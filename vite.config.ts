@@ -8,9 +8,9 @@ import react from "@vitejs/plugin-react";
 // https://v2.tauri.app/start/frontend/vite/
 const host = process.env.TAURI_DEV_HOST;
 
-// 公開用ビルドとみなすデフォルトブランチ名。将来 `main` などに改名したらここだけ直す。
+// 公開用ビルドとみなすデフォルトブランチ名。デフォルトブランチ名を変えたらここだけ直す。
 // このブランチかつ未コミット変更なしのときだけ、ラベルは版番号のみになる。
-export const DEFAULT_BRANCH = "V1.0.0";
+export const DEFAULT_BRANCH = "main";
 
 type GitRunner = (args: string) => string;
 
