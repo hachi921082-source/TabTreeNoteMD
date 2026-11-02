@@ -19,15 +19,15 @@
 
 ## 1. Where the project stands
 
-- **Default branch is `V1.0.0` and holds v1.2.1** (tag `v1.2.1` on PR #328's merge commit; `v1.2.0` and the old
+- **Default branch is `main` (renamed from `V1.0.0` on 2026-11-02) and holds v1.2.1** (tag `v1.2.1` on PR #328's merge commit; `v1.2.0` and the old
   `v1.0.0` tags also exist). `V1.1.0` / `V1.2.0` branches are fully merged and only kept as references.
-  **Cut all new branches from `V1.0.0`.**
-- **No open GitHub issues.**
-- The GitHub repo is still **private**. Public-release prep is done; the visibility switch and a possible rename
-  of `V1.0.0` → `main` have **not** been done.
+  **Cut all new branches from `main`.**
+- **Open issue: #334** (`import_file` `targetName` not name-validated in the backend). An empty branch `fix/import-target-name-validation` exists locally (no commits yet).
+- The GitHub repo is still **private**. Public-release prep is done; the visibility switch has **not** been done.
+  The rename to `main` is done (PR #335 fixed `DEFAULT_BRANCH`); the stale `master` branch is still on origin.
 - App version is `1.2.1` in all 5 places (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
   `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`); `README.md` / `MANUAL.md` state "v1.2.1". Bump all together.
-  The settings-screen version label is `v<package.json version>` for a clean build of `V1.0.0`, otherwise
+  The settings-screen version label is `v<package.json version>` for a clean build of `main`, otherwise
   `v1.2.1 (branch, shortHash[, dirty])` (CR-only diffs, e.g. a rebuilt `Cargo.toml`, don't count as dirty; the default
   branch name is the `DEFAULT_BRANCH` constant in `vite.config.ts` — change it if the branch is renamed).
 - Working tree: `src-tauri/Cargo.toml` can show a line-endings-only modification after a build. Never commit it.
@@ -86,7 +86,7 @@ All issue entries are in `RESOLVED-ISSUES.md`.
 - **Not filed, optional tiny cleanups:** unused `name` parameters of backend `tab_create` / `tab_register_existing`
   and `tabCreate(path, name)` in `src/ipc/tab.ts` (nothing passes them since #329), one stale comment in `tab.rs`
   (~L69 "retry after NAME_DUPLICATE"), an old "create/duplicate-name dialogs" heading comment in `ja.ts`.
-- **Branch name:** `V1.0.0` holding v1.2.x is confusing; renaming the default branch to `main` was suggested, undecided.
+- **Branch name:** default branch renamed `V1.0.0` → `main` on 2026-11-02 (GitHub + local + `DEFAULT_BRANCH` + CLAUDE.md). Older entries in this file and `RESOLVED-ISSUES.md` that say `V1.0.0` mean this branch. `master` is still on origin — delete or keep is undecided.
 - **Not driven live:** "メモの場所を開く" (opens Explorer) and real mail-client / browser opening beyond what the
   user tried by hand.
 - **`/security-review`** was skipped for the #300/#301/#306 PRs (a blanket "go ahead" is not an explicit yes); later
@@ -102,7 +102,7 @@ All issue entries are in `RESOLVED-ISSUES.md`.
 - The auto-mode classifier blocks `git checkout -- <files>` (discard); when blocked, ask via `AskUserQuestion` with
   concrete options rather than describing the block.
 - A developer-lite agent working in the shared working tree must not be disturbed by `git checkout`: while one runs,
-  only use `git push origin <branch>`, `gh pr …` etc., and defer local branch switches / commits on `V1.0.0`.
+  only use `git push origin <branch>`, `gh pr …` etc., and defer local branch switches / commits on `main`.
 - A copied portable `data/` keeps `settings.json`'s **absolute `folderPath`** for tabs: re-point it, and build paths with
   a real separator (a missing `\` once put a test tab outside `data\tabs`).
 - The app is single-instance: the user's own copy (e.g. `D:\TabNoteTree\…exe`, sometimes in the tray) blocks test
@@ -126,14 +126,14 @@ All issue entries are in `RESOLVED-ISSUES.md`.
 ## 6. Working conventions
 
 - Every user-visible message in Japanese.
-- Flow per issue: `fix/<slug>` from `V1.0.0` → developer-lite → reviewer-lite (static) → release build
+- Flow per issue: `fix/<slug>` from `main` → developer-lite → reviewer-lite (static) → release build
   (`npm run tauri build -- --no-bundle`) → live test (Claude via isolated scratchpad copy + CDP where possible, user for
   native dialogs / real browser / mail) → ask `/security-review` if paths/deletion/tab-lock/URL parsing/sanitize →
   **ask before** push / PR / merge / branch delete (one list; the user answers "すべて進めてよい" or trims it) → PR with
-  `Closes #N` → `gh pr merge --merge` → `git checkout V1.0.0 && git pull origin V1.0.0` (no stash) → `RESOLVED-ISSUES.md`
-  entry (commit directly on `V1.0.0`) → delete branch (local + origin) → push `V1.0.0`.
+  `Closes #N` → `gh pr merge --merge` → `git checkout main && git pull origin main` (no stash) → `RESOLVED-ISSUES.md`
+  entry (commit directly on `main`) → delete branch (local + origin) → push `main`.
 - Larger docs changes (`MANUAL.md`, spec files) go through a short-lived `docs/<slug>` branch + PR; `RESOLVED-ISSUES.md`
-  and this file are committed directly on `V1.0.0`.
+  and this file are committed directly on `main`.
 - Live tests: copy the timestamped exe into `scratchpad/<name>/` and run it there (portable `data/` stays isolated).
 - `gh issue create` / `gh pr create`: write the body to a scratchpad file and use `--body-file`.
 - Commit messages: no file-path prefix, Japanese body, one file per commit, trailer
