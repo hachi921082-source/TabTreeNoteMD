@@ -22,9 +22,9 @@
 - **Default branch is `main` (renamed from `V1.0.0` on 2026-11-02) and holds v1.2.1** (tag `v1.2.1` on PR #328's merge commit; `v1.2.0` and the old
   `v1.0.0` tags also exist). `V1.1.0` / `V1.2.0` branches are fully merged and only kept as references.
   **Cut all new branches from `main`.**
-- **Open issue: #334** (`import_file` `targetName` not name-validated in the backend). An empty branch `fix/import-target-name-validation` exists locally (no commits yet).
+- **No open GitHub issues** (#334 resolved, PR #337).
 - The GitHub repo is still **private**. Public-release prep is done; the visibility switch has **not** been done.
-  The rename to `main` is done (PR #335 fixed `DEFAULT_BRANCH`); the stale `master` branch is still on origin.
+  The rename to `main` is done (PR #335 fixed `DEFAULT_BRANCH`); the stale `master` branch was deleted from origin (last commit db42632).
 - App version is `1.2.1` in all 5 places (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
   `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`); `README.md` / `MANUAL.md` state "v1.2.1". Bump all together.
   The settings-screen version label is `v<package.json version>` for a clean build of `main`, otherwise
@@ -86,7 +86,7 @@ All issue entries are in `RESOLVED-ISSUES.md`.
 - **Not filed, optional tiny cleanups:** unused `name` parameters of backend `tab_create` / `tab_register_existing`
   and `tabCreate(path, name)` in `src/ipc/tab.ts` (nothing passes them since #329), one stale comment in `tab.rs`
   (~L69 "retry after NAME_DUPLICATE"), an old "create/duplicate-name dialogs" heading comment in `ja.ts`.
-- **Branch name:** default branch renamed `V1.0.0` → `main` on 2026-11-02 (GitHub + local + `DEFAULT_BRANCH` + CLAUDE.md). Older entries in this file and `RESOLVED-ISSUES.md` that say `V1.0.0` mean this branch. `master` is still on origin — delete or keep is undecided.
+- **Branch name:** default branch renamed `V1.0.0` → `main` on 2026-11-02 (GitHub + local + `DEFAULT_BRANCH` + CLAUDE.md). Older entries in this file and `RESOLVED-ISSUES.md` that say `V1.0.0` mean this branch. `master` is still on origin.
 - **Not driven live:** "メモの場所を開く" (opens Explorer) and real mail-client / browser opening beyond what the
   user tried by hand.
 - **`/security-review`** was skipped for the #300/#301/#306 PRs (a blanket "go ahead" is not an explicit yes); later
