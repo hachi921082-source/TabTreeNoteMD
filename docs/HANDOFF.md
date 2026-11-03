@@ -36,17 +36,19 @@
   rewritten as "MIT, no separate EULA", `THIRD-PARTY-NOTICES.md` (embedded in the app's licence screen),
   `.gitignore` additions, Windows user name replaced by `%USERPROFILE%` in `CLAUDE.md` / `docs/DECISIONS*.md`,
   `.claude/settings.json` untracked (file kept locally).
-- `/security-review` ran in three passes over the whole branch (findings → #308, #311, #330). **Not yet read:**
-  `PermanentUnlockRecoveryDialog.tsx`, `useTabLockAutoRelock.ts`, most `src/ipc/*.ts` (editor, link, import, tab, tree,
-  search, settings, window, autostart, about), `tree.rs` tab-to-tab move internals, `model/app_settings.rs` L250–402,
-  `RecoveryDialog.tsx` (grepped only). Observation, not filed: `settings_set` can replace `tabs`/`schemaVersion` wholesale
-  and `resolve_tab_access` trusts `entry.locked` from settings.json — inside the trust boundary (webview trusted); a
-  hardening option would be to drop `tabs`/`schemaVersion` from the patch.
+- `/security-review` ran in three passes over the whole branch (findings → #308, #311, #330, #334), then a final
+  read of the previously unread areas on 2026-11-03 (no new findings): `PermanentUnlockRecoveryDialog.tsx`,
+  `useTabLockAutoRelock.ts`, all `src/ipc/*.ts` wrappers, `tree.rs` cross-tab move, `editor_load`/`editor_save`,
+  `image_save_pasted`/`image_read_bytes`, `tab_open_location`, `model/app_settings.rs` L250–402. Only `RecoveryDialog.tsx`
+  (grepped, not read in full) and the backend of `link_resolve` / search commands were not re-read. Observations, not filed
+  (inside the trust boundary: webview trusted): `settings_set` can replace `tabs`/`schemaVersion` wholesale and
+  `resolve_tab_access` trusts `entry.locked` from settings.json (hardening option: drop `tabs`/`schemaVersion` from the
+  patch); `image_read_external_file` reads any absolute path by design (drag-and-drop of a dropped file).
 
 ## 2. Next action
 
 Ask the user. Candidates: switch the repo to **public** (check `MANUAL.md` against the real app first — the user has not
-done that read-through), decide the `main` rename, finish the remaining security-review reading, tiny cleanups (§4).
+done that read-through), decide the `main` rename, tiny cleanups (§4).
 Do not pick up anything Claude itself deferred without the user asking (see §5).
 
 ## 3. Done in this session
