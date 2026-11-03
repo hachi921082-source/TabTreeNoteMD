@@ -23,7 +23,7 @@
   `v1.0.0` tags also exist). `V1.1.0` / `V1.2.0` branches are fully merged and only kept as references.
   **Cut all new branches from `main`.**
 - **No open GitHub issues** (#334 resolved, PR #337).
-- The GitHub repo is still **private**. Public-release prep is done; the visibility switch has **not** been done.
+- The GitHub repo is **public** since 2026-11-03 (history still contains the Windows user name `m9112` in 13 old commits — accepted, not rewritten; a secret scan of all history found nothing).
   The rename to `main` is done (PR #335 fixed `DEFAULT_BRANCH`); the stale `master` branch was deleted from origin (last commit db42632).
 - App version is `1.2.1` in all 5 places (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
   `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`); `README.md` / `MANUAL.md` state "v1.2.1". Bump all together.
@@ -46,8 +46,8 @@
   patch); `image_read_external_file` reads any absolute path by design (drag-and-drop of a dropped file).
 
 ## 2. Next action
-
-Ask the user. Candidates: switch the repo to **public** (check `MANUAL.md` against the real app first — the user has not
+Ask the user. Candidates: the user's own read-through of `MANUAL.md` against the real app (not yet done; fix any
+mismatches in a `docs/` branch + PR), tiny cleanups (§4).
 done that read-through), decide the `main` rename, tiny cleanups (§4).
 Do not pick up anything Claude itself deferred without the user asking (see §5).
 
