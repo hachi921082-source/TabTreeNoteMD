@@ -50,6 +50,11 @@ npm run tauri build -- --no-bundle
 - [docs/spec.v1.1.0.md](docs/spec.v1.1.0.md) / [docs/spec.v1.2.0.md](docs/spec.v1.2.0.md) — バージョンごとの追加・変更仕様
 - [docs/RESOLVED-ISSUES.md](docs/RESOLVED-ISSUES.md) — 解決済みの issue の記録
 
+## コントリビューションについて
+
+個人開発のため、Pull Request は受け付けていません(届いても原則マージしません)。
+不具合の報告や要望は issue でお知らせください。ただし、対応をお約束するものではありません。
+
 ## ライセンスと第三者ソフトウェア
 
 本アプリは [MIT ライセンス](LICENSE) で公開しています。
@@ -111,6 +116,11 @@ Specifications and design history are in [docs/](docs/README.md).
 - [docs/spec.md](docs/spec.md) — the finalized v1.0.0 specification
 - [docs/spec.v1.1.0.md](docs/spec.v1.1.0.md) / [docs/spec.v1.2.0.md](docs/spec.v1.2.0.md) — additions and changes per version
 - [docs/RESOLVED-ISSUES.md](docs/RESOLVED-ISSUES.md) — record of resolved issues
+
+## Contributions
+
+This is a personal project, so Pull Requests are not accepted (they will generally not be merged).
+Bug reports and requests are welcome as issues, but a response is not guaranteed.
 
 ## License and third-party software
 
