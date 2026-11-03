@@ -22,7 +22,7 @@ Operated using a three-agent system: designer-lite → developer-lite → review
 
 ## GitHub Issue Workflow
 
-The repository's main/default branch is `main` (renamed from `V1.0.0` on 2026-11-02, which was itself renamed from `implementation`; `master` is stale and kept only for reference — do not branch from or merge into it). Older docs and `RESOLVED-ISSUES.md` entries that say `V1.0.0` mean this branch.
+The repository's main/default branch is `main` (renamed from `V1.0.0` on 2026-11-02, which was itself renamed from `implementation`; the old `master` branch was deleted on 2026-11-02, last commit db42632). Older docs and `RESOLVED-ISSUES.md` entries that say `V1.0.0` mean this branch.
 
 For each GitHub issue (repo `hachi921082-source/TabTreeNoteMD`): cut a branch named `fix/<short-slug>` (e.g. `fix/path-traversal-guard`) → fix on that branch (designer-lite/developer-lite/reviewer-lite flow above still applies) → Review → once the issue is resolved, open a PR and merge.
 
