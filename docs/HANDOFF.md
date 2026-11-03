@@ -48,7 +48,6 @@
 ## 2. Next action
 Ask the user. Candidates: the user's own read-through of `MANUAL.md` against the real app (not yet done; fix any
 mismatches in a `docs/` branch + PR), tiny cleanups (§4).
-done that read-through), decide the `main` rename, tiny cleanups (§4).
 Do not pick up anything Claude itself deferred without the user asking (see §5).
 
 ## 3. Done in this session
