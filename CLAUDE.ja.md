@@ -2,7 +2,7 @@
 
 ## 旧リポジトリ（参照専用）
 
-- パス: `c:\Users\m9112\vscode2\TabTreeNote`。**参照専用、Edit/Write/コミットは行わない。** 参照先の詳細は[docs/DECISIONS.md](docs/DECISIONS.md)参照。
+- パス: `%USERPROFILE%\vscode2\TabTreeNote`。**参照専用、Edit/Write/コミットは行わない。** 参照先の詳細は[docs/DECISIONS.md](docs/DECISIONS.md)参照。
 
 ## 本リポジトリのドキュメント
 
