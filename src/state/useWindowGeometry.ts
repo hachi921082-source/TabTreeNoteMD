@@ -1,6 +1,6 @@
 // Window geometry (position/size/maximized) restore-at-startup and persist-on-move/resize
 // (`docs/plans/window-operation/PLAN.md` §2). Values are stored/read as physical pixels
-// throughout (matching `Window.outerPosition()`/`outerSize()`'s native return type and
+// throughout (matching `Window.outerPosition()`/`innerSize()`'s native return type and
 // `availableMonitors()`'s monitor rects), so no DPI scale-factor conversion is needed anywhere in
 // this module.
 //
@@ -112,13 +112,17 @@ export function useWindowGeometry(settings: AppSettings | null, patch: (p: AppSe
       if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
       debounceRef.current = window.setTimeout(() => {
         void (async () => {
+          // 最小化中は画面外の小さな矩形が返り、`isMaximized` も false になるので何も保存しない
+          // (GitHub issue #339)
+          if (await appWindow.isMinimized()) return;
           const maximized = await appWindow.isMaximized();
           if (maximized) {
             await patchRef.current({ window: { maximized: true } });
             return;
           }
           const pos = await appWindow.outerPosition();
-          const size = await appWindow.outerSize();
+          // 復元の `setSize` は内側サイズなので内側で保存する(外側だと起動のたびに枠の分だけ大きくなる)
+          const size = await appWindow.innerSize();
           await patchRef.current({
             window: { x: pos.x, y: pos.y, width: size.width, height: size.height, maximized: false },
           });
