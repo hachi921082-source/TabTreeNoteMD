@@ -18,3 +18,4 @@ Thumbs.db
 /.tabtreenote.json
 .claude/settings.json
 .claude/settings.local.json
+/Build/
